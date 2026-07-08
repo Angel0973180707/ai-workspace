@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<meta name="theme-color" content="#1B3A2A">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>AI 工作台</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="app">
+
+  <!-- 🏠 今天想完成什麼？（首頁）-->
+  <div class="screen active" id="screen-home">
+    <div class="greeting">
+      <div class="hello" id="home-greeting">早安 ☀️</div>
+      <div class="sub" style="font-size:20px;font-weight:700;color:var(--text);margin-top:14px">今天想完成什麼？</div>
+    </div>
+
+    <div class="purpose-grid">
+      <div class="purpose-card" onclick="openPurpose('material')"><div class="emoji">📚</div><div class="label">做教材</div></div>
+      <div class="purpose-card" onclick="openPurpose('video')"><div class="emoji">🎬</div><div class="label">做影片</div></div>
+      <div class="purpose-card" onclick="openPurpose('product')"><div class="emoji">🛍️</div><div class="label">商品行銷</div></div>
+      <div class="purpose-card" onclick="openPurpose('website')"><div class="emoji">🌐</div><div class="label">建立網站</div></div>
+      <div class="purpose-card" onclick="openPurpose('ebook')"><div class="emoji">📖</div><div class="label">做電子書</div></div>
+      <div class="purpose-card" onclick="openPurpose('course')"><div class="emoji">🎤</div><div class="label">做課程</div></div>
+      <div class="purpose-card" onclick="openPurpose('social')"><div class="emoji">📢</div><div class="label">社群貼文</div></div>
+      <div class="purpose-card" onclick="openPurpose('custom')"><div class="emoji">➕</div><div class="label">自訂專案</div></div>
+    </div>
+
+    <div class="section-label">我的專案</div>
+    <div id="home-project-list"></div>
+
+    <div class="notice" style="margin-top:6px">想每天使用？可以把 AI 工作台加入手機首頁。</div>
+  </div>
+
+  <!-- Project 頁 -->
+  <div class="screen" id="screen-project">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-home')">←</button>
+      <div class="title" id="proj-title">專案</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="card summary-box" id="proj-summary"></div>
+      <div class="section-label" style="margin-top:18px">這個專案的工作</div>
+      <div id="proj-work-list"></div>
+      <button class="btn" onclick="openAddWork()">＋ 新增工作</button>
+    </div>
+  </div>
+
+  <!-- 新增工作 -->
+  <div class="screen" id="screen-add-work">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-project')">←</button>
+      <div class="title">新增工作</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">預設流程：<b id="new-work-flow-name"></b><br>
+        <span style="font-size:12px" id="new-work-flow-steps"></span></div>
+      <div class="field">
+        <label>換一個流程（選用）</label>
+        <div id="flow-switch-list"></div>
+      </div>
+      <div class="field">
+        <label>幫這件工作取個名字</label>
+        <input type="text" id="new-work-name-input" maxlength="30">
+      </div>
+      <button class="btn" onclick="confirmNewWork()">建立工作</button>
+    </div>
+  </div>
+
+  <!-- 工作詳情 -->
+  <div class="screen" id="screen-work-detail">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-project')">←</button>
+      <div class="title" id="wd-name">工作名稱</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="line" style="font-size:13px;color:var(--text-mid);margin-bottom:16px" id="wd-tpl"></div>
+      <div class="progress-track" id="wd-progress"></div>
+      <div class="card">
+        <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">目前步驟</div>
+        <h3 style="font-size:22px;margin-bottom:12px" id="wd-step-name"></h3>
+        <div class="line" style="font-size:16px" id="wd-role"></div>
+        <div class="line" style="margin-top:8px" id="wd-ai-suggest"></div>
+      </div>
+      <button class="btn" onclick="goCopyToAi()">交給 AI</button>
+    </div>
+  </div>
+
+  <!-- 交給 AI -->
+  <div class="screen" id="screen-copy-to-ai">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-work-detail')">←</button>
+      <div class="title">交給 AI</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">已經幫你整理好了。<br><br>請按「複製給 AI」，再到你習慣使用的 AI 貼上即可。</div>
+      <div class="copy-box" id="copy-text-box"></div>
+      <button class="btn gold" onclick="copyToClipboard()">📋 複製給 AI</button>
+      <div style="text-align:center;font-size:13px;color:var(--text-dim);margin-top:10px">建議貼給：<span id="copy-ai-name"></span></div>
+      <button class="btn outline" style="margin-top:16px" onclick="goPasteBack()">拿到回答了 → 貼回成果</button>
+    </div>
+  </div>
+
+  <!-- 貼回成果 -->
+  <div class="screen" id="screen-paste-back">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-copy-to-ai')">←</button>
+      <div class="title">把 AI 回答貼回來</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">貼上 AI 給你的完整回答，按「完成這一步」，系統會幫你保存下來，並自動接到下一位。</div>
+      <div class="field">
+        <label>「<span id="pb-step-name"></span>」的成果</label>
+        <textarea id="paste-back-textarea" placeholder="把 AI 的回答貼在這裡..."></textarea>
+      </div>
+      <button class="btn" onclick="submitPasteBack()">完成這一步</button>
+    </div>
+  </div>
+
+  <!-- 🤖 AI 團隊 -->
+  <div class="screen" id="screen-ai-team">
+    <div class="topbar"><div class="title">今天由誰幫忙？</div></div>
+    <div style="padding-top:20px">
+      <div class="notice">每個角色可以指定你現在習慣用哪個 AI，隨時可以換，不影響工作流程。</div>
+      <div class="card" id="ai-team-list" style="padding:4px 20px"></div>
+    </div>
+  </div>
+
+  <!-- 📚 資產庫 -->
+  <div class="screen" id="screen-assets">
+    <div class="topbar"><div class="title">資產庫</div></div>
+    <div style="padding-top:20px">
+      <div class="category-tabs" id="category-tabs"></div>
+      <div id="assets-list"></div>
+    </div>
+  </div>
+
+  <!-- 資產詳情 -->
+  <div class="screen" id="screen-asset-detail">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-assets')">←</button>
+      <div class="title">成果詳情</div>
+    </div>
+    <div style="padding-top:20px">
+      <h3 style="font-size:19px;margin-bottom:6px" id="rd-title"></h3>
+      <div style="font-size:12px;color:var(--text-dim);margin-bottom:16px" id="rd-meta"></div>
+      <div class="result-content-box" id="rd-content"></div>
+      <div class="action-row">
+        <button class="btn outline" onclick="copyResultContent()">複製</button>
+        <button class="btn outline" onclick="editResultTitle()">編輯標題</button>
+      </div>
+      <button class="btn gold" id="rd-final-btn" onclick="toggleFinalMark()">標記為最終成品</button>
+    </div>
+  </div>
+
+  <!-- 📢 發布中心 -->
+  <div class="screen" id="screen-publish">
+    <div class="topbar"><div class="title">發布中心</div></div>
+    <div style="padding-top:20px">
+      <div class="notice">把完成的資產整理成可發布版本。本輪只做狀態整理，還沒有串接真正的發布通路。</div>
+      <div class="publish-section-title">⏳ 待發布</div>
+      <div id="publish-pending-list"></div>
+      <div class="publish-section-title">✅ 已發布</div>
+      <div id="publish-published-list"></div>
+      <div class="publish-section-title">🗒️ 發布紀錄</div>
+      <div id="publish-log-list"></div>
+    </div>
+  </div>
+
+  <!-- ⚙️ 我的工作台 -->
+  <div class="screen" id="screen-settings">
+    <div class="topbar"><div class="title">我的工作台</div></div>
+    <div style="padding-top:20px">
+      <div class="card">
+        <div class="settings-row">
+          <span class="label">我的名稱</span>
+          <input type="text" id="settings-username" onchange="updateUserName(this.value)" maxlength="10">
+        </div>
+        <div class="settings-row">
+          <span class="label">目前工作台</span>
+          <input type="text" id="settings-workspacename" onchange="updateWorkspaceName(this.value)" maxlength="20">
+        </div>
+        <div class="settings-row">
+          <span class="label">資料保存狀態</span>
+          <span class="value" style="color:var(--green-soft)">✅ 已自動保存在這台裝置</span>
+        </div>
+        <div class="settings-row">
+          <span class="label">目前累積</span>
+          <span class="value" id="settings-count"></span>
+        </div>
+      </div>
+      <button class="btn outline" onclick="showScreen('screen-ai-team')">🤖 AI 角色設定</button>
+      <button class="btn outline" style="margin-top:10px" onclick="exportData()">⬇️ 匯出我的資料</button>
+    </div>
+  </div>
+
+</div>
+
+<!-- 底部導覽 -->
+<div class="bottom-nav" id="bottom-nav">
+  <button class="nav-item active" data-target="screen-home" onclick="showScreen('screen-home')">
+    <span class="icon">🏠</span><span class="label">今天</span>
+  </button>
+  <button class="nav-item" data-target="screen-assets" onclick="showScreen('screen-assets')">
+    <span class="icon">📚</span><span class="label">資產庫</span>
+  </button>
+  <button class="nav-item" data-target="screen-publish" onclick="showScreen('screen-publish')">
+    <span class="icon">📢</span><span class="label">發布中心</span>
+  </button>
+  <button class="nav-item" data-target="screen-ai-team" onclick="showScreen('screen-ai-team')">
+    <span class="icon">🤖</span><span class="label">AI 團隊</span>
+  </button>
+  <button class="nav-item" data-target="screen-settings" onclick="showScreen('screen-settings')">
+    <span class="icon">⚙️</span><span class="label">我的工作台</span>
+  </button>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script src="app.js"></script>
+<script>
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./service-worker.js');
+  }
+</script>
+</body>
+</html>
