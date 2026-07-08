@@ -141,12 +141,52 @@
       <div class="title">把 AI 回答貼回來</div>
     </div>
     <div style="padding-top:20px">
-      <div class="notice">貼上 AI 給你的完整回答，按「完成這一步」，系統會幫你保存下來，並自動接到下一位。</div>
+      <div class="notice">貼上 AI 給你的完整回答，按下面按鈕保存這個版本，接著會請你確認滿不滿意。<br><span id="pb-version-hint" style="font-weight:700"></span></div>
       <div class="field">
         <label>「<span id="pb-step-name"></span>」的成果</label>
         <textarea id="paste-back-textarea" placeholder="把 AI 的回答貼在這裡..."></textarea>
       </div>
-      <button class="btn" onclick="submitPasteBack()">完成這一步</button>
+      <button class="btn" onclick="submitPasteBack()">保存這個版本</button>
+    </div>
+  </div>
+
+  <!-- 滿意度確認 -->
+  <div class="screen" id="screen-satisfaction">
+    <div class="topbar"><div class="title">✨ 作品打磨</div></div>
+    <div style="padding-top:20px">
+      <div class="section-label">「<span id="sat-step-name"></span>」的這次成果</div>
+      <div class="copy-box" id="sat-content-preview" style="max-height:35vh;overflow-y:auto"></div>
+      <div class="section-label" style="margin-top:18px;font-size:18px;color:var(--text)">你對這次成果滿意嗎？</div>
+      <button class="btn" onclick="satisfactionGood()">🙂 很滿意</button>
+      <button class="btn outline" style="margin-top:10px" onclick="satisfactionRevise('還可以')">😐 還可以</button>
+      <button class="btn outline" style="margin-top:10px" onclick="satisfactionRevise('不滿意')">🙁 不滿意</button>
+    </div>
+  </div>
+
+  <!-- 修改方向 -->
+  <div class="screen" id="screen-revise-direction">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-satisfaction')">←</button>
+      <div class="title">想修哪裡？</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">可以選一個或多個方向，選完按下面按鈕產生修正指令。</div>
+      <div id="direction-list"></div>
+      <button class="btn" id="revise-instruction-submit" onclick="goRevisionInstruction()">產生修正指令</button>
+    </div>
+  </div>
+
+  <!-- 修正指令 -->
+  <div class="screen" id="screen-revise-instruction">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-revise-direction')">←</button>
+      <div class="title">修正指令</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">複製這段指令，貼給你目前使用的 AI，拿到修改後的版本再回來貼回。</div>
+      <div class="copy-box" id="revise-instruction-box"></div>
+      <button class="btn gold" onclick="copyRevisionInstruction()">📋 複製修正指令</button>
+      <button class="btn outline" style="margin-top:16px" onclick="goReviseSubmit()">拿到修改版了 → 貼回修改版</button>
     </div>
   </div>
 
@@ -156,6 +196,33 @@
     <div style="padding-top:20px">
       <div class="notice">每個角色可以指定你現在習慣用哪個 AI，隨時可以換，不影響工作流程。</div>
       <div class="card" id="ai-team-list" style="padding:4px 20px"></div>
+      <button class="btn outline" onclick="showScreen('screen-prompt-library')">🧠 AI 配方庫（查看每個角色目前用的指令）</button>
+    </div>
+  </div>
+
+  <!-- AI 配方庫 -->
+  <div class="screen" id="screen-prompt-library">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-ai-team')">←</button>
+      <div class="title">AI 配方庫</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">這裡是「複製給 AI」跟「作品打磨」背後實際使用的指令內容，讓每次產生的指令維持一致的品質與語氣。</div>
+      <div class="category-tabs" id="prompt-filter-tabs"></div>
+      <div id="prompt-list"></div>
+    </div>
+  </div>
+
+  <!-- 配方詳情 -->
+  <div class="screen" id="screen-prompt-detail">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-prompt-library')">←</button>
+      <div class="title">配方詳情</div>
+    </div>
+    <div style="padding-top:20px">
+      <h3 style="font-size:19px;margin-bottom:6px" id="pd-title"></h3>
+      <div style="font-size:12px;color:var(--text-dim);margin-bottom:16px" id="pd-meta"></div>
+      <div class="result-content-box" id="pd-content"></div>
     </div>
   </div>
 
@@ -177,12 +244,14 @@
     <div style="padding-top:20px">
       <h3 style="font-size:19px;margin-bottom:6px" id="rd-title"></h3>
       <div style="font-size:12px;color:var(--text-dim);margin-bottom:16px" id="rd-meta"></div>
+      <div id="rd-version-history" style="margin-bottom:14px"></div>
       <div class="result-content-box" id="rd-content"></div>
       <div class="action-row">
         <button class="btn outline" onclick="copyResultContent()">複製</button>
         <button class="btn outline" onclick="editResultTitle()">編輯標題</button>
       </div>
       <button class="btn gold" id="rd-final-btn" onclick="toggleFinalMark()">標記為最終成品</button>
+      <div id="rd-cloud-box" style="margin-top:14px"></div>
     </div>
   </div>
 
@@ -237,6 +306,58 @@
       </div>
       <button class="btn outline" onclick="showScreen('screen-ai-team')">🤖 AI 角色設定</button>
       <button class="btn outline" style="margin-top:10px" onclick="exportData()">⬇️ 匯出我的資料</button>
+
+      <div class="card" style="margin-top:14px;border:1px dashed var(--gold);background:rgba(200,150,42,0.05)">
+        <h3 style="font-size:16px;margin-bottom:8px;color:var(--gold)">☁️ 專屬 Google 雲端備份設定</h3>
+        <p style="font-size:13px;color:var(--text-mid);line-height:1.7;margin-bottom:12px">
+          你的作品可以保存到自己的 Google 雲端硬碟。本系統不保留你的作品資料，請依照教學建立自己的雲端備份連線。
+        </p>
+        <div class="field" style="margin-bottom:10px">
+          <label>雲端連線網址</label>
+          <input type="text" id="settings-gas-url" onchange="updateGasWebhookUrl(this.value)" placeholder="https://script.google.com/.../exec">
+        </div>
+        <button class="btn outline" onclick="openGasInstructions()">📖 1 分鐘開通雲端教學</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 1 分鐘開通雲端教學 -->
+  <div class="screen" id="screen-gas-instructions">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-settings')">←</button>
+      <div class="title">1 分鐘開通雲端教學</div>
+    </div>
+    <div style="padding-top:20px;padding-bottom:40px">
+      <div class="notice">
+        ❤️ 本產品不設中央伺服器，你的作品將會百分之百儲存在<b>你自己的 Google 雲端硬碟</b>，安全且完全私密。
+      </div>
+
+      <div class="card">
+        <h3 style="color:var(--green-soft);margin-bottom:8px">第一步：複製專屬腳本</h3>
+        <p style="font-size:14px;margin-bottom:10px">請點擊下方按鈕，複製設定用的腳本代碼：</p>
+        <button class="btn gold" onclick="copyGasCode()">📋 一鍵複製腳本代碼</button>
+      </div>
+
+      <div class="card">
+        <h3 style="color:var(--green-soft);margin-bottom:8px">第二步：貼至 Google 雲端</h3>
+        <p style="font-size:14px;line-height:1.8">
+          1. 打開你的 <b>Google 雲端硬碟</b>。<br>
+          2. 點左上角「＋新增」→「Google Apps Script」（沒看到就點「更多」）。<br>
+          3. 把原有程式碼刪除，貼上剛才複製的代碼。<br>
+          4. 點畫面上方「部署」→「新增部署」。
+        </p>
+      </div>
+
+      <div class="card">
+        <h3 style="color:var(--green-soft);margin-bottom:8px">第三步：部署並開通</h3>
+        <p style="font-size:14px;line-height:1.8">
+          1. 執行身分選「我本人」。<br>
+          2. 誰有權存取選「所有人」。<br>
+          3. 部署後複製產生的「網頁應用程式網址」。<br>
+          4. 回到「我的工作台」貼上網址即完成。
+        </p>
+      </div>
+      <button class="btn" onclick="goBack('screen-settings')">我明白了，回設定頁貼上</button>
     </div>
   </div>
 
