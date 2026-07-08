@@ -104,13 +104,49 @@ const FLOWS = {
       { name: '送出', role: '發布助手', category: '其他' }
     ]
   },
+  customer_reply: {
+    id: 'customer_reply', name: '客戶回覆流程',
+    steps: [
+      { name: '了解問題', role: '研究員', category: '其他' },
+      { name: '草擬回覆', role: '寫作師', category: '其他' },
+      { name: '潤飾語氣', role: '潤稿師', category: '其他' },
+      { name: '送出', role: '發布助手', category: '其他' }
+    ]
+  },
+  song: {
+    id: 'song', name: '歌曲創作流程',
+    steps: [
+      { name: '歌曲定位', role: '規劃師', category: '歌曲' },
+      { name: '故事發想', role: '寫作師', category: '歌曲' },
+      { name: '市場研究', role: '研究員', category: '歌曲' },
+      { name: '歌詞創作', role: '寫作師', category: '歌曲' },
+      { name: 'Suno 規格', role: '工程師', category: '歌曲' },
+      { name: '封面 Prompt', role: '設計師', category: '圖片' },
+      { name: 'MV Prompt', role: '設計師', category: '歌曲' },
+      { name: '發布文案', role: '發布助手', category: '歌曲' }
+    ]
+  },
   custom: {
     id: 'custom', name: '自訂流程',
     steps: [{ name: '完成這件事', role: '規劃師', category: '其他' }]
   }
 };
 
-// ── Project 類型（首頁 8 個「今天想完成什麼？」入口）──────────
+// ── Flow Marketplace 介紹文字（點進 Flow 時，先說明「這套流程會完成什麼」）──
+const FLOW_INTRO = {
+  song: { emoji: '🎵', label: '歌曲創作', produces: ['歌曲企劃', '歌詞', 'Suno Prompt', '封面圖 Prompt', 'MV Prompt', '發布文案'] },
+  video: { emoji: '🎬', label: '短影音', produces: ['主題', '腳本', '圖片提示', '影片文案', '發布文案'] },
+  material: { emoji: '📚', label: '教材出版', produces: ['教材規劃', '蒐集資料', '教材內文', '潤稿後定稿'] },
+  ebook: { emoji: '📖', label: '電子書', produces: ['大綱', '蒐集資料', '內文', '排版設計'] },
+  product: { emoji: '🛍️', label: '商品行銷', produces: ['商品整理', '賣點分析', '文案', '商品圖'] },
+  website: { emoji: '🌐', label: '建立網站', produces: ['網站規劃', '內容文字', '頁面設計', '網站建置'] },
+  course: { emoji: '🎤', label: '課程設計', produces: ['課程大綱', '課程內容', '潤稿後定稿'] },
+  social: { emoji: '📱', label: '社群貼文', produces: ['主題發想', '貼文文案', '配圖建議'] },
+  custom: { emoji: '✍️', label: '自訂流程', produces: ['依你的需求自由發揮'] }
+};
+const MARKET_FLOW_IDS = ['song', 'video', 'material', 'ebook', 'product', 'website', 'course', 'social', 'custom'];
+
+// ── Project 類型（首頁「今天想完成什麼？」入口）───────────────
 const PROJECT_TYPES = {
   material: { emoji: '📚', label: '做教材', name: '我的教材', flowId: 'material' },
   video: { emoji: '🎬', label: '做影片', name: '我的影片', flowId: 'video' },
@@ -119,13 +155,29 @@ const PROJECT_TYPES = {
   ebook: { emoji: '📖', label: '做電子書', name: '我的電子書', flowId: 'ebook' },
   course: { emoji: '🎤', label: '做課程', name: '我的課程', flowId: 'course' },
   social: { emoji: '📢', label: '社群貼文', name: '社群貼文', flowId: 'social' },
+  song: { emoji: '🎵', label: '歌曲創作', name: '我的歌曲', flowId: 'song' },
   custom: { emoji: '➕', label: '自訂專案', name: null, flowId: 'custom' }
 };
 
-// 新增工作時，「換一個流程」的完整選單（含不在首頁 8 大入口裡的流程）
-const ALL_FLOW_IDS = ['material', 'video', 'product', 'social', 'course', 'website', 'ebook', 'customer_reply', 'custom'];
+// 新增工作時，「換一個流程」的完整選單（含不在首頁入口裡的流程）
+const ALL_FLOW_IDS = ['material', 'video', 'product', 'social', 'course', 'website', 'ebook', 'song', 'customer_reply', 'custom'];
 
-const CATEGORY_LIST = ['教材', '影片', '文章', '商品', '社群貼文', '圖片', '腳本', '電子書', '課程', '其他'];
+const CATEGORY_LIST = ['教材', '影片', '文章', '商品', '社群貼文', '圖片', '腳本', '電子書', '課程', '歌曲', '其他'];
+
+// 發布助手：各通路文案模板（純樣板文字，不串接任何平台、不自動發布）
+const PUBLISH_CHANNELS = ['YouTube', 'Facebook', 'IG', 'Threads', 'LINE'];
+function buildChannelDraft(channel, result) {
+  const excerpt = (result.content || '').split('\n').filter(Boolean).slice(0, 2).join(' ');
+  const base = result.workName + '　' + excerpt;
+  switch (channel) {
+    case 'YouTube': return '【標題】' + result.workName + '\n【說明】' + base + '\n#AI共創 #' + result.category;
+    case 'Facebook': return base + '\n\n完整內容歡迎點連結閱讀 👇';
+    case 'IG': return base + '\n.\n.\n#' + result.category + ' #創作日常';
+    case 'Threads': return base;
+    case 'LINE': return '📢 新作品上架：' + result.workName + '\n' + excerpt;
+    default: return base;
+  }
+}
 
 // ── 狀態 ──────────────────────────────────────────────────────
 let state = null;
@@ -286,6 +338,20 @@ function openPurpose(typeKey) {
 function openProject(projectId) {
   activeProjectId = projectId;
   showScreen('screen-project');
+}
+
+// ── Flow Marketplace ─────────────────────────────────────────
+let activeFlowIntroId = null;
+
+function openFlowMarket() { showScreen('screen-flow-market'); }
+
+function openFlowIntro(flowId) {
+  activeFlowIntroId = flowId;
+  showScreen('screen-flow-intro');
+}
+
+function startFlowFromMarket() {
+  openPurpose(activeFlowIntroId === 'custom' ? 'custom' : activeFlowIntroId);
 }
 
 // ── Work ──────────────────────────────────────────────────────
@@ -452,6 +518,20 @@ function markPublished(resultId) {
 }
 function isPublished(resultId) { return state.publishRecords.some(function (p) { return p.resultId === resultId; }); }
 
+// ── 發布助手（產生各通路草稿文案，不自動發布）───────────────────
+let activePublishAssistantResultId = null;
+function openPublishAssistant(resultId) {
+  activePublishAssistantResultId = resultId;
+  showScreen('screen-publish-assistant');
+}
+function copyChannelDraft(channel) {
+  const r = getResult(activePublishAssistantResultId);
+  const text = buildChannelDraft(channel, r);
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(function () { showToast('已複製 ' + channel + ' 文案'); });
+  } else { fallbackCopy(text); }
+}
+
 // ── 我的工作台 ────────────────────────────────────────────────
 function updateUserName(v) { state.userName = (v || '').trim() || '朋友'; saveState(); }
 function updateWorkspaceName(v) { state.workspaceName = (v || '').trim() || '我的工作台'; saveState(); }
@@ -478,7 +558,10 @@ function render() {
   if (id === 'screen-assets') renderAssets();
   if (id === 'screen-asset-detail') renderAssetDetail();
   if (id === 'screen-publish') renderPublish();
+  if (id === 'screen-publish-assistant') renderPublishAssistant();
   if (id === 'screen-settings') renderSettings();
+  if (id === 'screen-flow-market') renderFlowMarket();
+  if (id === 'screen-flow-intro') renderFlowIntro();
 }
 
 function renderHome() {
@@ -635,7 +718,10 @@ function renderPublish() {
     : pending.map(function (r) {
       return '<div class="result-card"><h4>' + escHtml(r.title) + '</h4>' +
         '<div class="meta">' + escHtml(r.projectName) + '　·　' + formatDate(r.completedAt) + '</div>' +
-        '<button class="btn outline" style="margin-top:10px" onclick="markPublished(' + r.id + ')">標記為已發布</button></div>';
+        '<div class="action-row" style="margin-top:10px">' +
+        '<button class="btn outline" onclick="openPublishAssistant(' + r.id + ')">✍️ 產生發布文案</button>' +
+        '</div>' +
+        '<button class="btn outline" onclick="markPublished(' + r.id + ')">標記為已發布</button></div>';
     }).join('');
 
   const pubList = document.getElementById('publish-published-list');
@@ -651,6 +737,47 @@ function renderPublish() {
     : state.publishRecords.slice().reverse().map(function (p) {
       return '<div class="result-card"><h4>' + escHtml(p.title) + '</h4><div class="meta">發布於 ' + formatDate(p.publishedAt) + '</div></div>';
     }).join('');
+}
+
+function renderPublishAssistant() {
+  const r = getResult(activePublishAssistantResultId);
+  if (!r) { showScreen('screen-publish'); return; }
+  document.getElementById('pa-title').textContent = r.title;
+  const list = document.getElementById('pa-channel-list');
+  list.innerHTML = PUBLISH_CHANNELS.map(function (ch) {
+    const draft = buildChannelDraft(ch, r);
+    return '<div class="card"><h3>' + ch + '</h3>' +
+      '<div class="copy-box" style="margin-bottom:10px">' + escHtml(draft) + '</div>' +
+      '<button class="btn outline" onclick="copyChannelDraft(\'' + ch + '\')">複製 ' + ch + ' 文案</button></div>';
+  }).join('');
+}
+
+function renderFlowMarket() {
+  const list = document.getElementById('flow-market-list');
+  list.innerHTML = MARKET_FLOW_IDS.map(function (fid) {
+    const intro = FLOW_INTRO[fid];
+    const flow = FLOWS[fid];
+    return '<div class="market-card" onclick="openFlowIntro(\'' + fid + '\')">' +
+      '<h3>' + intro.emoji + ' ' + intro.label + '</h3>' +
+      '<div class="who">共 ' + flow.steps.length + ' 個步驟</div>' +
+      '</div>';
+  }).join('');
+}
+
+function renderFlowIntro() {
+  const fid = activeFlowIntroId;
+  const intro = FLOW_INTRO[fid];
+  const flow = FLOWS[fid];
+  document.getElementById('fi-title').textContent = intro.emoji + ' ' + intro.label;
+  document.getElementById('fi-produces').innerHTML = '<div class="section-label">這套流程會完成什麼？</div>' +
+    '<ul style="padding-left:20px;font-size:14px;line-height:1.9">' +
+    intro.produces.map(function (p) { return '<li>' + escHtml(p) + '</li>'; }).join('') + '</ul>';
+
+  const roles = flow.steps.map(function (s) { return s.role; });
+  const uniqueRoles = roles.filter(function (r, i) { return roles.indexOf(r) === i; });
+  document.getElementById('fi-ai-team').innerHTML = '<div class="section-label" style="margin-top:18px">目前合作角色</div>' +
+    '<div style="font-size:14px;line-height:2.2">' +
+    uniqueRoles.map(function (r) { return ROLE_ICON[r] + ' ' + r; }).join('　→　') + '</div>';
 }
 
 function renderSettings() {

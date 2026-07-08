@@ -20,6 +20,7 @@
     </div>
 
     <div class="purpose-grid">
+      <div class="purpose-card" onclick="openPurpose('song')"><div class="emoji">🎵</div><div class="label">歌曲創作</div></div>
       <div class="purpose-card" onclick="openPurpose('material')"><div class="emoji">📚</div><div class="label">做教材</div></div>
       <div class="purpose-card" onclick="openPurpose('video')"><div class="emoji">🎬</div><div class="label">做影片</div></div>
       <div class="purpose-card" onclick="openPurpose('product')"><div class="emoji">🛍️</div><div class="label">商品行銷</div></div>
@@ -30,10 +31,37 @@
       <div class="purpose-card" onclick="openPurpose('custom')"><div class="emoji">➕</div><div class="label">自訂專案</div></div>
     </div>
 
-    <div class="section-label">我的專案</div>
+    <button class="btn outline" onclick="openFlowMarket()">🗺️ 瀏覽完整流程市集</button>
+
+    <div class="section-label" style="margin-top:18px">我的專案</div>
     <div id="home-project-list"></div>
 
     <div class="notice" style="margin-top:6px">想每天使用？可以把 AI 工作台加入手機首頁。</div>
+  </div>
+
+  <!-- 流程市集 -->
+  <div class="screen" id="screen-flow-market">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-home')">←</button>
+      <div class="title">流程市集</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">每一套流程，都是經過驗證的人機共創流程，不是全自動生成。點進去看這套流程會完成什麼。</div>
+      <div id="flow-market-list"></div>
+    </div>
+  </div>
+
+  <!-- Flow 介紹 -->
+  <div class="screen" id="screen-flow-intro">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-flow-market')">←</button>
+      <div class="title" id="fi-title">流程介紹</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="card" id="fi-produces"></div>
+      <div class="card" id="fi-ai-team"></div>
+      <button class="btn" onclick="startFlowFromMarket()">開始使用這個流程</button>
+    </div>
   </div>
 
   <!-- Project 頁 -->
@@ -87,6 +115,7 @@
         <div class="line" style="margin-top:8px" id="wd-ai-suggest"></div>
       </div>
       <button class="btn" onclick="goCopyToAi()">交給 AI</button>
+      <button class="btn outline" style="margin-top:10px" onclick="goPasteBack()">✍️ 我來修改（自己動手做這一步）</button>
     </div>
   </div>
 
@@ -168,6 +197,19 @@
       <div id="publish-published-list"></div>
       <div class="publish-section-title">🗒️ 發布紀錄</div>
       <div id="publish-log-list"></div>
+    </div>
+  </div>
+
+  <!-- 發布助手 -->
+  <div class="screen" id="screen-publish-assistant">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-publish')">←</button>
+      <div class="title">發布助手</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">已幫你產生不同通路的草稿文案，複製後自己貼上發布——最後一步永遠由你確認，不會自動發布。</div>
+      <h3 style="margin-bottom:14px" id="pa-title"></h3>
+      <div id="pa-channel-list"></div>
     </div>
   </div>
 
