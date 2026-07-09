@@ -74,6 +74,15 @@ function getRecommendChain(flowId, role, stepName) {
   return generic ? (generic.recommend || []) : (steps[0] ? steps[0].recommend || [] : []);
 }
 
+// 建議工具清單（教育性質，介紹「這一步適合用什麼工具製作」，例如 Suno／Udio／Runway，
+// 跟 getRecommendChain（挑一個 AI 協助寫指令）是兩件不同的事，兩者互不取代）
+function getRecommendedToolsChain(flowId, role, stepName) {
+  const tpl = COLLAB_TEMPLATES[flowId];
+  if (!tpl) return [];
+  const step = tpl.steps.find(function (s) { return s.role === role && s.stepName === stepName; });
+  return (step && step.recommendedTools) || [];
+}
+
 // 核心推薦引擎：依序嘗試 → 使用者手動指定（AI團隊，且該工具目前仍啟用）→ 官方建議鏈中使用者有的工具
 // → 使用者任何一個啟用中的工具 → 通用防呆文字。任何情況都會回傳可用結果，不會中斷、不會報錯
 function suggestedToolForStep(flowId, role, stepName) {
@@ -214,17 +223,18 @@ const FLOWS = {
       { name: '送出', role: '發布助手', category: '其他' }
     ]
   },
+  // Mission：歌曲創作 Flow 優化（依 CEO 實測調整，2026-07-09）
+  // 原本 8 步、要到第 3 步才有歌詞，改成第 2 步就拿到可直接用的歌詞，第 3 步拿到可直接用的風格描述，
+  // 盡快產出第一個可用成果（Time to First Result），而不是一直停留在規劃
   song: {
     id: 'song', name: '歌曲創作流程',
     steps: [
-      { name: '歌曲定位', role: '規劃師', category: '歌曲' },
-      { name: '故事發想', role: '寫作師', category: '歌曲' },
+      { name: '主題', role: '規劃師', category: '歌曲' },
       { name: '歌詞創作', role: '寫作師', category: '歌曲' },
-      { name: 'Suno 規格', role: '工程師', category: '歌曲' },
+      { name: '音樂風格', role: '工程師', category: '歌曲' },
       { name: '封面構想', role: '設計師', category: '圖片' },
       { name: 'MV 畫面構想', role: '設計師', category: '歌曲' },
-      { name: '發布文案', role: '發布助手', category: '歌曲' },
-      { name: '作品打磨', role: '審查員', category: '歌曲' }
+      { name: '發布文案', role: '發布助手', category: '歌曲' }
     ]
   },
   research: {
@@ -252,7 +262,7 @@ const FLOWS = {
 
 // ── Flow Marketplace 介紹文字（點進 Flow 時，先說明「這套流程會完成什麼」）──
 const FLOW_INTRO = {
-  song: { emoji: '🎵', label: '歌曲創作', produces: ['歌曲企劃', '歌詞', 'Suno 規格', '封面構想', 'MV 畫面構想', '發布文案', '打磨過的最終版'] },
+  song: { emoji: '🎵', label: '歌曲創作', produces: ['歌曲主題', '歌詞（可直接貼 Suno Lyrics）', '音樂風格（可直接貼 Suno Style）', '封面構想', 'MV 畫面構想', '發布文案'] },
   video: { emoji: '🎬', label: '短影音', produces: ['主題', '腳本', '開場 Hook', '分鏡', '字幕', '發布文案', '打磨過的最終版'] },
   material: { emoji: '📚', label: '教材出版', produces: ['教材規劃', '蒐集資料', '教材內文', '潤稿後定稿', '打磨過的最終版'] },
   ebook: { emoji: '📖', label: '電子書', produces: ['大綱', '蒐集資料', '內文', '排版設計'] },
@@ -343,8 +353,14 @@ function buildDefaultPromptTemplates() {
     '你是本工作的發布助手。\n\n請根據以下內容，協助整理成可發布的格式。\n\n專案：{{project_name}}\n工作：{{work_name}}\n流程：{{flow_name}}\n目前步驟：{{step_name}}\n工作目標：{{goal}}\n\n已有成果：\n{{previous_results}}\n\n請輸出：\n1. 可直接發布的版本\n2. 建議標題或摘要\n3. 適合的發布時機或說明\n4. 下一步建議'));
 
   // ── 2. Flow-Specific Templates（覆蓋 Global Role，依 flowType + role + stepName 精準比對）──
+  list.push(tpl('flow_specific', '規劃師', 'song', '主題', '歌曲創作／主題發想',
+    '你是歌曲創作流程中的主題發想夥伴。\n\n請根據使用者這次想寫的歌，快速幫忙定調，不要過度規劃——這一步的目的是快速抓到方向，馬上進入歌詞創作，不是寫企劃書。\n\n歌曲／工作名稱：{{work_name}}\n\n已有成果：\n{{previous_results}}\n\n請輸出：\n1. 這首歌的核心主題（1-2句話講清楚就好）\n2. 適合的情緒基調\n3. 一個可能的故事情境或畫面（簡短即可，不用寫完整故事）\n\n請注意：\n- 整體輸出不要超過150字\n- 目標是盡快進入下一步（歌詞創作），不是把主題想到完美'));
+
   list.push(tpl('flow_specific', '寫作師', 'song', '歌詞創作', '歌曲創作／作詞師',
-    '你是歌曲創作流程中的作詞師。\n\n請根據以下歌曲企劃與前一步成果，協助完成歌詞創作。\n\n歌曲／工作名稱：{{work_name}}\n目前步驟：{{step_name}}\n歌曲目標：{{goal}}\n\n已有成果：\n{{previous_results}}\n\n請輸出：\n1. 歌名建議\n2. Verse\n3. Pre-Chorus\n4. Chorus\n5. Bridge\n6. Outro\n7. 適合 Suno 的風格說明\n8. 需要再打磨的地方\n\n請注意：\n歌詞要好唱、自然、有畫面。\n不要過度文青。\n不要太抽象。'));
+    '你是歌曲創作流程中的作詞師。\n\n請根據以下歌曲主題，直接創作完整歌詞，讓使用者可以馬上貼到 Suno 的 Lyrics 欄位使用。\n\n歌曲／工作名稱：{{work_name}}\n目前步驟：{{step_name}}\n歌曲主題：{{goal}}\n\n已有成果：\n{{previous_results}}\n\n請輸出：\n1. 完整歌詞（含 [Verse]、[Pre-Chorus]、[Chorus]、[Bridge]、[Outro] 等段落標記，這是 Suno 慣用的段落標記方式）\n2. 歌名建議（另外列出，不要混在歌詞正文裡）\n\n請注意：\n- 只寫歌詞本身，不要在這裡描述音樂風格，風格會在下一步單獨處理\n- 歌詞要好唱、自然、有畫面，不要過度文青、不要太抽象\n- 完整歌詞盡量控制在 3000 字（約 40-60 行）以內，這是 Suno 目前建議的實際甜蜜點，太長容易被系統壓縮或搶拍'));
+
+  list.push(tpl('flow_specific', '工程師', 'song', '音樂風格', '歌曲創作／音樂風格設計師',
+    '你是歌曲創作流程中的音樂風格設計師。\n\n請根據以下歌曲主題與歌詞，設計一段可以直接貼到 Suno「Style of Music」欄位的風格描述。\n\n歌曲／工作名稱：{{work_name}}\n歌曲主題：{{goal}}\n\n已有成果（含歌詞）：\n{{previous_results}}\n\n請輸出一段精簡的風格描述，依序涵蓋：\n1. 曲風與次曲風（例如：city pop, indie folk）\n2. 情緒與能量（例如：nostalgic, uplifting）\n3. 唱腔特色（例如：female airy vocals, raspy male vocals）\n4. 主要樂器與製作質感（例如：acoustic guitar, warm analog production）\n5. 節奏／BPM（例如：mid-tempo, 90 BPM）\n\n請注意：\n- 請用英文或 Suno 慣用的風格關鍵字寫，這是目前 Suno 辨識度較高的寫法\n- 請把最重要的關鍵字放在最前面，Suno 對開頭的標籤權重較高\n- 嚴格控制在 200 字以內（這是舊版 Suno 模型的上限，新版模型雖然可以到 1000 字，但控制在 200 字內可以確保任何版本都能直接使用），不要寫成一整段小作文'));
 
   list.push(tpl('flow_specific', '寫作師', 'material', '教材撰寫', '教材出版／教材作者',
     '你是教材出版流程中的教材作者。\n\n請根據以下教材規劃與前一步成果，協助完成教材內文撰寫。\n\n教材／工作名稱：{{work_name}}\n目前步驟：{{step_name}}\n教材目標：{{goal}}\n\n已有成果：\n{{previous_results}}\n\n請輸出：\n1. 完整教材內文\n2. 適合初學者的舉例\n3. 練習題或反思問題建議\n4. 需要再潤稿的地方\n\n請注意：\n用詞要白話、避免術語堆疊，讓沒有背景的讀者也看得懂。'));
@@ -573,6 +589,12 @@ function ensureNewFields(s) {
   if (!s.promptTemplates) s.promptTemplates = buildDefaultPromptTemplates();
   if (s.gasWebhookUrl === undefined) s.gasWebhookUrl = '';
   if (!s.myTools) s.myTools = buildDefaultMyTools();
+  // 官方工具目錄新增工具時，既有使用者的清單也同步補上（預設啟用），這樣新工具才推薦得到，不用使用者自己手動加
+  TOOLS_CATALOG.forEach(function (t) {
+    if (!s.myTools.some(function (mt) { return mt.id === t.id; })) {
+      s.myTools.push({ id: t.id, name: t.name, category: t.category, emoji: t.emoji, enabled: true, isCustom: false });
+    }
+  });
   s.results.forEach(function (r) { if (r.cloudStatus === undefined) r.cloudStatus = 'none'; });
 }
 function buildChannelDraft(channel, result) {
@@ -1181,6 +1203,24 @@ function renderWorkDetail() {
   const suggested = suggestedToolForStep(work.flowId, step.role, step.name);
   document.getElementById('wd-ai-suggest').textContent = '建議找：' + suggested.name;
   document.getElementById('wd-ai-reason').textContent = suggested.reason || '';
+
+  const toolsBox = document.getElementById('wd-recommended-tools');
+  const toolChain = getRecommendedToolsChain(work.flowId, step.role, step.name);
+  if (toolChain.length > 0) {
+    const medals = ['🥇', '🥈', '🥉'];
+    toolsBox.style.display = 'block';
+    toolsBox.innerHTML = '<div class="section-label" style="margin-top:14px">💡 這一步適合的工具</div>' +
+      toolChain.map(function (item, i) {
+        const tool = getMyToolById(item.toolId);
+        const label = tool ? tool.name : item.toolId;
+        return '<div class="tool-suggest-row"><span class="medal">' + (medals[i] || '　') + '</span><b>' + escHtml(label) + '</b>　<span class="reason">' + escHtml(item.reason || '') + '</span></div>';
+      }).join('') +
+      '<div class="tool-suggest-note">這只是起點，你也可以用自己熟悉的工具。</div>';
+  } else {
+    toolsBox.style.display = 'none';
+    toolsBox.innerHTML = '';
+  }
+
   const track = document.getElementById('wd-progress');
   track.innerHTML = flow.steps.map(function (s, i) {
     let cls = 'progress-step';
@@ -1225,11 +1265,43 @@ function renderCopyToAi() {
   document.getElementById('copy-text-box').innerHTML = renderCopyPreviewHtml(lastCopyText);
   document.getElementById('copy-ai-name').textContent = currentStepAiName();
 }
+// 特定步驟的字數建議（目前僅歌曲創作流程的 Lyrics／Style 有實際工具字數限制需要提醒）
+// 依據 Suno 官方目前實際狀況（2026）：Lyrics 新版模型上限 5000 字，但 3000 字（約40-60行）內是實際好用的甜蜜點；
+// Style 舊版模型上限 200 字，新版模型上限 1000 字，控制在 200 字內可相容所有版本
+const LENGTH_GUIDANCE = {
+  '歌詞創作': { soft: 3000, hard: 5000, note: 'Suno 歌詞欄位建議控制在 3000 字（約 40-60 行）內，太長容易被系統壓縮或搶拍；新版模型上限是 5000 字。' },
+  '音樂風格': { soft: 200, hard: 1000, note: 'Suno 風格欄位建議控制在 200 字內，這樣不管新舊版本都能直接用；新版模型雖然可以到 1000 字，但精簡的效果通常更好。' }
+};
+
+function updatePasteBackCounter() {
+  const work = getActiveWork();
+  const stepName = currentStep(work).name;
+  const guidance = LENGTH_GUIDANCE[stepName];
+  const counterEl = document.getElementById('pb-char-counter');
+  if (!guidance) { counterEl.style.display = 'none'; return; }
+
+  const len = document.getElementById('paste-back-textarea').value.length;
+  counterEl.style.display = 'block';
+  let color = 'var(--text-dim)';
+  let msg = len + ' 字';
+  if (len > guidance.hard) { color = 'var(--red)'; msg += '　已超過上限，Suno 可能會拒絕或截斷內容'; }
+  else if (len > guidance.soft) { color = 'var(--gold)'; msg += '　已超過建議長度，可以考慮精簡一點'; }
+  counterEl.style.color = color;
+  counterEl.textContent = msg;
+}
+
 function renderPasteBack() {
   const work = getActiveWork();
-  document.getElementById('pb-step-name').textContent = currentStep(work).name;
+  const stepName = currentStep(work).name;
+  document.getElementById('pb-step-name').textContent = stepName;
   const versions = (work.stepVersions && work.stepVersions[work.currentStepIndex]) || [];
   document.getElementById('pb-version-hint').textContent = versions.length > 0 ? '這會是第 v' + (versions.length + 1) + ' 版' : '這是第一版';
+
+  const guidance = LENGTH_GUIDANCE[stepName];
+  const guidanceEl = document.getElementById('pb-length-guidance');
+  if (guidance) { guidanceEl.style.display = 'block'; guidanceEl.textContent = '💡 ' + guidance.note; }
+  else { guidanceEl.style.display = 'none'; }
+  updatePasteBackCounter();
 }
 
 function renderSatisfaction() {

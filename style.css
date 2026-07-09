@@ -243,6 +243,13 @@ body { background: var(--green-dark); color: var(--cream); font-family: var(--fo
 .purpose-card:active { background: var(--green-pale); border-color: var(--green-soft); }
 
 .section-label { font-size: 13px; font-weight: 700; color: var(--cream); opacity: 0.75; margin-bottom: 10px; }
+.card .section-label { color: var(--text-mid); opacity: 1; }
+
+/* ── 建議工具（歌曲創作等 Flow 的排名工具建議）── */
+.tool-suggest-row { font-size: 13.5px; color: var(--text); line-height: 1.9; }
+.tool-suggest-row .medal { display: inline-block; width: 22px; }
+.tool-suggest-row .reason { color: var(--text-mid); font-size: 12.5px; }
+.tool-suggest-note { font-size: 12px; color: var(--text-dim); margin-top: 8px; }
 
 /* ── 我的成果 ── */
 .category-tabs { display: flex; gap: 8px; overflow-x: auto; padding-bottom: 4px; margin-bottom: 16px; }

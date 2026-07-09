@@ -115,6 +115,7 @@
         <div class="line" style="margin-top:8px" id="wd-ai-suggest"></div>
         <div class="line" style="margin-top:4px;font-size:12.5px;color:var(--text-dim)" id="wd-ai-reason"></div>
       </div>
+      <div class="card" id="wd-recommended-tools" style="display:none"></div>
       <button class="btn" onclick="goCopyToAi()">交給 AI</button>
       <button class="btn outline" style="margin-top:10px" onclick="goPasteBack()">✍️ 我來修改（自己動手做這一步）</button>
     </div>
@@ -143,9 +144,11 @@
     </div>
     <div style="padding-top:20px">
       <div class="notice">貼上 AI 給你的完整回答，按下面按鈕保存這個版本，接著會請你確認滿不滿意。<br><span id="pb-version-hint" style="font-weight:700"></span></div>
+      <div id="pb-length-guidance" class="notice" style="display:none;background:var(--gold-pale);margin-bottom:12px"></div>
       <div class="field">
         <label>「<span id="pb-step-name"></span>」的成果</label>
-        <textarea id="paste-back-textarea" placeholder="把 AI 的回答貼在這裡..."></textarea>
+        <textarea id="paste-back-textarea" placeholder="把 AI 的回答貼在這裡..." oninput="updatePasteBackCounter()"></textarea>
+        <div id="pb-char-counter" style="display:none;text-align:right;font-size:12.5px;margin-top:6px"></div>
       </div>
       <button class="btn" onclick="submitPasteBack()">保存這個版本</button>
     </div>
