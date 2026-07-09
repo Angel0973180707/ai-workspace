@@ -56,34 +56,34 @@
       "note": "Mission：歌曲創作優化（2026-07-09）——第2步就要拿到可直接用的歌詞，第3步拿到可直接用的風格描述，盡快產出第一個可用成果。recommend 是「用哪個 AI 協助寫」，recommendedTools 是「寫完之後拿去哪裡生成／製作」，兩者分開，都只是起點不是排行榜，使用者永遠可以換成自己熟悉的。",
       "steps": [
         { "role": "規劃師", "stepName": "主題", "recommend": [
-          { "toolId": "chatgpt", "reason": "快速定調歌曲主題，ChatGPT 適合先把概念聊開，不用想太久。" }
+          { "toolId": "chatgpt", "reason": "很多創作者會在這一步先找 ChatGPT 聊聊想法，不用想太完整，先抓到方向就好。" }
         ] },
         { "role": "寫作師", "stepName": "歌詞創作", "recommend": [
-          { "toolId": "gemini", "reason": "很多創作者會用 Gemini 寫歌詞，意象發想跟畫面感的產出速度快。" },
-          { "toolId": "claude", "reason": "如果想要更細膩的韻腳與意象掌握，Claude 也是常見選擇。" },
-          { "toolId": "chatgpt", "reason": "ChatGPT 上手快，寫歌詞初稿也很順手。" }
+          { "toolId": "gemini", "reason": "很多創作者會在寫歌詞這一步用 Gemini，意象發想跟畫面感來得比較快。" },
+          { "toolId": "claude", "reason": "如果想要韻腳跟意象更細膩一點，也有創作者會換成 Claude。" },
+          { "toolId": "chatgpt", "reason": "手邊只有 ChatGPT 也沒問題，寫歌詞初稿一樣很順手。" }
         ] },
         { "role": "工程師", "stepName": "音樂風格", "recommend": [
-          { "toolId": "gemini", "reason": "整理音樂風格關鍵字，Gemini 對這類結構化描述掌握得不錯。" },
-          { "toolId": "claude", "reason": "如果想要風格描述更精準，Claude 也是常見選擇。" },
-          { "toolId": "chatgpt", "reason": "ChatGPT 整理成 Suno 慣用格式也很方便。" }
+          { "toolId": "gemini", "reason": "把音樂風格整理成關鍵字，很多人會延續用 Gemini，跟上一步的歌詞接得上。" },
+          { "toolId": "claude", "reason": "如果想要風格描述更精準一點，Claude 也是不錯的選擇。" },
+          { "toolId": "chatgpt", "reason": "用 ChatGPT 整理成 Suno 慣用的格式也很方便。" }
         ], "recommendedTools": [
-          { "toolId": "suno", "reason": "支援完整歌曲生成，同時吃 Lyrics 跟 Style 兩個欄位，是目前最完整的組合。" },
-          { "toolId": "udio", "reason": "適合流行歌曲，人聲自然、音色表現佳，是另一個常見選擇。" }
+          { "toolId": "suno", "reason": "很多創作者會直接用 Suno，同時吃 Lyrics 跟 Style 兩個欄位，是目前最完整的組合。" },
+          { "toolId": "udio", "reason": "如果想要更自然的人聲、更好的音色表現，Udio 也是常見的選擇。" }
         ] },
         { "role": "設計師", "stepName": "封面構想", "recommend": [
-          { "toolId": "chatgpt", "reason": "把封面構想描述清楚，ChatGPT 很順手，也能直接用內建的圖片生成。" }
+          { "toolId": "chatgpt", "reason": "把封面的畫面感講清楚，ChatGPT 很順手，內建的圖片生成也能直接用。" }
         ], "recommendedTools": [
-          { "toolId": "chatgpt", "reason": "ChatGPT 的圖片生成適合快速產出封面草圖。" },
-          { "toolId": "canva", "reason": "如果想要更精緻的排版與素材庫，Canva 是常見選擇。" }
+          { "toolId": "chatgpt", "reason": "想快速看到封面草圖，ChatGPT 的圖片生成很方便。" },
+          { "toolId": "canva", "reason": "如果想要更精緻的排版跟素材庫，很多人會換成 Canva。" }
         ] },
         { "role": "設計師", "stepName": "MV 畫面構想", "recommend": [
-          { "toolId": "chatgpt", "reason": "把 MV 畫面構想寫清楚，ChatGPT 很順手。" }
+          { "toolId": "chatgpt", "reason": "把 MV 想要的畫面寫清楚，ChatGPT 很順手。" }
         ], "recommendedTools": [
-          { "toolId": "runway", "reason": "適合生成有電影感、鏡頭運動的 MV 畫面。" },
-          { "toolId": "pika", "reason": "另一個常見的 AI 影片生成工具，風格生成速度快。" },
-          { "toolId": "canva", "reason": "如果只需要簡單的圖文動態，Canva 也可以直接做。" },
-          { "toolId": "capcut", "reason": "後製剪輯、拼接素材時，CapCut 是常見的搭配工具。" }
+          { "toolId": "runway", "reason": "想要有電影感、鏡頭有運動感的畫面，很多創作者會用 Runway。" },
+          { "toolId": "pika", "reason": "如果想快速看到不同風格的畫面，Pika 生成速度也很快。" },
+          { "toolId": "canva", "reason": "只需要簡單的圖文動態，Canva 直接做就夠了。" },
+          { "toolId": "capcut", "reason": "後製剪輯、拼接素材的時候，CapCut 是很多人習慣的工具。" }
         ] },
         { "role": "發布助手", "stepName": "發布文案", "recommend": [
           { "toolId": "chatgpt", "reason": "發布文案整理，ChatGPT 很順手。" }

@@ -304,7 +304,16 @@ const FLOW_DIRECTIONS = {
   material: ['更適合初學者', '多一點例子', '步驟更清楚', '練習題更實用', '老師講解更自然'],
   video: ['開頭更吸引人', '節奏更快', '更短影音感', '更有爆點', '字幕更好切']
 };
-function directionsFor(flowId) { return GENERIC_DIRECTIONS.concat(FLOW_DIRECTIONS[flowId] || []); }
+// 特定步驟的專屬打磨方向：改善「目前這一版」，不是重新寫一份，比流程層級的方向更精準
+// （Mission：歌曲創作體驗優化，2026-07-09，依 CEO 實測回饋新增歌詞專屬打磨方向）
+const STEP_DIRECTIONS = {
+  '歌詞創作': ['更口語', '更押韻', '更有畫面', '更洗腦', '更有台灣味', '更療癒', '更感人', '更簡潔']
+};
+function directionsFor(flowId, stepName) {
+  const stepSpecific = stepName && STEP_DIRECTIONS[stepName];
+  if (stepSpecific) return stepSpecific;
+  return GENERIC_DIRECTIONS.concat(FLOW_DIRECTIONS[flowId] || []);
+}
 
 // ═════════════════════════════════════════════════════════════
 // 指令母模中心（Prompt Template Library，UI 顯示為「AI 指令庫」）
@@ -360,7 +369,7 @@ function buildDefaultPromptTemplates() {
     '你是歌曲創作流程中的作詞師。\n\n請根據以下歌曲主題，直接創作完整歌詞，讓使用者可以馬上貼到 Suno 的 Lyrics 欄位使用。\n\n歌曲／工作名稱：{{work_name}}\n目前步驟：{{step_name}}\n歌曲主題：{{goal}}\n\n已有成果：\n{{previous_results}}\n\n請輸出：\n1. 完整歌詞（含 [Verse]、[Pre-Chorus]、[Chorus]、[Bridge]、[Outro] 等段落標記，這是 Suno 慣用的段落標記方式）\n2. 歌名建議（另外列出，不要混在歌詞正文裡）\n\n請注意：\n- 只寫歌詞本身，不要在這裡描述音樂風格，風格會在下一步單獨處理\n- 歌詞要好唱、自然、有畫面，不要過度文青、不要太抽象\n- 完整歌詞盡量控制在 3000 字（約 40-60 行）以內，這是 Suno 目前建議的實際甜蜜點，太長容易被系統壓縮或搶拍'));
 
   list.push(tpl('flow_specific', '工程師', 'song', '音樂風格', '歌曲創作／音樂風格設計師',
-    '你是歌曲創作流程中的音樂風格設計師。\n\n請根據以下歌曲主題與歌詞，設計一段可以直接貼到 Suno「Style of Music」欄位的風格描述。\n\n歌曲／工作名稱：{{work_name}}\n歌曲主題：{{goal}}\n\n已有成果（含歌詞）：\n{{previous_results}}\n\n請輸出一段精簡的風格描述，依序涵蓋：\n1. 曲風與次曲風（例如：city pop, indie folk）\n2. 情緒與能量（例如：nostalgic, uplifting）\n3. 唱腔特色（例如：female airy vocals, raspy male vocals）\n4. 主要樂器與製作質感（例如：acoustic guitar, warm analog production）\n5. 節奏／BPM（例如：mid-tempo, 90 BPM）\n\n請注意：\n- 請用英文或 Suno 慣用的風格關鍵字寫，這是目前 Suno 辨識度較高的寫法\n- 請把最重要的關鍵字放在最前面，Suno 對開頭的標籤權重較高\n- 嚴格控制在 200 字以內（這是舊版 Suno 模型的上限，新版模型雖然可以到 1000 字，但控制在 200 字內可以確保任何版本都能直接使用），不要寫成一整段小作文'));
+    '你是歌曲創作流程中的音樂風格設計師。\n\n請根據以下歌曲主題與歌詞，設計一段可以直接貼到 Suno「Style of Music」欄位的風格描述。\n\n歌曲／工作名稱：{{work_name}}\n歌曲主題：{{goal}}\n\n已有成果（含歌詞）：\n{{previous_results}}\n\n請輸出一段精簡的風格描述，依序涵蓋（這是 Suno 目前公認效果最好的排列順序）：\n1. 曲風與次曲風（例如：city pop, indie folk）\n2. 節奏／BPM（例如：mid-tempo, 90 BPM）\n3. 情緒與能量（例如：nostalgic, uplifting）\n4. 主要樂器與製作質感（例如：acoustic guitar, warm analog production）\n5. 唱腔特色（例如：female airy vocals, raspy male vocals）\n\n請注意：\n- 請用英文或 Suno 慣用的風格關鍵字寫，這是目前 Suno 辨識度較高的寫法\n- 每個標籤盡量精簡（1-3個字最好），整體抓 4-7 個重點標籤即可，不要塞太多，太多反而會讓 Suno 抓不到重點\n- 請把最重要的關鍵字放在最前面，Suno 對開頭的標籤權重較高\n- 嚴格控制在 200 字以內（這是舊版 Suno 模型的上限，新版模型雖然可以到 1000 字，但控制在 200 字內可以確保任何版本都能直接使用），不要寫成一整段小作文'));
 
   list.push(tpl('flow_specific', '寫作師', 'material', '教材撰寫', '教材出版／教材作者',
     '你是教材出版流程中的教材作者。\n\n請根據以下教材規劃與前一步成果，協助完成教材內文撰寫。\n\n教材／工作名稱：{{work_name}}\n目前步驟：{{step_name}}\n教材目標：{{goal}}\n\n已有成果：\n{{previous_results}}\n\n請輸出：\n1. 完整教材內文\n2. 適合初學者的舉例\n3. 練習題或反思問題建議\n4. 需要再潤稿的地方\n\n請注意：\n用詞要白話、避免術語堆疊，讓沒有背景的讀者也看得懂。'));
@@ -938,6 +947,16 @@ function satisfactionRevise(level) {
   showScreen('screen-revise-direction');
 }
 
+// 從「成果詳情」畫面直接進入打磨（例如已經按過「很滿意」，但回頭看又想再調整）
+// 只給 renderAssetDetail() 已經確認過「還是目前這一步」的成果呼叫，避免資料錯位
+function openPolishFromAsset(resultId) {
+  const r = getResult(resultId);
+  activeWorkId = r.workId;
+  lastSubmittedResultId = r.id;
+  selectedDirections = [];
+  showScreen('screen-revise-direction');
+}
+
 function toggleDirection(dir, event) {
   const idx = selectedDirections.indexOf(dir);
   if (idx === -1) { selectedDirections.push(dir); } else { selectedDirections.splice(idx, 1); }
@@ -1312,7 +1331,7 @@ function renderSatisfaction() {
 
 function renderReviseDirection() {
   const work = getActiveWork();
-  const dirs = directionsFor(work.flowId);
+  const dirs = directionsFor(work.flowId, currentStep(work).name);
   const list = document.getElementById('direction-list');
   list.innerHTML = dirs.map(function (d) {
     return '<div class="template-pick" onclick="toggleDirection(\'' + d + '\', event)">' + d + '</div>';
@@ -1381,6 +1400,15 @@ function renderAssetDetail() {
   } else {
     historyBox.innerHTML = '';
   }
+
+  // 打磨這個版本：只有在「這個版本還是所屬工作目前正在進行的那一步」時才安全提供，
+  // 避免工作已經往前推進後，打磨結果被錯誤接到別的步驟去
+  const polishBox = document.getElementById('rd-polish-box');
+  const ownerWork = state.works.find(function (w) { return w.id === r.workId; });
+  const canPolishHere = !r.isFinal && ownerWork && ownerWork.currentStepIndex === r.stepIndex;
+  polishBox.innerHTML = canPolishHere
+    ? '<button class="btn outline" onclick="openPolishFromAsset(' + r.id + ')">🎨 打磨這個版本</button>'
+    : '';
 
   const cloudBox = document.getElementById('rd-cloud-box');
   if (r.isFinal) {
@@ -1465,13 +1493,13 @@ function renderFlowIntro() {
   const flow = FLOWS[fid];
   document.getElementById('fi-title').textContent = intro.emoji + ' ' + intro.label;
   document.getElementById('fi-produces').innerHTML = '<div class="section-label">這套流程會完成什麼？</div>' +
-    '<ul style="padding-left:20px;font-size:14px;line-height:1.9">' +
+    '<ul style="padding-left:20px;font-size:14px;line-height:1.9;color:var(--text)">' +
     intro.produces.map(function (p) { return '<li>' + escHtml(p) + '</li>'; }).join('') + '</ul>';
 
   const roles = flow.steps.map(function (s) { return s.role; });
   const uniqueRoles = roles.filter(function (r, i) { return roles.indexOf(r) === i; });
   document.getElementById('fi-ai-team').innerHTML = '<div class="section-label" style="margin-top:18px">目前合作角色</div>' +
-    '<div style="font-size:14px;line-height:2.2">' +
+    '<div style="font-size:14px;line-height:2.2;color:var(--text)">' +
     uniqueRoles.map(function (r) { return ROLE_ICON[r] + ' ' + r; }).join('　→　') + '</div>';
 }
 

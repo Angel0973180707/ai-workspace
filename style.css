@@ -290,6 +290,7 @@ body { background: var(--green-dark); color: var(--cream); font-family: var(--fo
 
 .result-content-box {
   background: var(--coffee-pale);
+  color: var(--text);
   border-radius: 14px;
   padding: 16px;
   font-size: 14px;
