@@ -46,7 +46,7 @@ body { background: var(--green-dark); color: var(--cream); font-family: var(--fo
 
 /* ── 卡片 ── */
 .card {
-  background: var(--white);
+  background: var(--cream);
   border: 1.5px solid var(--border);
   border-radius: 18px;
   padding: 18px 20px;
@@ -106,7 +106,7 @@ body { background: var(--green-dark); color: var(--cream); font-family: var(--fo
 /* ── 快速選項（新增工作用）── */
 .pick-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 6px; }
 .pick-card {
-  background: var(--white);
+  background: var(--cream);
   border: 1.5px solid var(--border);
   border-radius: 16px;
   padding: 20px 12px;
@@ -167,7 +167,7 @@ body { background: var(--green-dark); color: var(--cream); font-family: var(--fo
 /* 「交給 AI」預覽：把原始文字分段呈現，不要讓使用者直接看到一堆 # 符號 */
 #copy-text-box { max-height: 50vh; overflow-y: auto; white-space: normal; }
 #copy-text-box .pack-title { font-size: 17px; font-weight: 700; color: var(--green-dark); margin-bottom: 12px; }
-#copy-text-box .pack-section { background: var(--white); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
+#copy-text-box .pack-section { background: var(--cream); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
 #copy-text-box .pack-label { font-size: 12px; font-weight: 700; color: var(--green-soft); margin-bottom: 4px; }
 #copy-text-box .pack-value { font-size: 14px; line-height: 1.7; color: var(--text); }
 #copy-text-box .pack-divider { border-top: 1.5px dashed var(--gold); margin: 18px 0; }
@@ -194,7 +194,7 @@ body { background: var(--green-dark); color: var(--cream); font-family: var(--fo
 
 /* ── 流程市集 ── */
 .market-card {
-  background: var(--white);
+  background: var(--cream);
   border: 1.5px solid var(--border);
   border-radius: 16px;
   padding: 18px 20px;
@@ -231,7 +231,7 @@ body { background: var(--green-dark); color: var(--cream); font-family: var(--fo
 .purpose-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 22px; }
 .purpose-card {
   min-width: 0;
-  background: var(--white);
+  background: var(--cream);
   border: 1.5px solid var(--border);
   border-radius: 14px;
   padding: 14px 2px;
@@ -261,7 +261,7 @@ body { background: var(--green-dark); color: var(--cream); font-family: var(--fo
 .category-tab.active { background: var(--green-dark); color: var(--white); border-color: var(--green-dark); }
 
 .result-card {
-  background: var(--white);
+  background: var(--cream);
   border: 1.5px solid var(--border);
   border-radius: 16px;
   padding: 16px 18px;
@@ -325,7 +325,7 @@ body { background: var(--green-dark); color: var(--cream); font-family: var(--fo
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: var(--white);
+  background: var(--cream);
   border: 1.5px solid var(--border);
   border-radius: 14px;
   padding: 12px 14px;
