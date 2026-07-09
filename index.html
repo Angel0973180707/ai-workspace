@@ -193,32 +193,34 @@
 
   <!-- 🤖 AI 團隊 -->
   <div class="screen" id="screen-ai-team">
-    <div class="topbar"><div class="title">今天由誰幫忙？</div></div>
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-settings')">←</button>
+      <div class="title">今天由誰幫忙？</div>
+    </div>
     <div style="padding-top:20px">
       <div class="notice">每個角色可以指定你現在習慣用哪個 AI，隨時可以換，不影響工作流程。</div>
       <div class="card" id="ai-team-list" style="padding:4px 20px"></div>
-      <button class="btn outline" onclick="showScreen('screen-prompt-library')">🧠 AI 配方庫（查看每個角色目前用的指令）</button>
     </div>
   </div>
 
-  <!-- AI 配方庫 -->
+  <!-- AI 指令庫 -->
   <div class="screen" id="screen-prompt-library">
     <div class="topbar">
-      <button class="back" onclick="goBack('screen-ai-team')">←</button>
-      <div class="title">AI 配方庫</div>
+      <button class="back" onclick="goBack('screen-settings')">←</button>
+      <div class="title">AI 指令庫</div>
     </div>
     <div style="padding-top:20px">
-      <div class="notice">這裡是「複製給 AI」跟「作品打磨」背後實際使用的指令內容，讓每次產生的指令維持一致的品質與語氣。<br><br>AI 指令不是隨便一句話，而是由「AI 配方 + 專案背景」組成，確保不同 AI 接手時能理解同一個工作脈絡。</div>
+      <div class="notice">這裡是「複製給 AI」跟「作品打磨」背後實際使用的指令內容，讓每次產生的指令維持一致的品質與語氣。<br><br>AI 指令不是隨便一句話，而是由「指令庫 + 專案背景」組成，確保不同 AI 接手時能理解同一個工作脈絡。</div>
       <div class="category-tabs" id="prompt-filter-tabs"></div>
       <div id="prompt-list"></div>
     </div>
   </div>
 
-  <!-- 配方詳情 -->
+  <!-- 指令詳情 -->
   <div class="screen" id="screen-prompt-detail">
     <div class="topbar">
       <button class="back" onclick="goBack('screen-prompt-library')">←</button>
-      <div class="title">配方詳情</div>
+      <div class="title">指令詳情</div>
     </div>
     <div style="padding-top:20px">
       <h3 style="font-size:19px;margin-bottom:6px" id="pd-title"></h3>
@@ -287,6 +289,8 @@
   <div class="screen" id="screen-settings">
     <div class="topbar"><div class="title">我的工作台</div></div>
     <div style="padding-top:20px">
+
+      <div class="section-label">基本</div>
       <div class="card">
         <div class="settings-row">
           <span class="label">我的名稱</span>
@@ -305,9 +309,14 @@
           <span class="value" id="settings-count"></span>
         </div>
       </div>
+
+      <div class="section-label" style="margin-top:18px">AI 協作</div>
       <button class="btn outline" onclick="showScreen('screen-ai-team')">🤖 AI 角色設定</button>
       <button class="btn outline" style="margin-top:10px" onclick="showScreen('screen-my-tools')">🧰 我的工具</button>
-      <button class="btn outline" style="margin-top:10px" onclick="exportData()">⬇️ 匯出我的資料</button>
+      <button class="btn outline" style="margin-top:10px" onclick="showScreen('screen-prompt-library')">🧠 AI 指令庫（進階：查看每個角色目前用的指令）</button>
+
+      <div class="section-label" style="margin-top:18px">進階</div>
+      <button class="btn outline" onclick="exportData()">⬇️ 匯出我的資料</button>
 
       <div class="card" style="margin-top:14px;border:1px dashed var(--gold);background:var(--gold-pale)">
         <h3 style="font-size:16px;margin-bottom:8px;color:var(--gold)">☁️ 專屬 Google 雲端備份設定</h3>
@@ -319,6 +328,14 @@
           <input type="text" id="settings-gas-url" onchange="updateGasWebhookUrl(this.value)" placeholder="https://script.google.com/.../exec">
         </div>
         <button class="btn outline" onclick="openGasInstructions()">📖 1 分鐘開通雲端教學</button>
+      </div>
+
+      <div class="card" style="margin-top:14px;opacity:0.6">
+        <h3 style="font-size:15px;margin-bottom:8px;color:var(--text-mid)">🔭 即將推出</h3>
+        <p style="font-size:13px;color:var(--text-dim);line-height:1.8">
+          Studio 工作室・雲端連線中心・知識庫<br>
+          陸續推出，適合需要管理多個品牌或大型專案的使用者。
+        </p>
       </div>
     </div>
   </div>
@@ -410,16 +427,13 @@
 <!-- 底部導覽 -->
 <div class="bottom-nav" id="bottom-nav">
   <button class="nav-item active" data-target="screen-home" onclick="showScreen('screen-home')">
-    <span class="icon">🏠</span><span class="label">今天</span>
+    <span class="icon">🏠</span><span class="label">我的工作</span>
   </button>
   <button class="nav-item" data-target="screen-assets" onclick="showScreen('screen-assets')">
     <span class="icon">📚</span><span class="label">成果庫</span>
   </button>
   <button class="nav-item" data-target="screen-publish" onclick="showScreen('screen-publish')">
     <span class="icon">📢</span><span class="label">發布中心</span>
-  </button>
-  <button class="nav-item" data-target="screen-ai-team" onclick="showScreen('screen-ai-team')">
-    <span class="icon">🤖</span><span class="label">AI 團隊</span>
   </button>
   <button class="nav-item" data-target="screen-settings" onclick="showScreen('screen-settings')">
     <span class="icon">⚙️</span><span class="label">我的工作台</span>

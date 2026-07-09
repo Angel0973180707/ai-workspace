@@ -297,7 +297,7 @@ const FLOW_DIRECTIONS = {
 function directionsFor(flowId) { return GENERIC_DIRECTIONS.concat(FLOW_DIRECTIONS[flowId] || []); }
 
 // ═════════════════════════════════════════════════════════════
-// 指令母模中心（Prompt Template Library／AI 配方庫）
+// 指令母模中心（Prompt Template Library，UI 顯示為「AI 指令庫」）
 // 所有「複製給 AI」與「修正指令」的內容，都必須從這裡的模板產生
 // ═════════════════════════════════════════════════════════════
 
@@ -371,7 +371,7 @@ function buildDefaultPromptTemplates() {
   list.push(tpl('polish', null, null, null, '作品打磨教練',
     '你是作品打磨教練。\n\n請根據使用者選擇的修改方向，協助修正作品。\n\n工作：{{work_name}}\n目前步驟：{{step_name}}\n使用角色：{{role_name}}\n使用 AI：{{ai_name}}\n\n上一版成果：\n{{current_result}}\n\n使用者想修改的方向：\n{{revision_direction}}\n\n請協助：\n1. 保留原本作品的優點\n2. 針對修改方向進行調整\n3. 不要重新偏題\n4. 輸出修改後版本\n5. 簡短說明你修改了哪些地方'));
 
-  // ── 4. Handoff Templates（交接用，本輪先建立供 AI 配方庫瀏覽，尚未接進特定畫面）──
+  // ── 4. Handoff Templates（交接用，本輪先建立供 AI 指令庫瀏覽，尚未接進特定畫面）──
   list.push(tpl('handoff', null, null, null, '交給下一位 AI',
     '你好，我是這個作品的下一位協作者。\n\n工作：{{work_name}}\n目前步驟：{{step_name}}\n上一步的成果：\n{{previous_results}}\n\n請你接手完成「{{step_name}}」這個步驟。'));
 
@@ -1431,7 +1431,7 @@ function renderMyTools() {
   }).join('');
 }
 
-// ── AI 配方庫（指令母模瀏覽）───────────────────────────────────
+// ── AI 指令庫（指令母模瀏覽）───────────────────────────────────
 let activePromptFilter = '全部';
 let activePromptTemplateId = null;
 
