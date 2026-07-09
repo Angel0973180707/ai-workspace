@@ -1,5 +1,5 @@
 // AI 工作台 Service Worker — 純離線快取，不做背景同步、不做推播、不做登入
-const CACHE_NAME = 'ai-workspace-v0.7';
+const CACHE_NAME = 'ai-workspace-v0.8';
 const ASSETS = [
   './index.html',
   './style.css',
