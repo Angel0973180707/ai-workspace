@@ -104,15 +104,6 @@ const FLOWS = {
       { name: '送出', role: '發布助手', category: '其他' }
     ]
   },
-  customer_reply: {
-    id: 'customer_reply', name: '客戶回覆流程',
-    steps: [
-      { name: '了解問題', role: '研究員', category: '其他' },
-      { name: '草擬回覆', role: '寫作師', category: '其他' },
-      { name: '潤飾語氣', role: '潤稿師', category: '其他' },
-      { name: '送出', role: '發布助手', category: '其他' }
-    ]
-  },
   song: {
     id: 'song', name: '歌曲創作流程',
     steps: [
@@ -124,6 +115,23 @@ const FLOWS = {
       { name: 'MV Prompt', role: '設計師', category: '歌曲' },
       { name: '發布文案', role: '發布助手', category: '歌曲' },
       { name: '作品打磨', role: '審查員', category: '歌曲' }
+    ]
+  },
+  research: {
+    id: 'research', name: '研究與論文寫作流程',
+    steps: [
+      { name: '研究題目', role: '規劃師', category: '研究' },
+      { name: '研究問題', role: '研究員', category: '研究' },
+      { name: '文獻蒐集', role: '研究員', category: '文獻整理' },
+      { name: '文獻整理', role: '研究員', category: '文獻整理' },
+      { name: '研究架構', role: '規劃師', category: '研究' },
+      { name: '論文大綱', role: '寫作師', category: '論文' },
+      { name: '初稿撰寫', role: '寫作師', category: '論文' },
+      { name: '引用與參考資料', role: '審查員', category: '論文' },
+      { name: '摘要與關鍵字', role: '寫作師', category: '論文' },
+      { name: '審查與修改', role: '審查員', category: '論文' },
+      { name: '作品打磨', role: '審查員', category: '論文' },
+      { name: '成果保存', role: '發布助手', category: '論文' }
     ]
   },
   custom: {
@@ -142,9 +150,10 @@ const FLOW_INTRO = {
   website: { emoji: '🌐', label: '建立網站', produces: ['網站規劃', '內容文字', '頁面設計', '網站建置'] },
   course: { emoji: '🎤', label: '課程設計', produces: ['課程大綱', '課程內容', '潤稿後定稿'] },
   social: { emoji: '📱', label: '社群貼文', produces: ['主題發想', '貼文文案', '配圖建議'] },
+  research: { emoji: '🧪', label: '研究與論文寫作', produces: ['研究題目與問題', '文獻蒐集與整理', '研究架構', '論文大綱', '初稿', '引用與參考資料', '摘要與關鍵字', '打磨過的最終版'] },
   custom: { emoji: '✍️', label: '自訂流程', produces: ['依你的需求自由發揮'] }
 };
-const MARKET_FLOW_IDS = ['song', 'video', 'material', 'ebook', 'product', 'website', 'course', 'social', 'custom'];
+const MARKET_FLOW_IDS = ['song', 'video', 'material', 'ebook', 'product', 'website', 'course', 'social', 'research', 'custom'];
 
 // ── Project 類型（首頁「今天想完成什麼？」入口）───────────────
 const PROJECT_TYPES = {
@@ -156,13 +165,14 @@ const PROJECT_TYPES = {
   course: { emoji: '🎤', label: '做課程', name: '我的課程', flowId: 'course' },
   social: { emoji: '📢', label: '社群貼文', name: '社群貼文', flowId: 'social' },
   song: { emoji: '🎵', label: '歌曲創作', name: '我的歌曲', flowId: 'song' },
+  research: { emoji: '🧪', label: '研究與論文寫作', name: '我的研究', flowId: 'research' },
   custom: { emoji: '➕', label: '自訂專案', name: null, flowId: 'custom' }
 };
 
 // 新增工作時，「換一個流程」的完整選單（含不在首頁入口裡的流程）
-const ALL_FLOW_IDS = ['material', 'video', 'product', 'social', 'course', 'website', 'ebook', 'song', 'customer_reply', 'custom'];
+const ALL_FLOW_IDS = ['material', 'video', 'product', 'social', 'course', 'website', 'ebook', 'song', 'research', 'customer_reply', 'custom'];
 
-const CATEGORY_LIST = ['教材', '影片', '文章', '商品', '社群貼文', '圖片', '腳本', '電子書', '課程', '歌曲', '其他'];
+const CATEGORY_LIST = ['教材', '影片', '文章', '商品', '社群貼文', '圖片', '腳本', '電子書', '課程', '歌曲', '研究', '論文', '文獻整理', '其他'];
 
 // 發布助手：各通路文案模板（純樣板文字，不串接任何平台、不自動發布）
 const PUBLISH_CHANNELS = ['YouTube', 'Facebook', 'IG', 'Threads', 'LINE'];
@@ -235,6 +245,18 @@ function buildDefaultPromptTemplates() {
   list.push(tpl('flow_specific', '寫作師', 'video', '腳本', '短影音／腳本師',
     '你是短影音流程中的腳本師。\n\n請根據以下主題，協助完成短影音腳本。\n\n影片／工作名稱：{{work_name}}\n目前步驟：{{step_name}}\n影片目標：{{goal}}\n\n已有成果：\n{{previous_results}}\n\n請輸出：\n1. 完整腳本（含開場、中段、結尾）\n2. 建議的節奏與長度\n3. 適合的字幕重點\n4. 需要再打磨的地方\n\n請注意：\n開場前3秒要抓住注意力，節奏要適合短影音平台。'));
 
+  list.push(tpl('flow_specific', '研究員', 'research', '文獻蒐集', '研究員／文獻蒐集',
+    '你是研究與論文寫作流程中的研究員，這一步是文獻蒐集。\n\n請根據以下研究背景，協助蒐集與主題相關的文獻、研究方向、核心概念與重要關鍵字。\n\n研究／工作名稱：{{work_name}}\n目前步驟：{{step_name}}\n研究目標：{{goal}}\n\n已有成果：\n{{previous_results}}\n\n請輸出：\n1. 相關文獻方向與核心概念\n2. 重要關鍵字\n3. 可能的研究缺口\n4. 建議下一步\n\n請注意：\n- 請標註資料來源\n- 不確定的地方請直接標記「需要查證」，不要捏造文獻、作者、年份或 DOI\n- 可以標註延伸研究方向'));
+
+  list.push(tpl('flow_specific', '研究員', 'research', '文獻整理', '研究員／文獻整理',
+    '你是研究與論文寫作流程中的研究員，這一步是文獻整理。\n\n請根據以下已蒐集的文獻資料，協助整理歸納。\n\n研究／工作名稱：{{work_name}}\n目前步驟：{{step_name}}\n研究目標：{{goal}}\n\n已有成果：\n{{previous_results}}\n\n請用表格輸出：\n| 作者／年份 | 主題 | 方法 | 發現 | 可用處 |\n|---|---|---|---|---|\n\n請注意：\n- 不確定的作者、年份、來源請標記「需要查證」或「尚無來源」，不要捏造\n- 請歸納出主要主題、觀點、方法與研究缺口'));
+
+  list.push(tpl('flow_specific', '寫作師', 'research', '初稿撰寫', '寫作師／論文初稿',
+    '你是研究與論文寫作流程中的寫作師，這一步是初稿撰寫。\n\n請根據以下研究架構與大綱，協助撰寫論文段落初稿。\n\n研究／工作名稱：{{work_name}}\n目前步驟：{{step_name}}\n研究目標：{{goal}}\n\n已有成果：\n{{previous_results}}\n\n請輸出：\n1. 完整初稿段落\n2. 段落邏輯說明\n3. 需要再補充查證的地方\n\n請注意：\n- 語氣正式、邏輯清楚\n- 避免未經查證的斷言，不確定處請標記「需要查證」\n- 不要捏造引用或數據'));
+
+  list.push(tpl('flow_specific', '審查員', 'research', '引用與參考資料', '審查員／引用檢查',
+    '你是研究與論文寫作流程中的審查員，這一步是引用與參考資料檢查。\n\n請根據以下內容，檢查引用是否清楚、是否需要補充來源、是否有過度推論。\n\n研究／工作名稱：{{work_name}}\n目前步驟：{{step_name}}\n\n已有成果：\n{{previous_results}}\n\n請輸出：\n1. 「需要補證據」的段落清單\n2. 「建議修改」的段落清單\n3. 引用格式是否一致\n4. 整體檢查結論\n\n請注意：\n- 不確定的引用來源請標記「需要查證」，不要幫忙捏造來源'));
+
   // ── 3. Polish Template（作品打磨，Polish Studio 的修正指令唯一來源）──
   list.push(tpl('polish', null, null, null, '作品打磨教練',
     '你是作品打磨教練。\n\n請根據使用者選擇的修改方向，協助修正作品。\n\n工作：{{work_name}}\n目前步驟：{{step_name}}\n使用角色：{{role_name}}\n使用 AI：{{ai_name}}\n\n上一版成果：\n{{current_result}}\n\n使用者想修改的方向：\n{{revision_direction}}\n\n請協助：\n1. 保留原本作品的優點\n2. 針對修改方向進行調整\n3. 不要重新偏題\n4. 輸出修改後版本\n5. 簡短說明你修改了哪些地方'));
@@ -271,6 +293,169 @@ function resolveAiInstructionTemplate(flowId, role, stepName) {
 
 function resolvePolishTemplate() {
   return state.promptTemplates.find(function (t) { return t.type === 'polish'; }) || null;
+}
+
+// ═════════════════════════════════════════════════════════════
+// Context Pack Builder（專案內容包）
+// 分工：Prompt Template 決定「角色與輸出方式」，Context Pack 提供「背景與進度」
+// 兩者相加才是完整指令，Context Pack 不取代 Prompt Template
+// ═════════════════════════════════════════════════════════════
+
+const CONTEXT_PACK_TEMPLATE =
+  '# 專案內容包\n\n' +
+  '## 專案\n{{project_name}}\n\n' +
+  '## 工作\n{{work_name}}\n\n' +
+  '## 工作目標\n{{goal}}\n\n' +
+  '## 使用流程\n{{flow_name}}\n\n' +
+  '## 目前步驟\n{{step_name}}\n\n' +
+  '## 目前角色\n{{role_name}}\n\n' +
+  '## 建議使用 AI\n{{ai_name}}\n\n' +
+  '## 已完成步驟\n{{completed_steps}}\n\n' +
+  '## 前面累積成果\n{{previous_results}}\n\n' +
+  '## 目前資產庫相關成果\n{{related_assets}}\n\n' +
+  '## 本次任務\n{{step_instruction}}\n\n' +
+  '## 請輸出格式\n{{output_format}}\n\n' +
+  '## 回填提醒\n完成後請輸出清楚段落，方便使用者貼回 AI 工作台。';
+
+const AUDIENCE_BY_FLOW = {
+  material: '初學者、一般讀者', course: '初學者、一般讀者', product: '潛在客戶',
+  video: '一般觀眾', social: '追蹤者', song: '聽眾', ebook: '一般讀者',
+  website: '網站訪客', customer_reply: '這位客戶本人', custom: '一般使用者'
+};
+function audienceFor(flowId) { return AUDIENCE_BY_FLOW[flowId] || '一般使用者'; }
+
+// 前面已完成步驟的完整內容（依目前採用版本）
+function buildPreviousResults(workId) {
+  const work = getWork(workId);
+  const prev = work.stepResultIds.slice(0, work.currentStepIndex)
+    .map(function (rid) { return state.results.find(function (r) { return r.id === rid; }); })
+    .filter(Boolean);
+  if (prev.length === 0) return '（這是第一步，還沒有前面的成果）';
+  return prev.map(function (r) { return '【' + r.stepName + '】\n' + r.content; }).join('\n\n');
+}
+
+// 同一個專案裡，其他工作已完成的最終成品（提供跨工作的專案脈絡）
+function buildRelatedAssets(projectId, workId) {
+  const others = state.results.filter(function (r) { return r.projectId === projectId && r.workId !== workId && r.isFinal; });
+  if (others.length === 0) return '（目前這個專案還沒有其他完成的成果）';
+  return others.map(function (r) {
+    const firstLine = (r.content || '').split('\n').filter(Boolean)[0] || '';
+    return '「' + r.workName + '」：' + firstLine;
+  }).join('\n');
+}
+
+// 依角色補充專屬脈絡（研究員／寫作師／潤稿師／發布助手），其餘角色回傳 null（不附加）
+function buildRoleSpecificContext(work, step, role, baseVars) {
+  if (role === '研究員') {
+    return fillTemplate(
+      '## 本次研究問題\n{{step_name}}\n\n' +
+      '## 已知資料\n{{previous_results}}\n\n' +
+      '## 需要查證的假設\n（依常識判斷，若有明顯需要查證的數字或事實，請特別標註）\n\n' +
+      '## 不要重複研究的內容\n{{completed_steps}}\n\n' +
+      '## 請標註不確定處\n遇到不確定或無法查證的地方，請直接說明，不要憑空捏造。',
+      baseVars
+    );
+  }
+  if (role === '寫作師') {
+    return fillTemplate(
+      '## 寫作風格\n請維持這個工作目前的語氣與風格，與前面已完成的內容一致。\n\n' +
+      '## 目標讀者\n{{audience}}\n\n' +
+      '## 已有素材\n{{previous_results}}\n\n' +
+      '## 請保持前後一致\n不要跟前面已完成的內容互相矛盾。',
+      Object.assign({}, baseVars, { audience: audienceFor(work.flowId) })
+    );
+  }
+  if (role === '潤稿師') {
+    return fillTemplate(
+      '## 上一版成果\n{{previous_results}}\n\n' +
+      '## 使用者想修改的方向\n（本次為一般潤稿步驟，非作品打磨修正，暫無特定修改方向）\n\n' +
+      '## 請保留原本優點\n潤稿時請保留原本內容的優點，不要整篇重寫。\n\n' +
+      '## 不要重新偏題\n請維持原本的主題與方向。',
+      baseVars
+    );
+  }
+  if (role === '發布助手') {
+    return fillTemplate(
+      '## 最終成品摘要\n{{previous_results}}\n\n' +
+      '## 發布平台\nYouTube、Facebook、IG、Threads、LINE\n\n' +
+      '## 需要產出的版本\n請產出適合上述平台的發布版本。',
+      baseVars
+    );
+  }
+  return null;
+}
+
+// 產生完整的專案內容包（含角色專屬補充）
+function buildContextPack(workId) {
+  const work = getWork(workId);
+  const project = getProject(work.projectId);
+  const flow = FLOWS[work.flowId];
+  const step = currentStep(work);
+
+  const vars = {
+    project_name: project ? project.name : '',
+    work_name: work.name,
+    goal: work.name,
+    flow_name: flow.name,
+    step_name: step.name,
+    role_name: step.role,
+    ai_name: state.roleAiMap[step.role] || ROLE_AI_DEFAULT[step.role],
+    completed_steps: flow.steps.slice(0, work.currentStepIndex).map(function (s) { return s.name; }).join('、') || '（尚未完成任何步驟）',
+    previous_results: buildPreviousResults(workId),
+    related_assets: buildRelatedAssets(work.projectId, workId),
+    step_instruction: '請以「' + step.role + '」的身份，完成「' + step.name + '」這個步驟。',
+    output_format: '請參考下方指令母模的詳細輸出要求。'
+  };
+
+  var pack = fillTemplate(CONTEXT_PACK_TEMPLATE, vars);
+  var roleExtra = buildRoleSpecificContext(work, step, step.role, vars);
+  if (roleExtra) pack += '\n\n' + roleExtra;
+  var flowExtra = buildFlowSpecificContext(work, vars);
+  if (flowExtra) pack += '\n\n' + flowExtra;
+  return pack;
+}
+
+// 依「流程」補充專屬脈絡（跟 buildRoleSpecificContext 依「角色」互補，兩者可同時出現）
+function buildFlowSpecificContext(work, vars) {
+  if (work.flowId === 'research') {
+    return fillTemplate(
+      '## 研究主題\n{{work_name}}\n\n' +
+      '## 研究目的\n（請參考「研究題目」與「研究架構」步驟的成果推斷，若尚未完成請協助釐清）\n\n' +
+      '## 研究問題\n（請參考「研究問題」步驟的成果）\n\n' +
+      '## 目標讀者\n學術／專業讀者\n\n' +
+      '## 已蒐集文獻\n{{previous_results}}\n\n' +
+      '## 需要查證的假設\n請標註所有不確定的數據、引用或論點，不要視為已確認的事實。\n\n' +
+      '## 引用格式需求\n請維持前後一致的引用格式，若前面步驟已建立格式，請沿用。\n\n' +
+      '## ⚠️ 不可捏造來源提醒\n不得捏造文獻、作者、年份、DOI 或引用來源。如果沒有可靠來源，請標記「需要查證」或「尚無來源」，不要編造看起來合理但無法查證的內容。',
+      vars
+    );
+  }
+  return null;
+}
+
+// 指令母模 + 專案內容包 → 完整指令（先給背景，再給任務與輸出要求）
+function buildAiInstructionFromTemplate(workId) {
+  const work = getWork(workId);
+  const step = currentStep(work);
+  const project = getProject(work.projectId);
+  const flow = FLOWS[work.flowId];
+  const template = resolveAiInstructionTemplate(work.flowId, step.role, step.name);
+
+  const vars = {
+    project_name: project ? project.name : '',
+    work_name: work.name,
+    flow_name: flow.name,
+    step_name: step.name,
+    role_name: step.role,
+    ai_name: state.roleAiMap[step.role] || ROLE_AI_DEFAULT[step.role],
+    goal: work.name,
+    previous_results: buildPreviousResults(workId)
+  };
+
+  const templateText = template ? fillTemplate(template.content, vars) : ('請協助完成「' + step.name + '」這個步驟。');
+  const contextPack = buildContextPack(workId);
+
+  return contextPack + '\n\n---\n\n' + templateText;
 }
 
 // 既有 localStorage（Mission 019 之前建立）可能沒有這些欄位，載入後自動補齊，不影響既有資料
@@ -366,7 +551,7 @@ function createFinalProduct(s, work, project) {
     return '【' + step.name + '】\n' + (r ? r.content : '');
   }).join('\n\n');
   const aiUsed = Array.from(new Set(flow.steps.map(function (step) { return s.roleAiMap[step.role] || ROLE_AI_DEFAULT[step.role]; }))).join('、');
-  const finalCategory = flow.id === 'video' ? '影片' : flow.id === 'ebook' ? '電子書' : flow.id === 'course' ? '課程' : flow.id === 'material' ? '教材' : flow.id === 'product' ? '商品' : flow.id === 'social' ? '社群貼文' : flow.id === 'song' ? '歌曲' : '其他';
+  const finalCategory = flow.id === 'video' ? '影片' : flow.id === 'ebook' ? '電子書' : flow.id === 'course' ? '課程' : flow.id === 'material' ? '教材' : flow.id === 'product' ? '商品' : flow.id === 'social' ? '社群貼文' : flow.id === 'song' ? '歌曲' : flow.id === 'research' ? '論文' : '其他';
   const final = {
     id: s.nextResultId++,
     title: work.name + '（最終成品）',
@@ -543,32 +728,9 @@ function deleteWork(workId, event) {
 
 // ── 交給 AI ───────────────────────────────────────────────────
 // 依「指令母模中心」規則產生指令：Flow-Specific 優先，找不到才退回 Global Role
+// Mission 021：改為「指令母模 + 專案內容包」組合，不再只產生單一步驟指令
 function buildCopyText(work) {
-  const flow = FLOWS[work.flowId];
-  const step = currentStep(work);
-  const project = getProject(work.projectId);
-  const template = resolveAiInstructionTemplate(work.flowId, step.role, step.name);
-
-  const prev = work.stepResultIds.slice(0, work.currentStepIndex)
-    .map(function (rid) { return state.results.find(function (r) { return r.id === rid; }); }).filter(Boolean);
-  const prevText = prev.length > 0
-    ? prev.map(function (r) { return '【' + r.stepName + '】\n' + r.content; }).join('\n\n')
-    : '（這是第一步，還沒有前面的成果）';
-
-  const vars = {
-    project_name: project ? project.name : '',
-    work_name: work.name,
-    flow_name: flow.name,
-    step_name: step.name,
-    role_name: step.role,
-    ai_name: state.roleAiMap[step.role] || ROLE_AI_DEFAULT[step.role],
-    goal: work.name,
-    previous_results: prevText
-  };
-
-  if (template) return fillTemplate(template.content, vars);
-  // 安全防呆：理論上每個角色都有 Global Role 模板，這裡不應該被觸發
-  return '請協助完成「' + step.name + '」這個步驟。';
+  return buildAiInstructionFromTemplate(work.id);
 }
 function goCopyToAi() { showScreen('screen-copy-to-ai'); }
 function currentStepAiName() {
@@ -1026,8 +1188,12 @@ function renderPublish() {
   pendingList.innerHTML = pending.length === 0
     ? '<div class="empty-state"><div class="icon">📭</div><div class="txt">目前沒有待發布的成品</div></div>'
     : pending.map(function (r) {
+      const paperNote = r.category === '論文'
+        ? '<div class="meta">未來支援格式：DOCX／PDF／Google Docs／簡報／摘要版／投稿版（本輪僅列出，尚未實作真正匯出）</div>'
+        : '';
       return '<div class="result-card"><h4>' + escHtml(r.title) + '</h4>' +
         '<div class="meta">' + escHtml(r.projectName) + '　·　' + formatDate(r.completedAt) + '</div>' +
+        paperNote +
         '<div class="action-row" style="margin-top:10px">' +
         '<button class="btn outline" onclick="openPublishAssistant(' + r.id + ')">✍️ 產生發布文案</button>' +
         '</div>' +
