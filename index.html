@@ -113,6 +113,7 @@
         <h3 style="font-size:22px;margin-bottom:12px" id="wd-step-name"></h3>
         <div class="line" style="font-size:16px" id="wd-role"></div>
         <div class="line" style="margin-top:8px" id="wd-ai-suggest"></div>
+        <div class="line" style="margin-top:4px;font-size:12.5px;color:var(--text-dim)" id="wd-ai-reason"></div>
       </div>
       <button class="btn" onclick="goCopyToAi()">交給 AI</button>
       <button class="btn outline" style="margin-top:10px" onclick="goPasteBack()">✍️ 我來修改（自己動手做這一步）</button>
@@ -207,7 +208,7 @@
       <div class="title">AI 配方庫</div>
     </div>
     <div style="padding-top:20px">
-      <div class="notice">這裡是「複製給 AI」跟「作品打磨」背後實際使用的指令內容，讓每次產生的指令維持一致的品質與語氣。<br><br>AI 指令不是單純 Prompt，而是由「指令母模 + 專案內容包」組成，確保不同 AI 接手時能理解同一個工作脈絡。</div>
+      <div class="notice">這裡是「複製給 AI」跟「作品打磨」背後實際使用的指令內容，讓每次產生的指令維持一致的品質與語氣。<br><br>AI 指令不是隨便一句話，而是由「AI 配方 + 專案背景」組成，確保不同 AI 接手時能理解同一個工作脈絡。</div>
       <div class="category-tabs" id="prompt-filter-tabs"></div>
       <div id="prompt-list"></div>
     </div>
@@ -226,16 +227,16 @@
     </div>
   </div>
 
-  <!-- 📚 資產庫 -->
+  <!-- 📚 成果庫 -->
   <div class="screen" id="screen-assets">
-    <div class="topbar"><div class="title">資產庫</div></div>
+    <div class="topbar"><div class="title">成果庫</div></div>
     <div style="padding-top:20px">
       <div class="category-tabs" id="category-tabs"></div>
       <div id="assets-list"></div>
     </div>
   </div>
 
-  <!-- 資產詳情 -->
+  <!-- 成果詳情 -->
   <div class="screen" id="screen-asset-detail">
     <div class="topbar">
       <button class="back" onclick="goBack('screen-assets')">←</button>
@@ -259,7 +260,7 @@
   <div class="screen" id="screen-publish">
     <div class="topbar"><div class="title">發布中心</div></div>
     <div style="padding-top:20px">
-      <div class="notice">把完成的資產整理成可發布版本。本輪只做狀態整理，還沒有串接真正的發布通路。</div>
+      <div class="notice">目前可以先幫你把成果整理好，實際發布還是要你自己到平台上貼。</div>
       <div class="publish-section-title">⏳ 待發布</div>
       <div id="publish-pending-list"></div>
       <div class="publish-section-title">✅ 已發布</div>
@@ -305,6 +306,7 @@
         </div>
       </div>
       <button class="btn outline" onclick="showScreen('screen-ai-team')">🤖 AI 角色設定</button>
+      <button class="btn outline" style="margin-top:10px" onclick="showScreen('screen-my-tools')">🧰 我的工具</button>
       <button class="btn outline" style="margin-top:10px" onclick="exportData()">⬇️ 匯出我的資料</button>
 
       <div class="card" style="margin-top:14px;border:1px dashed var(--gold);background:rgba(200,150,42,0.05)">
@@ -318,6 +320,48 @@
         </div>
         <button class="btn outline" onclick="openGasInstructions()">📖 1 分鐘開通雲端教學</button>
       </div>
+    </div>
+  </div>
+
+  <!-- 我的工具 -->
+  <div class="screen" id="screen-my-tools">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-settings')">←</button>
+      <div class="title">我的工具</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">這裡管理你目前有哪些工具，AI 工作台會依照這個清單，自動幫你安排每一步該找誰幫忙。停用或刪除都不會影響你已經完成的作品。</div>
+      <div id="my-tools-list"></div>
+      <button class="btn outline" onclick="openAddCustomTool()">＋ 新增我自己的工具</button>
+    </div>
+  </div>
+
+  <!-- 新增自訂工具 -->
+  <div class="screen" id="screen-add-tool">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-my-tools')">←</button>
+      <div class="title">新增我的工具</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">可以是任何工具，不一定要是 AI——公司自己的 GPT、剪輯軟體、簡報工具都可以。</div>
+      <div class="field">
+        <label>工具名稱</label>
+        <input type="text" id="new-tool-name-input" maxlength="20" placeholder="例如：公司自己的 GPT">
+      </div>
+      <div class="field">
+        <label>類型</label>
+        <select id="new-tool-category-select">
+          <option value="AI">AI</option>
+          <option value="影片">影片</option>
+          <option value="圖片">圖片</option>
+          <option value="音樂">音樂</option>
+          <option value="簡報">簡報</option>
+          <option value="程式">程式</option>
+          <option value="知識">知識</option>
+          <option value="其他">其他</option>
+        </select>
+      </div>
+      <button class="btn" onclick="confirmAddCustomTool()">新增</button>
     </div>
   </div>
 
@@ -369,7 +413,7 @@
     <span class="icon">🏠</span><span class="label">今天</span>
   </button>
   <button class="nav-item" data-target="screen-assets" onclick="showScreen('screen-assets')">
-    <span class="icon">📚</span><span class="label">資產庫</span>
+    <span class="icon">📚</span><span class="label">成果庫</span>
   </button>
   <button class="nav-item" data-target="screen-publish" onclick="showScreen('screen-publish')">
     <span class="icon">📢</span><span class="label">發布中心</span>

@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "updatedAt": "2026-07-09",
+  "tools": [
+    { "id": "chatgpt", "name": "ChatGPT", "category": "AI", "emoji": "🤖" },
+    { "id": "claude", "name": "Claude", "category": "AI", "emoji": "🧠" },
+    { "id": "gemini", "name": "Gemini", "category": "AI", "emoji": "✨" },
+    { "id": "notebooklm", "name": "NotebookLM", "category": "知識", "emoji": "📓" },
+    { "id": "perplexity", "name": "Perplexity", "category": "AI", "emoji": "🔎" },
+    { "id": "canva", "name": "Canva", "category": "圖片", "emoji": "🎨" },
+    { "id": "suno", "name": "Suno", "category": "音樂", "emoji": "🎵" },
+    { "id": "github", "name": "GitHub", "category": "程式", "emoji": "💻" },
+    { "id": "capcut", "name": "CapCut", "category": "影片", "emoji": "🎬" }
+  ]
+}

@@ -17,6 +17,116 @@ const ROLE_AI_DEFAULT = {
 };
 const AI_OPTIONS = ['ChatGPT', 'Claude', 'Gemini', 'Claude Code', 'Codex', '自己', '其他'];
 
+// ═════════════════════════════════════════════════════════════
+// AI Tool Ecosystem（我的工具 + 官方合作模板）
+// 官方工具清單／合作模板都是外部資料檔（tools-catalog.json／collaboration-templates.json），
+// 不寫死在程式裡——明年出現新工具，只要更新資料檔，不用改這裡的程式碼。
+// Flow 本身只描述「角色」，不綁死任何 AI 名稱；實際要用哪個工具，一律交給這裡判斷。
+// ═════════════════════════════════════════════════════════════
+
+let TOOLS_CATALOG = [];
+let COLLAB_TEMPLATES = {};
+
+// 就算資料檔載入失敗（離線／檔案遺失），也要有最小可用的防呆內容，不能讓整個 App 掛掉
+const TOOLS_CATALOG_FALLBACK = [
+  { id: 'chatgpt', name: 'ChatGPT', category: 'AI', emoji: '🤖' },
+  { id: 'claude', name: 'Claude', category: 'AI', emoji: '🧠' },
+  { id: 'gemini', name: 'Gemini', category: 'AI', emoji: '✨' }
+];
+
+async function loadToolData() {
+  try {
+    const [catalogRes, templatesRes] = await Promise.all([
+      fetch('./tools-catalog.json'), fetch('./collaboration-templates.json')
+    ]);
+    const catalog = await catalogRes.json();
+    const templates = await templatesRes.json();
+    TOOLS_CATALOG = catalog.tools || TOOLS_CATALOG_FALLBACK;
+    COLLAB_TEMPLATES = templates.templates || {};
+  } catch (e) {
+    TOOLS_CATALOG = TOOLS_CATALOG_FALLBACK;
+    COLLAB_TEMPLATES = {};
+  }
+}
+
+// 使用者的工具清單：從官方目錄起步（預設全部啟用，讓使用者一開始就能順利使用），
+// 之後可以在「我的工具」畫面新增／停用／刪除／新增自訂工具
+function buildDefaultMyTools() {
+  return TOOLS_CATALOG.map(function (t) {
+    return { id: t.id, name: t.name, category: t.category, emoji: t.emoji, enabled: true, isCustom: false };
+  });
+}
+
+function getMyToolById(id) { return state.myTools.find(function (t) { return t.id === id; }); }
+function isToolEnabledByName(name) {
+  if (!name) return false;
+  return state.myTools.some(function (t) { return t.enabled && t.name === name; });
+}
+
+// 找官方合作模板裡，這個流程＋角色（可選：精準比對步驟名稱）的建議工具鏈
+function getRecommendChain(flowId, role, stepName) {
+  const tpl = COLLAB_TEMPLATES[flowId];
+  if (!tpl) return [];
+  const steps = tpl.steps.filter(function (s) { return s.role === role; });
+  const exact = steps.find(function (s) { return s.stepName === stepName; });
+  if (exact) return exact.recommend || [];
+  const generic = steps.find(function (s) { return !s.stepName; });
+  return generic ? (generic.recommend || []) : (steps[0] ? steps[0].recommend || [] : []);
+}
+
+// 核心推薦引擎：依序嘗試 → 使用者手動指定（AI團隊，且該工具目前仍啟用）→ 官方建議鏈中使用者有的工具
+// → 使用者任何一個啟用中的工具 → 通用防呆文字。任何情況都會回傳可用結果，不會中斷、不會報錯
+function suggestedToolForStep(flowId, role, stepName) {
+  const manual = state.roleAiMap[role];
+  // roleAiMap 預設就會對 8 個角色都填好初始值（ROLE_AI_DEFAULT），這不代表使用者「手動選過」，
+  // 只有跟預設值不一樣，才代表使用者真的在 AI 團隊畫面自己改過，這種情況才優先於官方建議
+  const isExplicitOverride = manual && manual !== ROLE_AI_DEFAULT[role];
+  if (isExplicitOverride && isToolEnabledByName(manual)) return { name: manual, reason: null };
+
+  const chain = getRecommendChain(flowId, role, stepName);
+  for (var i = 0; i < chain.length; i++) {
+    const tool = getMyToolById(chain[i].toolId);
+    if (tool && tool.enabled) return { name: tool.name, reason: chain[i].reason || null };
+  }
+
+  // 官方模板沒有建議、或建議的工具使用者都沒有 → 退回目前設定值（如果還啟用中）
+  if (manual && isToolEnabledByName(manual)) return { name: manual, reason: null };
+
+  const anyEnabled = state.myTools.find(function (t) { return t.enabled; });
+  if (anyEnabled) return { name: anyEnabled.name, reason: '目前可用的工具' };
+
+  return { name: manual || ROLE_AI_DEFAULT[role] || '你習慣使用的 AI', reason: null };
+}
+
+// 「我的工具」CRUD
+function toggleMyTool(id) {
+  const t = getMyToolById(id);
+  if (!t) return;
+  t.enabled = !t.enabled;
+  saveState();
+  renderMyTools();
+}
+function openAddCustomTool() { showScreen('screen-add-tool'); }
+function confirmAddCustomTool() {
+  const nameInput = document.getElementById('new-tool-name-input');
+  const name = (nameInput.value || '').trim();
+  if (!name) { showToast('請先幫工具取個名字'); return; }
+  const category = document.getElementById('new-tool-category-select').value || '其他';
+  state.myTools.push({ id: 'custom_' + Date.now(), name: name, category: category, emoji: '🔧', enabled: true, isCustom: true });
+  saveState();
+  nameInput.value = '';
+  showToast('已新增「' + name + '」');
+  showScreen('screen-my-tools');
+}
+function deleteCustomTool(id) {
+  const t = getMyToolById(id);
+  if (!t) return;
+  if (!confirm('確定要刪除「' + t.name + '」嗎？')) return;
+  state.myTools = state.myTools.filter(function (x) { return x.id !== id; });
+  saveState();
+  renderMyTools();
+}
+
 // ── Flow（流程範本）───────────────────────────────────────────
 const FLOWS = {
   material: {
@@ -111,8 +221,8 @@ const FLOWS = {
       { name: '故事發想', role: '寫作師', category: '歌曲' },
       { name: '歌詞創作', role: '寫作師', category: '歌曲' },
       { name: 'Suno 規格', role: '工程師', category: '歌曲' },
-      { name: '封面 Prompt', role: '設計師', category: '圖片' },
-      { name: 'MV Prompt', role: '設計師', category: '歌曲' },
+      { name: '封面構想', role: '設計師', category: '圖片' },
+      { name: 'MV 畫面構想', role: '設計師', category: '歌曲' },
       { name: '發布文案', role: '發布助手', category: '歌曲' },
       { name: '作品打磨', role: '審查員', category: '歌曲' }
     ]
@@ -142,7 +252,7 @@ const FLOWS = {
 
 // ── Flow Marketplace 介紹文字（點進 Flow 時，先說明「這套流程會完成什麼」）──
 const FLOW_INTRO = {
-  song: { emoji: '🎵', label: '歌曲創作', produces: ['歌曲企劃', '歌詞', 'Suno Prompt', '封面圖 Prompt', 'MV Prompt', '發布文案', '打磨過的最終版'] },
+  song: { emoji: '🎵', label: '歌曲創作', produces: ['歌曲企劃', '歌詞', 'Suno 規格', '封面構想', 'MV 畫面構想', '發布文案', '打磨過的最終版'] },
   video: { emoji: '🎬', label: '短影音', produces: ['主題', '腳本', '開場 Hook', '分鏡', '字幕', '發布文案', '打磨過的最終版'] },
   material: { emoji: '📚', label: '教材出版', produces: ['教材規劃', '蒐集資料', '教材內文', '潤稿後定稿', '打磨過的最終版'] },
   ebook: { emoji: '📖', label: '電子書', produces: ['大綱', '蒐集資料', '內文', '排版設計'] },
@@ -302,7 +412,7 @@ function resolvePolishTemplate() {
 // ═════════════════════════════════════════════════════════════
 
 const CONTEXT_PACK_TEMPLATE =
-  '# 專案內容包\n\n' +
+  '# 專案背景\n\n' +
   '## 專案\n{{project_name}}\n\n' +
   '## 工作\n{{work_name}}\n\n' +
   '## 工作目標\n{{goal}}\n\n' +
@@ -312,7 +422,7 @@ const CONTEXT_PACK_TEMPLATE =
   '## 建議使用 AI\n{{ai_name}}\n\n' +
   '## 已完成步驟\n{{completed_steps}}\n\n' +
   '## 前面累積成果\n{{previous_results}}\n\n' +
-  '## 目前資產庫相關成果\n{{related_assets}}\n\n' +
+  '## 目前成果庫相關成果\n{{related_assets}}\n\n' +
   '## 本次任務\n{{step_instruction}}\n\n' +
   '## 請輸出格式\n{{output_format}}\n\n' +
   '## 回填提醒\n完成後請輸出清楚段落，方便使用者貼回 AI 工作台。';
@@ -399,7 +509,7 @@ function buildContextPack(workId) {
     flow_name: flow.name,
     step_name: step.name,
     role_name: step.role,
-    ai_name: state.roleAiMap[step.role] || ROLE_AI_DEFAULT[step.role],
+    ai_name: suggestedToolForStep(work.flowId, step.role, step.name).name,
     completed_steps: flow.steps.slice(0, work.currentStepIndex).map(function (s) { return s.name; }).join('、') || '（尚未完成任何步驟）',
     previous_results: buildPreviousResults(workId),
     related_assets: buildRelatedAssets(work.projectId, workId),
@@ -447,7 +557,7 @@ function buildAiInstructionFromTemplate(workId) {
     flow_name: flow.name,
     step_name: step.name,
     role_name: step.role,
-    ai_name: state.roleAiMap[step.role] || ROLE_AI_DEFAULT[step.role],
+    ai_name: suggestedToolForStep(work.flowId, step.role, step.name).name,
     goal: work.name,
     previous_results: buildPreviousResults(workId)
   };
@@ -462,6 +572,7 @@ function buildAiInstructionFromTemplate(workId) {
 function ensureNewFields(s) {
   if (!s.promptTemplates) s.promptTemplates = buildDefaultPromptTemplates();
   if (s.gasWebhookUrl === undefined) s.gasWebhookUrl = '';
+  if (!s.myTools) s.myTools = buildDefaultMyTools();
   s.results.forEach(function (r) { if (r.cloudStatus === undefined) r.cloudStatus = 'none'; });
 }
 function buildChannelDraft(channel, result) {
@@ -491,6 +602,7 @@ function defaultState() {
     publishRecords: [],
     promptTemplates: buildDefaultPromptTemplates(),
     gasWebhookUrl: '',
+    myTools: buildDefaultMyTools(),
     nextProjectId: 1, nextWorkId: 1, nextResultId: 1, nextPublishId: 1
   };
 }
@@ -533,7 +645,7 @@ function makeResult(s, work, project, stepIndex, content, isFinal, satisfaction)
     workId: work.id, workName: work.name,
     flowId: flow.id, flowName: flow.name,
     stepName: step.name, role: step.role, stepIndex: stepIndex,
-    ai: s.roleAiMap[step.role] || ROLE_AI_DEFAULT[step.role],
+    ai: suggestedToolForStep(work.flowId, step.role, step.name).name,
     content: content, category: step.category,
     completedAt: new Date().toISOString(), isFinal: !!isFinal,
     version: version, satisfaction: satisfaction || '很滿意',
@@ -550,7 +662,7 @@ function createFinalProduct(s, work, project) {
     const r = s.results.find(function (x) { return x.id === work.stepResultIds[i]; });
     return '【' + step.name + '】\n' + (r ? r.content : '');
   }).join('\n\n');
-  const aiUsed = Array.from(new Set(flow.steps.map(function (step) { return s.roleAiMap[step.role] || ROLE_AI_DEFAULT[step.role]; }))).join('、');
+  const aiUsed = Array.from(new Set(flow.steps.map(function (step) { return suggestedToolForStep(work.flowId, step.role, step.name).name; }))).join('、');
   const finalCategory = flow.id === 'video' ? '影片' : flow.id === 'ebook' ? '電子書' : flow.id === 'course' ? '課程' : flow.id === 'material' ? '教材' : flow.id === 'product' ? '商品' : flow.id === 'social' ? '社群貼文' : flow.id === 'song' ? '歌曲' : flow.id === 'research' ? '論文' : '其他';
   const final = {
     id: s.nextResultId++,
@@ -719,7 +831,7 @@ function editWork(workId, event) {
 function deleteWork(workId, event) {
   if (event) event.stopPropagation();
   const work = getWork(workId);
-  if (!confirm('確定要刪除「' + work.name + '」嗎？已保存的成果不會被刪除，仍會留在資產庫。')) return;
+  if (!confirm('確定要刪除「' + work.name + '」嗎？已保存的成果不會被刪除，仍會留在成果庫。')) return;
   state.works = state.works.filter(function (w) { return w.id !== workId; });
   saveState();
   render();
@@ -734,11 +846,12 @@ function buildCopyText(work) {
 }
 function goCopyToAi() { showScreen('screen-copy-to-ai'); }
 function currentStepAiName() {
-  const step = currentStep(getActiveWork());
-  return state.roleAiMap[step.role] || ROLE_AI_DEFAULT[step.role];
+  const work = getActiveWork();
+  const step = currentStep(work);
+  return suggestedToolForStep(work.flowId, step.role, step.name).name;
 }
 function copyToClipboard() {
-  const text = document.getElementById('copy-text-box').textContent;
+  const text = lastCopyText;
   if (navigator.clipboard && navigator.clipboard.writeText) {
     navigator.clipboard.writeText(text).then(function () { showToast('已複製，請貼到 ' + currentStepAiName() + '。'); }).catch(function () { fallbackCopy(text); });
   } else { fallbackCopy(text); }
@@ -785,7 +898,7 @@ function satisfactionGood() {
     work.status = '已完成';
     createFinalProduct(state, work, project);
     saveState();
-    showToast('完成了！已收進資產庫');
+    showToast('完成了！已收進成果庫');
     showScreen('screen-project');
   } else {
     work.currentStepIndex += 1;
@@ -825,7 +938,7 @@ function buildRevisionInstruction() {
     work_name: work.name,
     step_name: step.name,
     role_name: step.role,
-    ai_name: state.roleAiMap[step.role] || ROLE_AI_DEFAULT[step.role],
+    ai_name: suggestedToolForStep(work.flowId, step.role, step.name).name,
     current_result: r.content,
     revision_direction: selectedDirections.join('、')
   };
@@ -846,7 +959,7 @@ function goReviseSubmit() { showScreen('screen-paste-back'); }
 // ── AI Team ───────────────────────────────────────────────────
 function updateRoleAi(role, ai) { state.roleAiMap[role] = ai; saveState(); }
 
-// ── Asset Library（資產庫）────────────────────────────────────
+// ── Asset Library（成果庫）────────────────────────────────────
 let activeCategory = '全部';
 let activeResultId = null;
 function setCategory(cat) { activeCategory = cat; renderAssets(); }
@@ -973,6 +1086,7 @@ function render() {
   if (id === 'screen-flow-intro') renderFlowIntro();
   if (id === 'screen-prompt-library') renderPromptLibrary();
   if (id === 'screen-prompt-detail') renderPromptDetail();
+  if (id === 'screen-my-tools') renderMyTools();
 }
 
 function renderHome() {
@@ -1064,7 +1178,9 @@ function renderWorkDetail() {
   document.getElementById('wd-tpl').textContent = flow.name + '　·　共 ' + flow.steps.length + ' 步';
   document.getElementById('wd-step-name').textContent = step.name;
   document.getElementById('wd-role').textContent = ROLE_ICON[step.role] + ' ' + step.role;
-  document.getElementById('wd-ai-suggest').textContent = '建議找：' + (state.roleAiMap[step.role] || ROLE_AI_DEFAULT[step.role]);
+  const suggested = suggestedToolForStep(work.flowId, step.role, step.name);
+  document.getElementById('wd-ai-suggest').textContent = '建議找：' + suggested.name;
+  document.getElementById('wd-ai-reason').textContent = suggested.reason || '';
   const track = document.getElementById('wd-progress');
   track.innerHTML = flow.steps.map(function (s, i) {
     let cls = 'progress-step';
@@ -1073,9 +1189,40 @@ function renderWorkDetail() {
   }).join('');
 }
 
+// 把「專案背景 + 指令母模」的原始文字，轉成分段、分區塊的預覽畫面
+// 複製出去的內容不受影響，還是完整原始文字（見 lastCopyText／copyToClipboard）
+function renderCopyPreviewHtml(text) {
+  const lines = text.split('\n');
+  let html = '';
+  let sectionOpen = false;
+  function closeSection() { if (sectionOpen) { html += '</div></div>'; sectionOpen = false; } }
+  lines.forEach(function (line) {
+    if (line.indexOf('## ') === 0) {
+      closeSection();
+      html += '<div class="pack-section"><div class="pack-label">' + escHtml(line.slice(3)) + '</div><div class="pack-value">';
+      sectionOpen = true;
+    } else if (line.indexOf('# ') === 0) {
+      closeSection();
+      html += '<div class="pack-title">' + escHtml(line.slice(2)) + '</div>';
+    } else if (line.trim() === '---') {
+      closeSection();
+      html += '<div class="pack-divider"></div>';
+    } else if (line.trim() === '') {
+      if (sectionOpen) html += '<br>';
+    } else {
+      html += escHtml(line) + '<br>';
+    }
+  });
+  closeSection();
+  return html;
+}
+
+let lastCopyText = '';
+
 function renderCopyToAi() {
   const work = getActiveWork();
-  document.getElementById('copy-text-box').textContent = buildCopyText(work);
+  lastCopyText = buildCopyText(work);
+  document.getElementById('copy-text-box').innerHTML = renderCopyPreviewHtml(lastCopyText);
   document.getElementById('copy-ai-name').textContent = currentStepAiName();
 }
 function renderPasteBack() {
@@ -1263,6 +1410,27 @@ function renderSettings() {
   document.getElementById('settings-gas-url').value = state.gasWebhookUrl || '';
 }
 
+// ── 我的工具 ──────────────────────────────────────────────────
+function renderMyTools() {
+  const list = document.getElementById('my-tools-list');
+  if (state.myTools.length === 0) {
+    list.innerHTML = '<div class="empty-state"><div class="icon">🧰</div><div class="txt">還沒有任何工具，先新增一個吧</div></div>';
+    return;
+  }
+  list.innerHTML = state.myTools.map(function (t) {
+    const deleteBtn = t.isCustom
+      ? '<button class="tool-delete" onclick="deleteCustomTool(\'' + t.id + '\')" title="刪除">🗑️</button>'
+      : '';
+    return '<div class="tool-row">' +
+      '<div class="tool-info"><span class="tool-emoji">' + (t.emoji || '🔧') + '</span>' +
+      '<div><div class="tool-name">' + escHtml(t.name) + '</div><div class="tool-category">' + escHtml(t.category) + (t.isCustom ? '　·　我自己加的' : '') + '</div></div></div>' +
+      '<div class="tool-actions">' +
+      '<label class="toggle-switch"><input type="checkbox" ' + (t.enabled ? 'checked' : '') + ' onchange="toggleMyTool(\'' + t.id + '\')"><span class="toggle-slider"></span></label>' +
+      deleteBtn +
+      '</div></div>';
+  }).join('');
+}
+
 // ── AI 配方庫（指令母模瀏覽）───────────────────────────────────
 let activePromptFilter = '全部';
 let activePromptTemplateId = null;
@@ -1302,5 +1470,15 @@ function formatDate(iso) { const d = new Date(iso); return (d.getMonth() + 1) + 
 function escHtml(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
 // ── 啟動 ──────────────────────────────────────────────────────
-loadState();
-document.addEventListener('DOMContentLoaded', function () { showScreen('screen-home'); });
+// 先載入工具資料（官方工具清單／合作模板），確保 loadState() 建立預設狀態時 TOOLS_CATALOG 已經就緒
+function startApp() {
+  loadState();
+  showScreen('screen-home');
+}
+loadToolData().then(function () {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', startApp);
+  } else {
+    startApp();
+  }
+});

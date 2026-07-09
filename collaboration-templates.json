@@ -1,0 +1,224 @@
+{
+  "version": 1,
+  "updatedAt": "2026-07-09",
+  "note": "這裡是「建議合作方式」，不是 AI 排名。使用者永遠可以在「AI 團隊」自由更換，系統只是先幫忙安排一個合理的起點。",
+  "templates": {
+
+    "material": {
+      "name": "教材合作模板",
+      "steps": [
+        { "role": "規劃師", "recommend": [
+          { "toolId": "chatgpt", "reason": "很多教材作者會在規劃階段用 ChatGPT，適合先把架構跟大方向想清楚。" }
+        ] },
+        { "role": "研究員", "recommend": [
+          { "toolId": "gemini", "reason": "蒐集資料跟案例時，Gemini 對搜尋整合類的任務比較上手。" },
+          { "toolId": "perplexity", "reason": "如果需要更多來源比對，Perplexity 也是常見選擇。" }
+        ] },
+        { "role": "寫作師", "recommend": [
+          { "toolId": "claude", "reason": "很多教材作者會在這一步使用 Claude，因為比較適合整理長文、維持前後語氣一致。" }
+        ] },
+        { "role": "潤稿師", "recommend": [
+          { "toolId": "claude", "reason": "潤稿也偏向長文調整，延續用 Claude 通常比較順手。" }
+        ] },
+        { "role": "審查員", "recommend": [
+          { "toolId": "chatgpt", "reason": "最後檢查一輪邏輯與完整性，換一個角度用 ChatGPT 交叉確認也不錯。" }
+        ] },
+        { "role": "發布助手", "recommend": [
+          { "toolId": "chatgpt", "reason": "整理成可發布格式，ChatGPT 处理制式化整理很快。" }
+        ] }
+      ]
+    },
+
+    "video": {
+      "name": "短影音合作模板",
+      "steps": [
+        { "role": "規劃師", "recommend": [
+          { "toolId": "chatgpt", "reason": "抓主題方向、想切角，用 ChatGPT 發散跟收斂都方便。" }
+        ] },
+        { "role": "寫作師", "stepName": "腳本", "recommend": [
+          { "toolId": "claude", "reason": "腳本需要口語、節奏感，很多短影音創作者會用 Claude 寫出比較自然的台詞。" }
+        ] },
+        { "role": "寫作師", "recommend": [
+          { "toolId": "claude", "reason": "文字相關的步驟延續用 Claude，語氣比較容易一致。" }
+        ] },
+        { "role": "設計師", "recommend": [
+          { "toolId": "canva", "reason": "分鏡構想、封面等視覺相關的部分，Canva 是常見的搭配工具。" },
+          { "toolId": "chatgpt", "reason": "如果還沒有 Canva，先用 ChatGPT 把畫面構想寫清楚也可以。" }
+        ] },
+        { "role": "發布助手", "recommend": [
+          { "toolId": "chatgpt", "reason": "整理發布文案跟標題，ChatGPT 很順手。" }
+        ] }
+      ]
+    },
+
+    "song": {
+      "name": "歌曲創作合作模板",
+      "steps": [
+        { "role": "規劃師", "recommend": [
+          { "toolId": "chatgpt", "reason": "歌曲定位、整體方向發想，ChatGPT 適合先把概念聊開。" }
+        ] },
+        { "role": "寫作師", "stepName": "歌詞創作", "recommend": [
+          { "toolId": "claude", "reason": "很多創作者會在寫歌詞這一步用 Claude，意象跟韻腳的掌握比較細膩。" }
+        ] },
+        { "role": "寫作師", "recommend": [
+          { "toolId": "claude", "reason": "故事發想這類敘事性內容，Claude 通常表現不錯。" }
+        ] },
+        { "role": "工程師", "recommend": [
+          { "toolId": "suno", "reason": "這一步是要準備給 Suno 使用的規格，直接用 Suno 熟悉它的格式最直接。" },
+          { "toolId": "chatgpt", "reason": "如果還沒有 Suno，先用 ChatGPT 把規格描述寫清楚，之後也能套用。" }
+        ] },
+        { "role": "設計師", "recommend": [
+          { "toolId": "canva", "reason": "封面、MV 畫面構想，Canva 適合順便產出視覺草圖。" },
+          { "toolId": "chatgpt", "reason": "如果還沒有 Canva，先用 ChatGPT 把畫面構想寫清楚也可以。" }
+        ] },
+        { "role": "發布助手", "recommend": [
+          { "toolId": "chatgpt", "reason": "發布文案整理，ChatGPT 很順手。" }
+        ] },
+        { "role": "審查員", "recommend": [
+          { "toolId": "claude", "reason": "作品打磨階段，延續用 Claude 對細節調整比較細緻。" }
+        ] }
+      ]
+    },
+
+    "product": {
+      "name": "商品行銷合作模板",
+      "steps": [
+        { "role": "規劃師", "recommend": [
+          { "toolId": "chatgpt", "reason": "商品整理、賣點盤點，先用 ChatGPT 理清楚脈絡。" }
+        ] },
+        { "role": "研究員", "recommend": [
+          { "toolId": "gemini", "reason": "市場定位、賣點分析需要一些外部資訊，Gemini 適合這類任務。" }
+        ] },
+        { "role": "寫作師", "recommend": [
+          { "toolId": "claude", "reason": "很多做商品行銷的人會在文案這一步用 Claude，語氣拿捏比較細膩、不容易浮誇。" }
+        ] },
+        { "role": "設計師", "recommend": [
+          { "toolId": "canva", "reason": "商品圖、視覺呈現，Canva 是常見選擇。" },
+          { "toolId": "chatgpt", "reason": "如果還沒有 Canva，先用 ChatGPT 描述畫面構想。" }
+        ] }
+      ]
+    },
+
+    "research": {
+      "name": "研究與論文合作模板",
+      "steps": [
+        { "role": "規劃師", "recommend": [
+          { "toolId": "chatgpt", "reason": "研究題目、研究架構的發想與收斂，ChatGPT 很適合。" }
+        ] },
+        { "role": "研究員", "stepName": "文獻蒐集", "recommend": [
+          { "toolId": "perplexity", "reason": "文獻蒐集需要標註來源，Perplexity 的搜尋跟引用習慣比較貼近這個需求。" },
+          { "toolId": "gemini", "reason": "如果還沒有 Perplexity，Gemini 的搜尋整合能力也適合這一步。" }
+        ] },
+        { "role": "研究員", "recommend": [
+          { "toolId": "gemini", "reason": "研究相關的資料整理，Gemini 是常見選擇。" },
+          { "toolId": "notebooklm", "reason": "如果已經有整理好的文獻資料，NotebookLM 適合針對既有素材深入分析。" }
+        ] },
+        { "role": "寫作師", "stepName": "初稿撰寫", "recommend": [
+          { "toolId": "claude", "reason": "論文初稿需要正式、邏輯清楚的語氣，很多研究者會用 Claude 處理這一步。" }
+        ] },
+        { "role": "寫作師", "recommend": [
+          { "toolId": "claude", "reason": "論文相關的文字撰寫，延續用 Claude 語氣比較一致。" }
+        ] },
+        { "role": "審查員", "stepName": "引用與參考資料", "recommend": [
+          { "toolId": "claude", "reason": "檢查引用是否清楚、有沒有過度推論，Claude 在這種細緻檢查上表現穩定。" }
+        ] },
+        { "role": "審查員", "recommend": [
+          { "toolId": "claude", "reason": "審查與打磨階段，延續用 Claude 比較好維持一致的檢查標準。" }
+        ] },
+        { "role": "發布助手", "recommend": [
+          { "toolId": "chatgpt", "reason": "成果保存與整理，ChatGPT 处理制式化工作很順手。" }
+        ] }
+      ]
+    },
+
+    "course": {
+      "name": "課程設計合作模板",
+      "steps": [
+        { "role": "規劃師", "recommend": [
+          { "toolId": "chatgpt", "reason": "課程大綱規劃，ChatGPT 適合先把架構列清楚。" }
+        ] },
+        { "role": "寫作師", "recommend": [
+          { "toolId": "claude", "reason": "課程內容撰寫偏長文，Claude 維持語氣一致比較容易。" }
+        ] },
+        { "role": "潤稿師", "recommend": [
+          { "toolId": "claude", "reason": "潤稿延續用 Claude，前後文風格比較不會跑掉。" }
+        ] },
+        { "role": "發布助手", "recommend": [
+          { "toolId": "chatgpt", "reason": "定稿整理，ChatGPT 处理制式化工作很快。" }
+        ] }
+      ]
+    },
+
+    "ebook": {
+      "name": "電子書合作模板",
+      "steps": [
+        { "role": "規劃師", "recommend": [
+          { "toolId": "chatgpt", "reason": "大綱規劃先用 ChatGPT 把結構理清楚。" }
+        ] },
+        { "role": "研究員", "recommend": [
+          { "toolId": "gemini", "reason": "蒐集資料的部分，Gemini 適合搜尋整合類任務。" }
+        ] },
+        { "role": "寫作師", "recommend": [
+          { "toolId": "claude", "reason": "電子書內文偏長文，Claude 通常比較適合。" }
+        ] },
+        { "role": "潤稿師", "recommend": [
+          { "toolId": "claude", "reason": "延續用 Claude 潤稿，語氣比較不會跳掉。" }
+        ] }
+      ]
+    },
+
+    "social": {
+      "name": "社群貼文合作模板",
+      "steps": [
+        { "role": "規劃師", "recommend": [
+          { "toolId": "chatgpt", "reason": "主題發想用 ChatGPT 快速產生幾個方向。" }
+        ] },
+        { "role": "寫作師", "recommend": [
+          { "toolId": "claude", "reason": "貼文文案語氣拿捏，很多人會用 Claude 處理比較自然。" }
+        ] },
+        { "role": "設計師", "recommend": [
+          { "toolId": "canva", "reason": "配圖建議，Canva 是常見的社群圖片工具。" },
+          { "toolId": "chatgpt", "reason": "如果還沒有 Canva，先用 ChatGPT 描述構想。" }
+        ] },
+        { "role": "發布助手", "recommend": [
+          { "toolId": "chatgpt", "reason": "發布前整理，ChatGPT 很順手。" }
+        ] }
+      ]
+    },
+
+    "website": {
+      "name": "建立網站合作模板",
+      "steps": [
+        { "role": "規劃師", "recommend": [
+          { "toolId": "chatgpt", "reason": "網站規劃先用 ChatGPT 把頁面架構列清楚。" }
+        ] },
+        { "role": "寫作師", "recommend": [
+          { "toolId": "claude", "reason": "網站文字內容偏長文整理，Claude 比較適合。" }
+        ] },
+        { "role": "設計師", "recommend": [
+          { "toolId": "canva", "reason": "頁面設計構想，Canva 適合快速做視覺參考。" },
+          { "toolId": "chatgpt", "reason": "如果還沒有 Canva，先用 ChatGPT 描述設計方向。" }
+        ] },
+        { "role": "工程師", "recommend": [
+          { "toolId": "github", "reason": "網站建置涉及程式碼，GitHub 是常見的工程協作工具。" },
+          { "toolId": "chatgpt", "reason": "如果還沒有用到 GitHub，先用 ChatGPT 討論技術規格也可以。" }
+        ] }
+      ]
+    },
+
+    "customer_reply": {
+      "name": "客戶回覆合作模板",
+      "steps": [
+        { "role": "研究員", "recommend": [
+          { "toolId": "chatgpt", "reason": "先了解客戶問題的脈絡，用 ChatGPT 快速整理重點。" }
+        ] },
+        { "role": "寫作師", "recommend": [
+          { "toolId": "claude", "reason": "草擬回覆需要拿捏語氣，Claude 通常比較自然、不生硬。" }
+        ] },
+        { "role": "潤稿師", "recommend": [
+          { "toolId": "claude", "reason": "潤飾語氣延續用 Claude，前後一致比較容易。" }
+        ] }
+      ]
+    }
+  }
+}

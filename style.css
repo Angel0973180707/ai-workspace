@@ -162,6 +162,14 @@ body { background: var(--cream); color: var(--text); font-family: var(--font); m
   margin-bottom: 16px;
 }
 
+/* 「交給 AI」預覽：把原始文字分段呈現，不要讓使用者直接看到一堆 # 符號 */
+#copy-text-box { max-height: 50vh; overflow-y: auto; white-space: normal; }
+#copy-text-box .pack-title { font-size: 17px; font-weight: 700; color: var(--green-dark); margin-bottom: 12px; }
+#copy-text-box .pack-section { background: var(--white); border-radius: 10px; padding: 10px 12px; margin-bottom: 10px; }
+#copy-text-box .pack-label { font-size: 12px; font-weight: 700; color: var(--green-soft); margin-bottom: 4px; }
+#copy-text-box .pack-value { font-size: 14px; line-height: 1.7; color: var(--text); }
+#copy-text-box .pack-divider { border-top: 1.5px dashed var(--gold); margin: 18px 0; }
+
 /* ── AI 團隊 ── */
 .role-row {
   display: flex;
@@ -218,17 +226,18 @@ body { background: var(--cream); color: var(--text); font-family: var(--font); m
 .publish-section-title:first-child { margin-top: 0; }
 
 /* ── 首頁目的圖示 ── */
-.purpose-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-bottom: 22px; }
+.purpose-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin-bottom: 22px; }
 .purpose-card {
+  min-width: 0;
   background: var(--white);
   border: 1.5px solid var(--border);
   border-radius: 14px;
-  padding: 14px 4px;
+  padding: 14px 2px;
   text-align: center;
   cursor: pointer;
 }
-.purpose-card .emoji { font-size: 24px; margin-bottom: 6px; }
-.purpose-card .label { font-size: 11px; font-weight: 700; color: var(--text-mid); }
+.purpose-card .emoji { font-size: 22px; margin-bottom: 6px; }
+.purpose-card .label { font-size: 10.5px; font-weight: 700; color: var(--text-mid); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .purpose-card:active { background: var(--green-pale); border-color: var(--green-soft); }
 
 .section-label { font-size: 13px; font-weight: 700; color: var(--text-dim); margin-bottom: 10px; }
@@ -309,6 +318,37 @@ body { background: var(--cream); color: var(--text); font-family: var(--font); m
   width: 55%;
 }
 
+/* ── 我的工具 ── */
+.tool-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--white);
+  border: 1.5px solid var(--border);
+  border-radius: 14px;
+  padding: 12px 14px;
+  margin-bottom: 10px;
+}
+.tool-info { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.tool-emoji { font-size: 22px; flex-shrink: 0; }
+.tool-name { font-size: 15px; font-weight: 700; color: var(--text); }
+.tool-category { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+.tool-actions { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.tool-delete { background: none; border: none; font-size: 16px; cursor: pointer; padding: 4px; }
+
+.toggle-switch { position: relative; display: inline-block; width: 44px; height: 26px; flex-shrink: 0; }
+.toggle-switch input { opacity: 0; width: 0; height: 0; }
+.toggle-slider {
+  position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0;
+  background-color: var(--border); transition: .2s; border-radius: 26px;
+}
+.toggle-slider::before {
+  position: absolute; content: ""; height: 20px; width: 20px; left: 3px; bottom: 3px;
+  background-color: var(--white); transition: .2s; border-radius: 50%;
+}
+.toggle-switch input:checked + .toggle-slider { background-color: var(--green-soft); }
+.toggle-switch input:checked + .toggle-slider::before { transform: translateX(18px); }
+
 /* ── 底部導覽 ── */
 .bottom-nav {
   position: fixed;
@@ -326,15 +366,16 @@ body { background: var(--cream); color: var(--text); font-family: var(--font); m
 .bottom-nav.show { display: flex; }
 .nav-item {
   flex: 1;
+  min-width: 0;
   text-align: center;
-  padding: 10px 4px 8px;
+  padding: 10px 2px 8px;
   cursor: pointer;
   border: none;
   background: none;
   font-family: var(--font);
 }
-.nav-item .icon { font-size: 20px; display: block; margin-bottom: 3px; }
-.nav-item .label { font-size: 11px; color: var(--text-dim); font-weight: 600; }
+.nav-item .icon { font-size: 19px; display: block; margin-bottom: 3px; }
+.nav-item .label { font-size: 10.5px; color: var(--text-dim); font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block; }
 .nav-item.active .label { color: var(--green-dark); }
 .nav-item.active .icon { filter: none; }
 

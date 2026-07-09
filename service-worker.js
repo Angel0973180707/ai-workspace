@@ -1,12 +1,14 @@
 // AI 工作台 Service Worker — 純離線快取，不做背景同步、不做推播、不做登入
-const CACHE_NAME = 'ai-workspace-v0.5';
+const CACHE_NAME = 'ai-workspace-v0.6';
 const ASSETS = [
   './index.html',
   './style.css',
   './app.js',
   './manifest.json',
   './icon-192.png',
-  './icon-512.png'
+  './icon-512.png',
+  './tools-catalog.json',
+  './collaboration-templates.json'
 ];
 
 self.addEventListener('install', function (e) {
