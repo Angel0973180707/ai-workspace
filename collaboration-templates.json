@@ -1,7 +1,19 @@
 {
-  "version": 1,
-  "updatedAt": "2026-07-09",
+  "version": 2,
+  "updatedAt": "2026-07-17",
   "note": "這裡是「建議合作方式」，不是 AI 排名。使用者永遠可以在「AI 團隊」自由更換，系統只是先幫忙安排一個合理的起點。",
+  "metadataSchema": {
+    "note": "Phase 1B.1（Official Recommendation Center 資料模型收尾，CEO 2026-07-17 定案，納入 Product Blueprint 永久規則）：每筆 recommend／recommendedTools 項目可以選填 validation／lastVerified，欄位本身不影響現有邏輯，純粹是給人看／給之後畫面呈現用的中繼資料。這輪只補結構，不強制每筆都要填。真人驗證優於紙上設計。",
+    "validation": {
+      "description": "這筆建議的驗證程度，誠實分三級，不要因為想讓資料看起來完整就浮報等級。Proposed／App Verified 描述的是「資料目前的驗證狀態」，不是「資料從哪裡來」——不管建議最初是團隊寫的、使用者回報的、AI 產生的還是社群提供的，只要還沒完成真人驗證，一律歸類 Proposed。",
+      "values": {
+        "Official Validated": "真人實際使用該 AI／工具完成這一步，並確認成果品質符合官方推薦標準（例如：真的用 ChatGPT 做出一張海報、用 Suno 做出一首歌、用 Kling 做出一支影片，且確認品質可用）——目前整個工作台還沒有任何一筆達到這一級，因為這是零後端的純前端 PWA，App 本身無法呼叫外部 AI，最多只能驗證『App 產生的指令正確』，驗證不到『外部工具產出的東西好不好』，那一段一定要真人親自跑過才算數。",
+        "App Verified": "App 這一端的機制（指令產生、畫面串接、Recommendation 管線、App 行為）已經真的走查測試過，但外部 AI／工具最終產出的成果品質還沒有真人確認。",
+        "Proposed": "已提出官方建議，但尚未完成真人驗證——純粹是先給一個合理的起點，不代表沒有依據，只代表『還沒有人實際跑過確認』。"
+      }
+    },
+    "lastVerified": "格式 YYYY-MM，只有 validation 是 App Verified 或以上時才填；Proposed 的項目還沒有驗證過，不需要填這個欄位。"
+  },
   "templates": {
 
     "material": {
@@ -47,6 +59,14 @@
         ] },
         { "role": "發布助手", "recommend": [
           { "toolId": "chatgpt", "reason": "整理發布文案跟標題，ChatGPT 很順手。" }
+        ] },
+        { "role": "工程師", "stepName": "製作影片", "category": "image", "recommendedTools": [
+          { "toolId": "chatgpt", "rating": 5, "fitFor": "已經準備好想法、想快速看到成品", "reason": "文字生成圖片，操作簡單，可以直接把文案內容寫進圖片裡，適合第一次製作素材。", "validation": "App Verified", "lastVerified": "2026-07" },
+          { "toolId": "canva", "rating": 4, "fitFor": "想要更精緻的排版跟版型", "reason": "如果想要更精緻的排版跟版型，Canva 也是常見的選擇。", "validation": "Proposed" },
+          { "toolId": "gemini", "rating": 4, "fitFor": "手邊已經在用 Gemini，想直接延伸使用", "reason": "Gemini 也有圖片生成功能，手邊已經在用的話直接延伸使用很方便。", "validation": "Proposed" }
+        ] },
+        { "role": "工程師", "stepName": "製作影片", "category": "video", "recommendedTools": [
+          { "toolId": "kling", "rating": 5, "fitFor": "已經準備好圖片、第一次製作 3 分鐘內短影片", "reason": "圖生影片，操作簡單，適合第一次製作短影片。", "validation": "App Verified", "lastVerified": "2026-07" }
         ] }
       ]
     },
@@ -58,7 +78,7 @@
         { "role": "規劃師", "stepName": "主題", "recommend": [
           { "toolId": "chatgpt", "reason": "很多創作者會在這一步先找 ChatGPT 聊聊想法，不用想太完整，先抓到方向就好。" }
         ] },
-        { "role": "寫作師", "stepName": "歌詞創作", "recommend": [
+        { "role": "寫作師", "stepName": "歌名＋歌詞", "recommend": [
           { "toolId": "gemini", "reason": "很多創作者會在寫歌詞這一步用 Gemini，意象發想跟畫面感來得比較快。" },
           { "toolId": "claude", "reason": "如果想要韻腳跟意象更細膩一點，也有創作者會換成 Claude。" },
           { "toolId": "chatgpt", "reason": "手邊只有 ChatGPT 也沒問題，寫歌詞初稿一樣很順手。" }
@@ -87,6 +107,23 @@
         ] },
         { "role": "發布助手", "stepName": "發布文案", "recommend": [
           { "toolId": "chatgpt", "reason": "發布文案整理，ChatGPT 很順手。" }
+        ] },
+        { "role": "工程師", "stepName": "製作歌曲", "recommendedTools": [
+          { "toolId": "suno", "rating": 5, "fitFor": "第一次製作 AI 歌曲、想快速聽到成品", "reason": "同時吃 Lyrics 跟 Style 兩個欄位，是目前最完整、最多人用的組合。", "validation": "App Verified", "lastVerified": "2026-07" },
+          { "toolId": "udio", "rating": 4, "fitFor": "想要更自然的人聲、更好的音色表現", "reason": "如果想要更自然的人聲、更好的音色表現，Udio 也是常見的選擇。", "validation": "Proposed" }
+        ] }
+      ]
+    },
+
+    "poster": {
+      "name": "行銷海報合作模板",
+      "note": "recommend／recommendedTools 兩者分開的原則跟歌曲一樣。海報文案／視覺設計這兩個文字步驟目前還沒有官方驗證過的 AI 建議，先不寫，讓畫面顯示『目前尚無官方建議』，等真人使用回饋累積後再補（見 Official Recommendation Center 產品原則）。",
+      "steps": [
+        { "role": "工程師", "stepName": "完成海報", "recommendedTools": [
+          { "toolId": "chatgpt", "rating": 5, "fitFor": "第一次做海報、想要最快看到成品", "reason": "文字生成海報圖片，操作簡單，可以直接把文案內容寫進圖片裡。", "validation": "App Verified", "lastVerified": "2026-07" },
+          { "toolId": "canva", "rating": 5, "fitFor": "需要精確排版、中文字型、QR Code", "reason": "適合需要精確調整繁體中文排版、版面、QR Code 與品牌素材的時候，比生成式圖片工具更好手動微調細節。", "validation": "Proposed" },
+          { "toolId": "gemini", "rating": 4, "fitFor": "免費額度充足、想多比較幾種風格", "reason": "適合圖片發想、想比較不同風格初版，或 ChatGPT 額度用完時的替代選擇。", "validation": "Proposed" },
+          { "toolId": "google_slides", "rating": 4, "fitFor": "需要可編輯版面、之後想自己調文字", "reason": "適合需要可編輯版面、簡報式海報，或之後想自己調整文字內容時使用。", "validation": "Proposed" }
         ] }
       ]
     },

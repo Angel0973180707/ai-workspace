@@ -2,9 +2,12 @@
   "version": 1,
   "updatedAt": "2026-07-09",
   "tools": [
-    { "id": "chatgpt", "name": "ChatGPT", "category": "AI", "emoji": "🤖" },
-    { "id": "claude", "name": "Claude", "category": "AI", "emoji": "🧠" },
-    { "id": "gemini", "name": "Gemini", "category": "AI", "emoji": "✨" },
+    { "id": "chatgpt", "name": "ChatGPT", "category": "AI", "emoji": "🤖", "specialty": "發想、整理、互動打磨與一步一步完成內容", "suitableFor": "主題、文案、歌詞、腳本、規劃與初學者協作" },
+    { "id": "claude", "name": "Claude", "category": "AI", "emoji": "🧠", "specialty": "長文整理、深度分析與文件品質打磨", "suitableFor": "教材、電子書、提案、報告與長篇內容" },
+    { "id": "gemini", "name": "Gemini", "category": "AI", "emoji": "✨", "specialty": "資訊查詢、資料整合與研究整理", "suitableFor": "市場研究、資料蒐集、趨勢與需要外部資訊的工作" },
+    { "id": "deepseek", "name": "DeepSeek", "category": "AI", "emoji": "🧩", "specialty": "邏輯分析、結構化思考與技術問題整理", "suitableFor": "市場分析、比較分析、推理與技術型工作" },
+    { "id": "claude_code", "name": "Claude Code", "category": "AI", "emoji": "🛠️", "specialty": "讀取專案、修改程式、網站與 App 開發", "suitableFor": "專案實作、重構、除錯與功能開發" },
+    { "id": "codex", "name": "Codex", "category": "AI", "emoji": "⚙️", "specialty": "程式協作、維護、除錯與開發任務", "suitableFor": "程式修改、技術檢查、自動化與工程協作" },
     { "id": "notebooklm", "name": "NotebookLM", "category": "知識", "emoji": "📓" },
     { "id": "perplexity", "name": "Perplexity", "category": "AI", "emoji": "🔎" },
     { "id": "canva", "name": "Canva", "category": "圖片", "emoji": "🎨" },
@@ -13,6 +16,8 @@
     { "id": "github", "name": "GitHub", "category": "程式", "emoji": "💻" },
     { "id": "capcut", "name": "CapCut", "category": "影片", "emoji": "🎬" },
     { "id": "runway", "name": "Runway", "category": "影片", "emoji": "🎥" },
-    { "id": "pika", "name": "Pika", "category": "影片", "emoji": "📹" }
+    { "id": "pika", "name": "Pika", "category": "影片", "emoji": "📹" },
+    { "id": "kling", "name": "Kling", "category": "影片", "emoji": "🌀" },
+    { "id": "google_slides", "name": "PPT／Google Slides", "category": "簡報", "emoji": "📊" }
   ]
 }

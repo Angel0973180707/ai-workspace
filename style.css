@@ -57,6 +57,30 @@ body { background: var(--green-dark); color: var(--cream); font-family: var(--fo
 .card .line { font-size: 14px; color: var(--text-mid); margin-bottom: 4px; }
 .card .line b { color: var(--green-dark); }
 
+/* ── 可略過的 AI 說明（預設收合，不影響完成流程）── */
+.ai-why { margin-top: 8px; }
+.ai-why summary { cursor: pointer; font-size: 13px; font-weight: 700; color: var(--green-soft); list-style: none; }
+.ai-why summary::-webkit-details-marker { display: none; }
+.ai-why summary::before { content: '▸ '; }
+.ai-why[open] summary::before { content: '▾ '; }
+.ai-why .ai-why-body { font-size: 12.5px; color: var(--text-dim); margin-top: 6px; line-height: 1.7; }
+
+/* ── AI 協作夥伴推薦卡（AI Collaboration Calibration MVP：Recommendation First, Choice Always）── */
+.ai-partner-section-label { font-size: 13px; font-weight: 700; color: var(--cream); opacity: 0.75; margin: 14px 0 8px; }
+.ai-partner-card {
+  background: var(--cream);
+  border: 1.5px solid var(--border);
+  border-radius: 14px;
+  padding: 14px 16px;
+  margin-bottom: 10px;
+}
+.ai-partner-card.recommended { border-color: var(--gold); background: var(--gold-pale); }
+.ai-partner-badge { display: inline-block; font-size: 11.5px; font-weight: 700; color: var(--gold); background: rgba(200,150,42,0.14); border-radius: 99px; padding: 3px 10px; margin-right: 6px; }
+.ai-partner-used-tag { display: inline-block; font-size: 11.5px; font-weight: 700; color: var(--green-soft); }
+.ai-partner-name { font-size: 16px; font-weight: 700; color: var(--text); margin-top: 6px; }
+.ai-partner-line { font-size: 12.5px; color: var(--text-mid); margin-top: 4px; line-height: 1.6; }
+.ai-partner-line b { color: var(--green-dark); }
+
 .status-chip {
   display: inline-block;
   font-size: 12px;
@@ -115,6 +139,7 @@ body { background: var(--green-dark); color: var(--cream); font-family: var(--fo
 }
 .pick-card .emoji { font-size: 30px; margin-bottom: 8px; }
 .pick-card .label { font-size: 15px; font-weight: 700; color: var(--text); }
+.pick-card .option-sub { font-size: 12px; color: var(--text-dim); line-height: 1.4; }
 .pick-card:active { background: var(--green-pale); border-color: var(--green-soft); }
 
 /* ── 表單 ── */
@@ -218,6 +243,22 @@ body { background: var(--green-dark); color: var(--cream); font-family: var(--fo
   margin: 0 8px 8px 0;
 }
 .template-pick.selected { background: var(--green-dark); color: #fff; border-color: var(--green-dark); }
+
+/* ── 多行選項卡片（用途導向選擇，例如影片形狀）── */
+.option-card {
+  display: block;
+  background: var(--cream);
+  border: 1.5px solid var(--border);
+  border-radius: 14px;
+  padding: 12px 16px;
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+.option-card .option-title { font-size: 15px; font-weight: 700; color: var(--text); }
+.option-card .option-sub { font-size: 12px; color: var(--text-dim); margin-top: 2px; }
+.option-card.selected { background: var(--green-soft); border-color: var(--green-soft); }
+.option-card.selected .option-title { color: #fff; }
+.option-card.selected .option-sub { color: rgba(255,255,255,0.75); }
 
 /* ── Project 頁摘要 ── */
 .summary-box { margin-bottom: 4px; }

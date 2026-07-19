@@ -12,6 +12,24 @@
 <body>
 <div class="app">
 
+  <!-- 👋 常用 AI 引導（只有第一次使用會看到，可略過）-->
+  <div class="screen" id="screen-preferred-ai-onboarding">
+    <div style="padding-top:40px">
+      <div class="greeting" style="padding:0">
+        <div class="hello">歡迎使用 AI 工作台 👋</div>
+      </div>
+      <div class="sub" style="font-size:20px;font-weight:700;color:var(--cream);margin:16px 0 10px">你目前最常使用哪一個 AI？</div>
+      <div class="notice">選一個就好，之後隨時可以在「我的工作台」修改。這一步也可以先略過。</div>
+      <div id="onboarding-ai-list"></div>
+      <div class="field" id="onboarding-ai-other-field" style="display:none;margin-top:10px">
+        <label>你常用的 AI 叫什麼名字？</label>
+        <input type="text" id="onboarding-ai-other-input" maxlength="20" placeholder="例如：文心一言">
+        <button class="btn" style="margin-top:10px" onclick="confirmOnboardingOtherAi()">確定</button>
+      </div>
+      <button class="btn outline" style="margin-top:18px" onclick="skipOnboardingPreferredAi()">先略過，之後再設定</button>
+    </div>
+  </div>
+
   <!-- 🏠 今天想完成什麼？（首頁）-->
   <div class="screen active" id="screen-home">
     <div class="greeting">
@@ -78,6 +96,19 @@
     </div>
   </div>
 
+  <!-- 商品行銷首頁分類（商品行銷工作區重整，2026-07-14）：這次要完成哪一種商品行銷成果？
+       目前只有「行銷海報」是真正可以走完的 Flow，其餘先列出設計但標示「即將推出」 -->
+  <div class="screen" id="screen-product-category">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-project')">←</button>
+      <div class="title">商品行銷</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">這次要完成哪一種商品行銷成果？</div>
+      <div class="pick-grid" id="pc-category-grid"></div>
+    </div>
+  </div>
+
   <!-- 新增工作 -->
   <div class="screen" id="screen-add-work">
     <div class="topbar">
@@ -91,15 +122,67 @@
         <label>換一個流程（選用）</label>
         <div id="flow-switch-list"></div>
       </div>
+      <div class="field" id="video-type-field" style="display:none">
+        <label>這是哪一種影片？（選用）</label>
+        <div id="video-type-list"></div>
+      </div>
       <div class="field">
         <label>幫這件工作取個名字</label>
         <input type="text" id="new-work-name-input" maxlength="30">
+      </div>
+      <div class="field" id="song-idea-field" style="display:none">
+        <label>歌曲靈感（選填）</label>
+        <div class="line" style="font-size:12.5px;color:var(--text-mid);margin-bottom:8px">想到什麼都可以先記下來——一句話、一段故事、幾個關鍵字、一個畫面、一句歌詞、一段回憶、一種感受，都可以。</div>
+        <textarea id="new-work-song-idea-input" maxlength="500" placeholder="例如：留快樂給自己　風吹過那年的夏天　想寫給爸爸　一句沒說出口的話　陪伴　重逢　童年　回家" style="min-height:90px"></textarea>
       </div>
       <button class="btn" onclick="confirmNewWork()">建立工作</button>
     </div>
   </div>
 
   <!-- 工作詳情 -->
+  <!-- 前置協作入口（Official Flow Sprint，2026-07-14）：新工作第一次進入時，先選「直接開始」
+       或「先一起討論」，只有試點 Flow（歌曲／商品行銷／電子書／影片）且還沒有 Brief 時才會出現 -->
+  <div class="screen" id="screen-brief-choice">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-project')">←</button>
+      <div class="title">開始前，先想一下</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">這次要做「<span id="bc-flow-name"></span>」。<br><br>你想怎麼開始？</div>
+      <button class="btn" onclick="chooseDirectStart()">🚀 直接開始</button>
+      <div class="tool-suggest-note" style="margin-top:6px">適合已經有想法或資料的你。</div>
+      <button class="btn outline" style="margin-top:18px" onclick="chooseDiscussMode()">💬 先一起討論</button>
+      <div class="tool-suggest-note" style="margin-top:6px">適合想法還不完整，想先請 AI 陪你想清楚方向——不是自由聊天，是有目標的收斂。</div>
+    </div>
+  </div>
+
+  <!-- 直接開始：依工作類型顯示最少必要欄位 -->
+  <div class="screen" id="screen-brief-direct-form">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-brief-choice')">←</button>
+      <div class="title">直接開始</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">請先提供幾個最基本的資訊，AI 才能直接做出成果，不用打字太多。</div>
+      <div id="bdf-fields"></div>
+      <button class="btn" style="margin-top:10px" onclick="confirmBriefDirectForm()">確認，開始第一步</button>
+    </div>
+  </div>
+
+  <!-- 資料確認：直接開始表單填完後，先確認一次再真的送出（CEO 明確要求：資料未確認前不直接產生成果） -->
+  <div class="screen" id="screen-brief-direct-confirm">
+    <div class="topbar">
+      <button class="back" onclick="backToBriefDirectForm()">←</button>
+      <div class="title">確認一下資料</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">請確認以下資料，AI 會根據這些內容直接完成成果，不會自己亂猜沒填的部分。</div>
+      <div class="card" id="bdc-summary"></div>
+      <button class="btn" onclick="confirmBriefDirectFinal()">✅ 資料正確，繼續</button>
+      <button class="btn outline" style="margin-top:10px" onclick="backToBriefDirectForm()">✏️ 返回修改</button>
+    </div>
+  </div>
+
   <div class="screen" id="screen-work-detail">
     <div class="topbar">
       <button class="back" onclick="goBack('screen-project')">←</button>
@@ -107,15 +190,37 @@
     </div>
     <div style="padding-top:20px">
       <div class="line" style="font-size:13px;color:var(--cream);opacity:0.75;margin-bottom:16px" id="wd-tpl"></div>
+      <div class="line" style="font-size:13px;color:var(--gold);margin-bottom:16px;display:none" id="wd-source-tag"></div>
+      <div class="card" id="wd-brief-box" style="display:none">
+        <details class="ai-why">
+          <summary>📋 本次工作 Brief</summary>
+          <div class="ai-why-body"><div class="line" id="wd-brief-content" style="white-space:pre-wrap"></div></div>
+        </details>
+      </div>
       <div class="progress-track" id="wd-progress"></div>
       <div class="card">
         <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">目前步驟</div>
         <h3 style="font-size:22px;margin-bottom:12px" id="wd-step-name"></h3>
         <div class="line" style="font-size:16px" id="wd-role"></div>
-        <div class="line" style="margin-top:8px" id="wd-ai-suggest"></div>
-        <div class="line" style="margin-top:4px;font-size:12.5px;color:var(--text-dim)" id="wd-ai-reason"></div>
       </div>
+      <div class="ai-partner-section-label">🤝 建議合作夥伴</div>
+      <div id="wd-ai-recommend-card"></div>
+      <div class="ai-partner-section-label">其他可選夥伴</div>
+      <div id="wd-ai-other-partners"></div>
       <div class="card" id="wd-recommended-tools" style="display:none"></div>
+      <div class="card" id="wd-creative-preferences" style="display:none">
+        <details class="ai-why" id="wd-cp-details">
+          <summary>✨ 目前作品風格<div id="wd-cp-product-language" style="font-size:14.5px;font-weight:400;color:var(--text);margin-top:6px;line-height:1.6;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden"></div><div id="wd-cp-status" style="font-size:12px;font-weight:400;color:var(--text-dim);margin-top:6px"></div></summary>
+          <div class="ai-why-body">
+            <div id="wd-cp-categories"></div>
+            <div class="field" style="margin-top:14px;margin-bottom:10px">
+              <label>還有其他希望嗎？</label>
+              <textarea id="wd-cp-custom-input" maxlength="200" placeholder="例如：希望像老朋友聊天。" onchange="setCreativePreferenceCustomText(this.value)" style="min-height:70px"></textarea>
+            </div>
+            <button class="btn outline" style="padding:10px;font-size:13px" onclick="restoreCreativePreferenceDefaults()">恢復系統建議</button>
+          </div>
+        </details>
+      </div>
       <button class="btn" onclick="goCopyToAi()">交給 AI</button>
       <button class="btn outline" style="margin-top:10px" onclick="goPasteBack()">✍️ 我來修改（自己動手做這一步）</button>
     </div>
@@ -132,6 +237,10 @@
       <div class="copy-box" id="copy-text-box"></div>
       <button class="btn gold" onclick="copyToClipboard()">📋 複製給 AI</button>
       <div style="text-align:center;font-size:13px;color:var(--cream);opacity:0.75;margin-top:10px">建議貼給：<span id="copy-ai-name"></span></div>
+      <div id="copy-split-buttons" style="display:flex;gap:8px;margin-top:12px">
+        <button class="btn outline" style="width:auto;flex:1;padding:11px;font-size:13px;margin-top:0" onclick="copyContextPackOnly()">📋 只複製 Context Pack</button>
+        <button class="btn outline" style="width:auto;flex:1;padding:11px;font-size:13px;margin-top:0" onclick="copyCleanInstructionOnly()">📋 只複製乾淨指令</button>
+      </div>
       <button class="btn outline" style="margin-top:16px" onclick="goPasteBack()">拿到回答了 → 貼回成果</button>
     </div>
   </div>
@@ -143,27 +252,383 @@
       <div class="title">把 AI 回答貼回來</div>
     </div>
     <div style="padding-top:20px">
-      <div class="notice">貼上 AI 給你的完整回答，按下面按鈕保存這個版本，接著會請你確認滿不滿意。<br><span id="pb-version-hint" style="font-weight:700"></span></div>
+      <div class="notice"><span id="pb-notice-text"></span><br><span id="pb-version-hint" style="font-weight:700"></span></div>
       <div id="pb-length-guidance" class="notice" style="display:none;background:var(--gold-pale);margin-bottom:12px"></div>
       <div class="field">
         <label>「<span id="pb-step-name"></span>」的成果</label>
         <textarea id="paste-back-textarea" placeholder="把 AI 的回答貼在這裡..." oninput="updatePasteBackCounter()"></textarea>
         <div id="pb-char-counter" style="display:none;text-align:right;font-size:12.5px;margin-top:6px"></div>
       </div>
+      <div class="notice" id="pb-ab-warning" style="display:none;background:var(--gold-pale);border:1px solid var(--gold);margin-bottom:12px">
+        <div id="pb-warning-text"></div>
+        <div style="display:flex;gap:8px;margin-top:12px">
+          <button class="btn gold" style="width:auto;flex:1;padding:11px;font-size:13px;margin-top:0" onclick="pasteBackGoChooseVersion()">返回 AI 選擇版本</button>
+          <button class="btn outline" style="width:auto;flex:1;padding:11px;font-size:13px;margin-top:0" onclick="pasteBackDismissAbWarning()">繼續修改貼回內容</button>
+        </div>
+      </div>
       <button class="btn" onclick="submitPasteBack()">保存這個版本</button>
     </div>
   </div>
 
-  <!-- 滿意度確認 -->
+  <!-- 本步驟完成確認（Official Flow 共通規則：確認重點是成果 Deliverable，不是 AI 回答） -->
   <div class="screen" id="screen-satisfaction">
-    <div class="topbar"><div class="title">✨ 作品打磨</div></div>
+    <div class="topbar"><div class="title">✅ 本步驟完成確認</div></div>
     <div style="padding-top:20px">
-      <div class="section-label">「<span id="sat-step-name"></span>」的這次成果</div>
+      <div class="section-label">「<span id="sat-step-name"></span>」的成果</div>
       <div class="copy-box" id="sat-content-preview" style="max-height:35vh;overflow-y:auto"></div>
-      <div class="section-label" style="margin-top:18px;font-size:18px;color:var(--cream);opacity:1">你對這次成果滿意嗎？</div>
-      <button class="btn" onclick="satisfactionGood()">🙂 很滿意</button>
-      <button class="btn outline" style="margin-top:10px" onclick="satisfactionRevise('還可以')">😐 還可以</button>
-      <button class="btn outline" style="margin-top:10px" onclick="satisfactionRevise('不滿意')">🙁 不滿意</button>
+      <div class="notice" style="margin-top:18px">如果內容已經處理好、該貼的地方都貼好了，就可以繼續下一步。</div>
+      <div class="section-label" style="margin-top:14px;font-size:18px;color:var(--cream);opacity:1">下一步：</div>
+      <button class="btn" onclick="satisfactionGood()">✅ 繼續下一步</button>
+      <button class="btn outline" style="margin-top:10px" onclick="satisfactionRevise('需要修改')">✏️ 修改這一步</button>
+      <button class="btn outline" style="margin-top:10px" onclick="satisfactionLater()">🕐 稍後再繼續</button>
+    </div>
+  </div>
+
+  <!-- 製作歌曲（歌曲創作流程專屬步驟——Suno 產生的是歌曲檔案，不是文字回答，不能用「貼回」；
+       這一步取代標準的「交給AI／貼回成果」流程，直接接手 renderWorkDetail() 的入口 -->
+  <div class="screen" id="screen-make-song">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-project')">←</button>
+      <div class="title">製作歌曲</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="line" style="font-size:18px;font-weight:700;color:var(--gold);margin-bottom:12px" id="ms-song-title"></div>
+      <div class="notice">現在開始製作歌曲<br><br>AI 已經幫你完成：<br>✅ 歌名與歌詞<br>✅ 音樂風格</div>
+
+      <!-- 工具使用流程引導（Song Tool Guide MVP，2026-07-13）：由 renderToolGuide() 產生，
+           版型設計成之後影片／圖片／網站 Flow 都能沿用，這輪只接歌曲的 Suno 設定 -->
+      <div id="ms-tool-guide" style="margin-top:16px"></div>
+
+      <div class="section-label" style="margin-top:18px">【歌詞】</div>
+      <div class="copy-box" id="ms-lyrics-content" style="max-height:26vh;overflow-y:auto"></div>
+      <button class="btn gold" onclick="copyMakeSongLyrics()">📋 複製歌詞</button>
+      <a class="btn outline" style="margin-top:10px;text-decoration:none;display:block;text-align:center" id="ms-open-tool-btn" href="#" target="_blank" rel="noopener">🎵 開啟 Suno</a>
+      <div class="notice" style="margin-top:10px">把【歌詞】貼到 Lyrics。</div>
+
+      <div class="section-label" style="margin-top:22px">【音樂風格】</div>
+      <div class="copy-box" id="ms-style-content" style="max-height:20vh;overflow-y:auto"></div>
+      <button class="btn gold" onclick="copyMakeSongStyle()">📋 複製音樂風格</button>
+      <div class="notice" style="margin-top:10px">把【音樂風格】貼到 Style of Music。</div>
+
+      <div class="notice" style="margin-top:16px">完成後，回來這裡。</div>
+
+      <button class="btn" style="margin-top:20px" onclick="goSongConfirm()">下一步：確認歌曲進度</button>
+    </div>
+  </div>
+
+  <!-- 歌曲完成確認 -->
+  <div class="screen" id="screen-song-confirm">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-make-song')">←</button>
+      <div class="title">第一首歌完成了嗎？</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">第一首歌完成了嗎？</div>
+      <button class="btn" onclick="songConfirmDone()">🎉 完成了</button>
+      <button class="btn outline" style="margin-top:10px" onclick="songConfirmRegenerate()">🔁 我還要重新生成</button>
+      <button class="btn outline" style="margin-top:10px" onclick="songConfirmLater()">🕐 今天先到這裡</button>
+    </div>
+  </div>
+
+  <!-- 保存這首歌（MVP：不做 MP3 上傳、不做 Asset Manager，只留最小欄位） -->
+  <div class="screen" id="screen-save-song">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-song-confirm')">←</button>
+      <div class="title">保存這首歌</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">把完成的歌曲留下來。網址跟備註都可以先不填，之後隨時可以補。</div>
+      <div class="field">
+        <label>歌曲名稱</label>
+        <input type="text" id="save-song-name-input" maxlength="30">
+      </div>
+      <div class="field">
+        <label>Suno 作品網址（選填）</label>
+        <input type="text" id="save-song-url-input" maxlength="200" placeholder="https://suno.com/song/...">
+      </div>
+      <div class="field">
+        <label>一句備註（選填）</label>
+        <input type="text" id="save-song-note-input" maxlength="60">
+      </div>
+      <div class="field">
+        <label>建議檔名（下載歌曲時可以用這個命名，避免之後找不到最終版）</label>
+        <div class="copy-box" id="save-song-filename"></div>
+        <button class="btn outline" style="margin-top:8px" onclick="copySongFileName()">📋 複製建議檔名</button>
+      </div>
+      <button class="btn" onclick="confirmSaveSong()">保存這首歌</button>
+    </div>
+  </div>
+
+  <!-- 歌曲完成後：接下來想做什麼（不強迫線性推進，讓使用者自己決定接力方向） -->
+  <div class="screen" id="screen-song-next">
+    <div class="topbar"><div class="title">🎉 完成了</div></div>
+    <div style="padding-top:20px">
+      <div class="notice">很好！🎉《<span id="sn-song-title" style="font-weight:700;color:var(--gold)"></span>》完成了。<br><br>接下來，我陪你：</div>
+      <button class="btn" onclick="songNextVideo()">🎬 製作影片</button>
+      <button class="btn outline" style="margin-top:10px" onclick="songNextLater()">🕐 今天先休息</button>
+
+      <div class="card" style="margin-top:18px">
+        <div class="section-label">📁 保存與備份，別讓作品只留在對話紀錄裡</div>
+        <div class="line">✅ 已自動存入工作台成果庫，隨時可以在「成果庫」找到這份紀錄</div>
+        <div class="line">・記得在 Suno 把歌曲實際下載到手機或電腦</div>
+        <div class="line">・建議再另外存一份到雲端硬碟或專案資料夾，多一層備份</div>
+        <div class="line" style="margin-top:10px">建議檔名：</div>
+        <div class="copy-box" id="sn-filename"></div>
+        <button class="btn outline" style="margin-top:8px" onclick="copySongFileName()">📋 複製建議檔名</button>
+      </div>
+
+      <div class="card" style="margin-top:18px;padding:14px 20px">
+        <details class="ai-why">
+          <summary>💡 小提醒</summary>
+          <div class="ai-why-body">如果你想把歌曲保存到自己的電腦，可以在音樂工具（例如 Suno）的作品頁面，點選「Download（下載）」，將歌曲下載保存。<br><br>（不同平台的下載方式可能略有不同。）</div>
+        </details>
+      </div>
+    </div>
+  </div>
+
+  <!-- 製作影片・Phase A：先完成圖片素材（Sprint 2.1 Starter UX：先做圖片，不要直接推薦影片工具） -->
+  <div class="screen" id="screen-make-video">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-project')">←</button>
+      <div class="title">製作影片・準備圖片</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">現在開始準備圖片素材<br><br>AI 已經幫你完成：<br>✅ 腳本<br>✅ 圖片描述<br>✅ 風格建議<br><br>現在請：把圖片描述交給你習慣使用的圖片工具，做出你的圖片素材。</div>
+
+      <div class="section-label" style="margin-top:18px">【腳本】</div>
+      <div class="copy-box" id="mv-script-content" style="max-height:22vh;overflow-y:auto"></div>
+      <button class="btn gold" onclick="copyMakeVideoScript()">📋 複製腳本</button>
+
+      <div class="section-label" style="margin-top:22px">【圖片描述建議】</div>
+      <div class="copy-box" id="mv-image-desc-content" style="max-height:20vh;overflow-y:auto"></div>
+
+      <div class="section-label" style="margin-top:16px">【風格建議】</div>
+      <div class="copy-box" id="mv-style-content" style="max-height:12vh;overflow-y:auto"></div>
+      <button class="btn gold" onclick="copyMakeVideoImages()">📋 複製圖片描述與風格</button>
+
+      <div class="section-label" style="margin-top:22px">影片形狀</div>
+      <div id="mv-ratio-list"></div>
+
+      <div class="section-label" style="margin-top:18px">圖片數量</div>
+      <div id="mv-count-list"></div>
+
+      <div class="card" id="mv-recommended-tools" style="margin-top:18px"></div>
+
+      <div class="notice" style="margin-top:16px">圖片完成後，請先下載或保存到裝置。<br><br>下一步製作影片時，需要用到這些圖片。</div>
+
+      <button class="btn" style="margin-top:20px" onclick="goImageConfirm()">下一步：確認圖片進度</button>
+    </div>
+  </div>
+
+  <!-- 圖片完成確認 -->
+  <div class="screen" id="screen-image-confirm">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-make-video')">←</button>
+      <div class="title">圖片做好了嗎？</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">圖片做好了嗎？</div>
+      <button class="btn" onclick="imageConfirmDone()">🎉 做好了</button>
+      <button class="btn outline" style="margin-top:10px" onclick="imageConfirmRegenerate()">🔁 我還要重新生成</button>
+      <button class="btn outline" style="margin-top:10px" onclick="imageConfirmLater()">🕐 今天先到這裡</button>
+    </div>
+  </div>
+
+  <!-- 製作影片・Phase B：圖片準備好了，換影片工具上場 -->
+  <div class="screen" id="screen-video-tools">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-image-confirm')">←</button>
+      <div class="title">製作影片・完成影片</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">圖片準備好了 🎉<br><br>現在請：把圖片交給你習慣使用的影片工具，做成完整影片。</div>
+
+      <!-- 工具使用流程引導（Video Tool Guide MVP，Video Flow Sprint 2）：由 renderToolGuide() 產生，
+           跟歌曲共用同一個版型，但內容依影片實際路徑重寫（核心動作是上傳圖片，不是複製文字）。 -->
+      <div id="vt-tool-guide" style="margin-top:16px"></div>
+      <a class="btn outline" style="margin-top:10px;text-decoration:none;display:block;text-align:center" id="vt-open-tool-btn" href="#" target="_blank" rel="noopener">🎬 開啟 Kling</a>
+
+      <div class="card" id="vt-recommended-tools" style="margin-top:22px"></div>
+
+      <div class="notice" style="margin-top:16px">完成後，回來這裡。</div>
+      <button class="btn" style="margin-top:20px" onclick="goVideoConfirm()">下一步：確認影片進度</button>
+    </div>
+  </div>
+
+  <!-- Tool Companion（Sprint 3）：陪使用者完成一個工具的操作，不是工具介紹／AI教學／功能列表 -->
+  <div class="screen" id="screen-tool-companion">
+    <div class="topbar">
+      <button class="back" onclick="closeToolCompanion()">←</button>
+      <div class="title" id="tc-title">使用步驟</div>
+    </div>
+    <div style="padding-top:20px">
+      <div id="tc-steps"></div>
+      <button class="btn" style="margin-top:20px" onclick="closeToolCompanion()">完成後，回來這裡</button>
+    </div>
+  </div>
+
+  <!-- 影片完成確認 -->
+  <div class="screen" id="screen-video-confirm">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-video-tools')">←</button>
+      <div class="title">第一支影片完成了嗎？</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">第一支影片完成了嗎？</div>
+      <button class="btn" onclick="videoConfirmDone()">🎉 完成了</button>
+      <button class="btn outline" style="margin-top:10px" onclick="videoConfirmRegenerate()">🔁 我還要重新生成</button>
+      <button class="btn outline" style="margin-top:10px" onclick="videoConfirmLater()">🕐 今天先到這裡</button>
+    </div>
+  </div>
+
+  <!-- 保存這支影片（MVP：不做 MP3/影片上傳、不做 Asset Manager，只留最小欄位） -->
+  <div class="screen" id="screen-save-video">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-video-confirm')">←</button>
+      <div class="title">保存這支影片</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">把完成的影片留下來。網址跟備註都可以先不填，之後隨時可以補。</div>
+      <div class="field">
+        <label>影片名稱</label>
+        <input type="text" id="save-video-name-input" maxlength="30">
+      </div>
+      <div class="field">
+        <label>作品網址（選填）</label>
+        <input type="text" id="save-video-url-input" maxlength="200" placeholder="https://...">
+      </div>
+      <div class="field">
+        <label>一句備註（選填）</label>
+        <input type="text" id="save-video-note-input" maxlength="60">
+      </div>
+      <div class="field">
+        <label>建議檔名（下載影片時可以用這個命名，避免之後找不到最終版）</label>
+        <div class="copy-box" id="save-video-filename"></div>
+        <button class="btn outline" style="margin-top:8px" onclick="copyVideoFileName()">📋 複製建議檔名</button>
+      </div>
+      <button class="btn" onclick="confirmSaveVideo()">保存這支影片</button>
+    </div>
+  </div>
+
+  <!-- 🎉 完成作品（Sprint 4：讓使用者清楚知道「我完成了」，不是丟一句話就跳走） -->
+  <div class="screen" id="screen-video-complete">
+    <div class="topbar"><div class="title">🎉 完成作品</div></div>
+    <div style="padding-top:20px">
+      <div class="notice">🎉 恭喜！<br><br>你的第一支影片完成了。</div>
+      <div class="card">
+        <div class="line"><b>影片名稱：</b>《<span id="vc-name"></span>》</div>
+        <div class="line" id="vc-source" style="margin-top:6px;display:none"></div>
+      </div>
+      <div class="card">
+        <div class="section-label">📁 保存與備份，別讓作品只留在對話紀錄裡</div>
+        <div class="line">✅ 已自動存入工作台成果庫，隨時可以在「成果庫」找到這份紀錄</div>
+        <div class="line">・記得把影片實際下載到手機或電腦</div>
+        <div class="line">・建議再另外存一份到雲端硬碟或專案資料夾，多一層備份</div>
+        <div class="line" style="margin-top:10px">建議檔名：</div>
+        <div class="copy-box" id="vc-filename"></div>
+        <button class="btn outline" style="margin-top:8px" onclick="copyVideoFileName()">📋 複製建議檔名</button>
+      </div>
+      <div class="section-label" style="margin-top:18px;font-size:18px;color:var(--cream);opacity:1">接下來可以：</div>
+      <button class="btn" onclick="openResult(lastCompletedResultId)">📺 查看作品</button>
+      <button class="btn outline" style="margin-top:10px" onclick="showScreen('screen-project')">🏠 返回專案</button>
+    </div>
+  </div>
+
+  <!-- 完成海報（行銷海報 Production Studio，商品行銷工作區重整第一個子工作，2026-07-14）——
+       跟「製作歌曲」「製作影片」同一套架構：文案／視覺內容已經是 AI 寫好的正式版，
+       這一步是帶去圖片工具真正做出海報成品，不是 AI 寫文字 -->
+  <div class="screen" id="screen-make-poster">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-project')">←</button>
+      <div class="title">完成海報</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">現在開始完成海報<br><br>AI 已經幫你完成：<br>✅ 海報文案<br>✅ 視覺設計<br><br>現在請：把圖片生成請求交給你習慣使用的圖片工具，做出真正的海報成品。</div>
+
+      <div id="mp-tool-guide" style="margin-top:16px"></div>
+      <a class="btn outline" style="margin-top:10px;text-decoration:none;display:block;text-align:center" id="mp-open-tool-btn" href="#" target="_blank" rel="noopener">🖼️ 開啟 ChatGPT</a>
+
+      <div class="section-label" style="margin-top:22px">【海報文案】</div>
+      <div class="copy-box" id="mp-copy-content" style="max-height:20vh;overflow-y:auto"></div>
+      <div id="mp-copy-versions" style="margin-top:6px"></div>
+      <button class="btn gold" onclick="copyMakePosterCopy()">📋 複製海報文案</button>
+
+      <div class="section-label" style="margin-top:22px">【圖片生成請求】</div>
+      <div class="copy-box" id="mp-image-request-content" style="max-height:20vh;overflow-y:auto"></div>
+
+      <div class="section-label" style="margin-top:16px">【風格建議】</div>
+      <div class="copy-box" id="mp-style-content" style="max-height:12vh;overflow-y:auto"></div>
+      <div id="mp-visual-versions" style="margin-top:6px"></div>
+      <button class="btn gold" onclick="copyMakePosterVisual()">📋 複製圖片生成請求與風格</button>
+
+      <div class="notice" style="margin-top:16px">完成後，回來這裡。</div>
+      <button class="btn" style="margin-top:20px" onclick="goPosterConfirm()">下一步：確認海報進度</button>
+    </div>
+  </div>
+
+  <!-- 海報完成確認 -->
+  <div class="screen" id="screen-poster-confirm">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-make-poster')">←</button>
+      <div class="title">第一張海報完成了嗎？</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">第一張海報完成了嗎？</div>
+      <button class="btn" onclick="posterConfirmDone()">🎉 完成了</button>
+      <button class="btn outline" style="margin-top:10px" onclick="posterConfirmRegenerate()">🔁 我還要重新生成</button>
+      <button class="btn outline" style="margin-top:10px" onclick="posterConfirmLater()">🕐 今天先到這裡</button>
+    </div>
+  </div>
+
+  <!-- 保存這張海報（MVP：不做圖片上傳、不做 Asset Manager，只留最小欄位） -->
+  <div class="screen" id="screen-save-poster">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-poster-confirm')">←</button>
+      <div class="title">保存這張海報</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">把完成的海報留下來。網址跟備註都可以先不填，之後隨時可以補。</div>
+      <div class="field">
+        <label>海報名稱</label>
+        <input type="text" id="save-poster-name-input" maxlength="30">
+      </div>
+      <div class="field">
+        <label>作品網址（選填）</label>
+        <input type="text" id="save-poster-url-input" maxlength="200" placeholder="https://...">
+      </div>
+      <div class="field">
+        <label>一句備註（選填）</label>
+        <input type="text" id="save-poster-note-input" maxlength="60">
+      </div>
+      <div class="field">
+        <label>建議檔名（下載海報圖片時可以用這個命名，避免之後找不到最終版）</label>
+        <div class="copy-box" id="save-poster-filename"></div>
+        <button class="btn outline" style="margin-top:8px" onclick="copyPosterFileName()">📋 複製建議檔名</button>
+      </div>
+      <button class="btn" onclick="confirmSavePoster()">保存這張海報</button>
+    </div>
+  </div>
+
+  <!-- 🎉 完成作品 -->
+  <div class="screen" id="screen-poster-complete">
+    <div class="topbar"><div class="title">🎉 完成作品</div></div>
+    <div style="padding-top:20px">
+      <div class="notice">🎉 恭喜！<br><br>你的第一張海報完成了。</div>
+      <div class="card">
+        <div class="line"><b>海報名稱：</b>《<span id="pc-name"></span>》</div>
+      </div>
+      <div class="card">
+        <div class="section-label">📁 保存與備份，別讓作品只留在對話紀錄裡</div>
+        <div class="line">✅ 已自動存入工作台成果庫，隨時可以在「成果庫」找到這份紀錄</div>
+        <div class="line">・記得把海報圖片實際下載到手機或電腦</div>
+        <div class="line">・建議再另外存一份到雲端硬碟或專案資料夾，多一層備份</div>
+        <div class="line" style="margin-top:10px">建議檔名：</div>
+        <div class="copy-box" id="pc-filename"></div>
+        <button class="btn outline" style="margin-top:8px" onclick="copyPosterFileName()">📋 複製建議檔名</button>
+      </div>
+      <div class="section-label" style="margin-top:18px;font-size:18px;color:var(--cream);opacity:1">接下來可以：</div>
+      <button class="btn" onclick="openResult(lastCompletedResultId)">🖼️ 查看作品</button>
+      <button class="btn outline" style="margin-top:10px" onclick="showScreen('screen-project')">🏠 返回專案</button>
     </div>
   </div>
 
@@ -190,7 +655,7 @@
       <div class="notice">複製這段指令，貼給你目前使用的 AI，拿到修改後的版本再回來貼回。</div>
       <div class="copy-box" id="revise-instruction-box"></div>
       <button class="btn gold" onclick="copyRevisionInstruction()">📋 複製修正指令</button>
-      <button class="btn outline" style="margin-top:16px" onclick="goReviseSubmit()">拿到修改版了 → 貼回修改版</button>
+      <button class="btn outline" style="margin-top:16px" id="revise-submit-btn" onclick="goReviseSubmit()">拿到修改版了 → 貼回修改版</button>
     </div>
   </div>
 
@@ -249,7 +714,8 @@
     </div>
     <div style="padding-top:20px">
       <h3 style="font-size:19px;margin-bottom:6px" id="rd-title"></h3>
-      <div style="font-size:12px;color:var(--text-dim);margin-bottom:16px" id="rd-meta"></div>
+      <div style="font-size:12px;color:var(--text-dim);margin-bottom:6px" id="rd-meta"></div>
+      <div style="font-size:12px;color:var(--gold);margin-bottom:16px;display:none" id="rd-source"></div>
       <div id="rd-version-history" style="margin-bottom:14px"></div>
       <div class="result-content-box" id="rd-content"></div>
       <div class="action-row">
@@ -315,7 +781,8 @@
       </div>
 
       <div class="section-label" style="margin-top:18px">AI 協作</div>
-      <button class="btn outline" onclick="showScreen('screen-ai-team')">🤖 AI 角色設定</button>
+      <button class="btn outline" onclick="showScreen('screen-my-ai')">⭐ 我的 AI 夥伴</button>
+      <button class="btn outline" style="margin-top:10px" onclick="showScreen('screen-ai-team')">🤖 AI 角色設定</button>
       <button class="btn outline" style="margin-top:10px" onclick="showScreen('screen-my-tools')">🧰 我的工具</button>
       <button class="btn outline" style="margin-top:10px" onclick="showScreen('screen-prompt-library')">🧠 AI 指令庫（進階：查看每個角色目前用的指令）</button>
 
@@ -341,6 +808,35 @@
           陸續推出，適合需要管理多個品牌或大型專案的使用者。
         </p>
       </div>
+    </div>
+  </div>
+
+  <!-- 我的 AI 夥伴 -->
+  <div class="screen" id="screen-my-ai">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-settings')">←</button>
+      <div class="title">我的 AI 夥伴</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">AI 工作台會優先請排在最上面的 AI 幫忙，只有在某一步確實更適合用別的 AI 時，才會另外提醒你。排序可以隨時調整。</div>
+      <div id="my-ai-list"></div>
+      <button class="btn outline" onclick="openAddMyAi()">＋ 新增 AI 夥伴</button>
+    </div>
+  </div>
+
+  <!-- 新增 AI 夥伴 -->
+  <div class="screen" id="screen-add-my-ai">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-my-ai')">←</button>
+      <div class="title">新增 AI 夥伴</div>
+    </div>
+    <div style="padding-top:20px">
+      <div id="add-my-ai-quick-list"></div>
+      <div class="field" style="margin-top:14px">
+        <label>或輸入其他 AI 的名字</label>
+        <input type="text" id="new-my-ai-input" maxlength="20" placeholder="例如：文心一言">
+      </div>
+      <button class="btn" onclick="confirmAddMyAi()">新增</button>
     </div>
   </div>
 
