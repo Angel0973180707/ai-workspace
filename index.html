@@ -12,6 +12,23 @@
 <body>
 <div class="app">
 
+  <!-- 🛡️ 資料損毀告知（Workspace Trust Sprint 1 Task 7：偵測到 localStorage 資料損毀時顯示，
+       不再靜默用示範資料覆蓋掉，優先於其他任何畫面顯示）-->
+  <div class="screen" id="screen-data-corruption-notice">
+    <div style="padding:40px 24px">
+      <div class="notice" style="border-color:var(--red);background:rgba(201,74,58,0.08)">
+        <h3 style="color:var(--red);margin-bottom:10px">⚠️ 偵測到資料異常</h3>
+        <p style="font-size:14px;line-height:1.8;color:var(--cream)">
+          這台裝置原本保存的工作台資料看起來已經損毀，無法正常讀取。<br><br>
+          為了避免直接用空白內容覆蓋掉它，系統已經把原始（損毀的）內容另外保留一份在這台裝置裡。<br><br>
+          如果你之前有匯出過備份檔（.json），可以到「資料安全中心」用「還原資料」救回來。<br>
+          如果沒有備份檔，這次很可能無法完整救回，建議之後養成定期備份的習慣。
+        </p>
+      </div>
+      <button class="btn" onclick="acknowledgeDataCorruption()" style="margin-top:16px">我知道了，繼續使用</button>
+    </div>
+  </div>
+
   <!-- 👋 常用 AI 引導（只有第一次使用會看到，可略過）-->
   <div class="screen" id="screen-preferred-ai-onboarding">
     <div style="padding-top:40px">
@@ -50,6 +67,9 @@
     </div>
 
     <button class="btn outline" onclick="openFlowMarket()">🗺️ 瀏覽完整流程市集</button>
+
+    <div class="section-label" style="margin-top:18px">資料安全</div>
+    <div class="card" id="home-data-safety-summary" onclick="openDataSafetyCenter()" style="cursor:pointer"></div>
 
     <div class="section-label" style="margin-top:18px">我的專案</div>
     <div id="home-project-list"></div>
@@ -756,6 +776,150 @@
   </div>
 
   <!-- ⚙️ 我的工作台 -->
+  <!-- 🛡️ 資料安全中心（Workspace Trust Sprint 1）-->
+  <div class="screen" id="screen-data-safety-center">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-home')">←</button>
+      <div class="title">資料安全中心</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="card">
+        <div class="section-label">目前資料位置</div>
+        <div class="line">這台裝置的瀏覽器（localStorage）。<br>清除瀏覽資料、換手機、換瀏覽器都會遺失，除非你有備份檔。</div>
+      </div>
+
+      <div class="card" style="margin-top:14px">
+        <div class="section-label">備份狀態</div>
+        <div class="line" id="dsc-backup-status"></div>
+      </div>
+
+      <div class="card" style="margin-top:14px">
+        <div class="section-label">目前累積</div>
+        <div class="line" id="dsc-stats"></div>
+      </div>
+
+      <div class="section-label" style="margin-top:18px">📄 本機備份（JSON）</div>
+      <button class="btn" style="margin-top:10px" onclick="exportData()">⬇️ 立即備份</button>
+      <button class="btn outline" style="margin-top:10px" onclick="document.getElementById('dsc-restore-file-input').click()">⬆️ 還原資料</button>
+      <input type="file" id="dsc-restore-file-input" accept="application/json" style="display:none" onchange="importDataFile(this)">
+      <button class="btn outline" style="margin-top:10px" onclick="document.getElementById('dsc-test-file-input').click()">🧪 測試我的備份檔</button>
+      <input type="file" id="dsc-test-file-input" accept="application/json" style="display:none" onchange="testBackupFile(this)">
+
+      <div id="dsc-recovery-test-result" style="margin-top:14px"></div>
+
+      <div class="notice" style="margin-top:14px">備份檔會下載成一個 .json 檔，建議另外存到雲端硬碟或信箱，多一層保護。<br><br>
+        ⚠️ 備份檔包含你的全部專案、工作、成果與作品內容，請妥善保存，不要隨意傳給他人。<br><br>
+        成果數量較多時，備份／還原／測試備份可能需要幾秒鐘處理時間，屬正常現象。
+      </div>
+
+      <div style="margin-top:22px;border-top:1.5px dashed var(--border);padding-top:18px" id="dsc-drive-backup-section"></div>
+    </div>
+  </div>
+
+  <!-- ☁️ 雲端還原預覽（本機沒什麼資料時，找到雲端備份的簡單確認畫面）-->
+  <div class="screen" id="screen-cloud-restore-preview">
+    <div class="topbar">
+      <button class="back" onclick="cancelDriveRestorePreview()">←</button>
+      <div class="title">找到雲端備份</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="card">
+        <div class="section-label">目前使用的帳號</div>
+        <div class="line" id="cdrp-account"></div>
+      </div>
+      <div class="card" style="margin-top:14px">
+        <div class="section-label">備份內容</div>
+        <div class="line" id="cdrp-summary"></div>
+      </div>
+      <div class="notice" style="margin-top:14px">還原前會先自動保留一份目前資料的安全快照，如果還原後不滿意，可以隨時回復。</div>
+      <button class="btn" style="margin-top:14px" onclick="confirmApplyDriveRestore()">使用這份雲端備份還原</button>
+      <button class="btn outline" style="margin-top:10px" onclick="cancelDriveRestorePreview()">取消</button>
+    </div>
+  </div>
+
+  <!-- ☁️ 選擇要使用的資料版本（本機已有資料時使用，不做自動合併或逐欄位比較。
+       補正三：這裡刻意不宣稱「雲端版本較新」——本機是否有資料跟哪一份比較新是兩件事，
+       這個 MVP 沒有可靠的依據判斷孰新孰舊，只誠實列出兩邊的備份時間與內容摘要，
+       讓使用者自己決定。）-->
+  <div class="screen" id="screen-cloud-version-choice">
+    <div class="topbar">
+      <button class="back" onclick="keepLocalVersionInstead()">←</button>
+      <div class="title">選擇要使用的資料版本</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">偵測到雲端備份。系統無法判斷哪一份資料比較新，請比較下方摘要後自行決定。</div>
+      <div class="card" style="margin-top:14px">
+        <div class="section-label">目前使用的帳號</div>
+        <div class="line" id="cvc-account"></div>
+      </div>
+      <div class="card" style="margin-top:14px">
+        <div class="section-label">☁️ 雲端</div>
+        <div class="line" id="cvc-cloud-summary"></div>
+      </div>
+      <div class="card" style="margin-top:14px">
+        <div class="section-label">📱 這台裝置</div>
+        <div class="line" id="cvc-local-summary"></div>
+      </div>
+      <button class="btn" style="margin-top:14px" onclick="confirmApplyDriveRestore()">使用雲端版本</button>
+      <div class="notice" style="margin-top:8px">會先保留這台裝置目前資料的安全快照，再套用雲端版本。</div>
+      <button class="btn outline" style="margin-top:14px" onclick="keepLocalVersionInstead()">暫不處理，保留這台裝置現狀</button>
+    </div>
+  </div>
+
+  <!-- ☁️ 找不到雲端備份，三個明確出口（不得只顯示「沒有備份資料」）-->
+  <div class="screen" id="screen-cloud-no-backup-found">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-data-safety-center')">←</button>
+      <div class="title">這個帳號還沒有備份</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="card">
+        <div class="section-label">目前使用的帳號</div>
+        <div class="line" id="cnbf-account"></div>
+      </div>
+      <div class="notice" style="margin-top:14px">
+        可能是：<br>
+        ・這是你第一次用這個帳號做雲端備份<br>
+        ・或者，之前備份時選了不同的 Google 帳號
+      </div>
+      <button class="btn" style="margin-top:14px" onclick="createFirstCloudBackupNow()">建立第一份雲端備份</button>
+      <button class="btn outline" style="margin-top:10px" onclick="reselectDriveAccount()">重新選擇 Google 帳號</button>
+      <button class="btn outline" style="margin-top:10px" onclick="useLocalImportInstead()">改用本機檔案匯入</button>
+    </div>
+  </div>
+
+  <!-- ☁️ 帳號切換防呆：偵測到跟上次不同的帳號，先提醒，不直接建立或覆蓋 -->
+  <div class="screen" id="screen-cloud-account-mismatch">
+    <div class="topbar">
+      <button class="back" onclick="cancelDriveAccountSwitch()">←</button>
+      <div class="title">偵測到不同的 Google 帳號</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">
+        上次使用的帳號：<span id="cam-previous-account"></span><br>
+        這次選的帳號：<span id="cam-new-account"></span><br><br>
+        <span id="cam-context-hint"></span>
+      </div>
+      <button class="btn" style="margin-top:14px" onclick="proceedWithNewDriveAccount()">確定要用這個帳號繼續</button>
+      <button class="btn outline" style="margin-top:10px" onclick="cancelDriveAccountSwitch()">取消，重新選擇帳號</button>
+    </div>
+  </div>
+
+  <!-- 🛡️ 首次資料安全提醒（一次性，新舊使用者都會看到一次）-->
+  <div class="screen" id="screen-data-safety-onboarding">
+    <div style="padding:40px 24px">
+      <div class="notice">
+        <h3 style="color:var(--gold);margin-bottom:10px">🛡️ 你的作品保存在這台裝置</h3>
+        <p style="font-size:14px;line-height:1.8;color:var(--cream)">
+          目前所有內容只存在這個瀏覽器裡，沒有自動雲端備份。<br><br>
+          建議現在花 10 秒，先做第一次備份。
+        </p>
+      </div>
+      <button class="btn" style="margin-top:16px" onclick="acknowledgeDataSafetyOnboarding(true)">⬇️ 立即備份</button>
+      <button class="btn outline" style="margin-top:10px" onclick="acknowledgeDataSafetyOnboarding(false)">稍後再說</button>
+    </div>
+  </div>
+
   <div class="screen" id="screen-settings">
     <div class="topbar"><div class="title">我的工作台</div></div>
     <div style="padding-top:20px">
@@ -787,25 +951,19 @@
       <button class="btn outline" style="margin-top:10px" onclick="showScreen('screen-prompt-library')">🧠 AI 指令庫（進階：查看每個角色目前用的指令）</button>
 
       <div class="section-label" style="margin-top:18px">進階</div>
-      <button class="btn outline" onclick="exportData()">⬇️ 匯出我的資料</button>
+      <button class="btn outline" onclick="openDataSafetyCenter()">🛡️ 資料安全中心（備份／還原）</button>
 
-      <div class="card" style="margin-top:14px;border:1px dashed var(--gold);background:var(--gold-pale)">
-        <h3 style="font-size:16px;margin-bottom:8px;color:var(--gold)">☁️ 專屬 Google 雲端備份設定</h3>
-        <p style="font-size:13px;color:var(--text-mid);line-height:1.7;margin-bottom:12px">
-          你的作品可以保存到自己的 Google 雲端硬碟。本系統不保留你的作品資料，請依照教學建立自己的雲端備份連線。
-        </p>
-        <div class="field" style="margin-bottom:10px">
-          <label>雲端連線網址</label>
-          <input type="text" id="settings-gas-url" onchange="updateGasWebhookUrl(this.value)" placeholder="https://script.google.com/.../exec">
-        </div>
-        <button class="btn outline" onclick="openGasInstructions()">📖 1 分鐘開通雲端教學</button>
-      </div>
-
+      <!-- Workspace Trust Sprint 1（Task 9）：原本的「☁️ 專屬 Google 雲端備份設定」區塊
+           已停用——那個功能實際上從未真正把資料送到任何地方（saveToCloud() 只是把本地
+           cloudStatus 欄位設成 'saved'，部署的 GAS 腳本本身也只是 placeholder），
+           卻用「百分之百儲存」「安全且完全私密」這種肯定語氣描述，容易讓使用者誤以為
+           已經有真正的雲端備份而疏於自己備份。在真正完成雲端串接之前，不重新加回
+           任何形式的「已備份到雲端」宣稱，改用下面誠實的「開發中」說明。 -->
       <div class="card" style="margin-top:14px;opacity:0.6">
         <h3 style="font-size:15px;margin-bottom:8px;color:var(--text-mid)">🔭 即將推出</h3>
         <p style="font-size:13px;color:var(--text-dim);line-height:1.8">
-          Studio 工作室・雲端連線中心・知識庫<br>
-          陸續推出，適合需要管理多個品牌或大型專案的使用者。
+          雲端備份（開發中）・Studio 工作室・雲端連線中心・知識庫<br>
+          雲端備份上線前，請使用上方「匯出我的資料」保存備份到自己的裝置或雲端硬碟。
         </p>
       </div>
     </div>
@@ -882,46 +1040,6 @@
     </div>
   </div>
 
-  <!-- 1 分鐘開通雲端教學 -->
-  <div class="screen" id="screen-gas-instructions">
-    <div class="topbar">
-      <button class="back" onclick="goBack('screen-settings')">←</button>
-      <div class="title">1 分鐘開通雲端教學</div>
-    </div>
-    <div style="padding-top:20px;padding-bottom:40px">
-      <div class="notice">
-        ❤️ 本產品不設中央伺服器，你的作品將會百分之百儲存在<b>你自己的 Google 雲端硬碟</b>，安全且完全私密。
-      </div>
-
-      <div class="card">
-        <h3 style="color:var(--green-soft);margin-bottom:8px">第一步：複製專屬腳本</h3>
-        <p style="font-size:14px;margin-bottom:10px">請點擊下方按鈕，複製設定用的腳本代碼：</p>
-        <button class="btn gold" onclick="copyGasCode()">📋 一鍵複製腳本代碼</button>
-      </div>
-
-      <div class="card">
-        <h3 style="color:var(--green-soft);margin-bottom:8px">第二步：貼至 Google 雲端</h3>
-        <p style="font-size:14px;line-height:1.8">
-          1. 打開你的 <b>Google 雲端硬碟</b>。<br>
-          2. 點左上角「＋新增」→「Google Apps Script」（沒看到就點「更多」）。<br>
-          3. 把原有程式碼刪除，貼上剛才複製的代碼。<br>
-          4. 點畫面上方「部署」→「新增部署」。
-        </p>
-      </div>
-
-      <div class="card">
-        <h3 style="color:var(--green-soft);margin-bottom:8px">第三步：部署並開通</h3>
-        <p style="font-size:14px;line-height:1.8">
-          1. 執行身分選「我本人」。<br>
-          2. 誰有權存取選「所有人」。<br>
-          3. 部署後複製產生的「網頁應用程式網址」。<br>
-          4. 回到「我的工作台」貼上網址即完成。
-        </p>
-      </div>
-      <button class="btn" onclick="goBack('screen-settings')">我明白了，回設定頁貼上</button>
-    </div>
-  </div>
-
 </div>
 
 <!-- 底部導覽 -->
@@ -942,6 +1060,9 @@
 
 <div class="toast" id="toast"></div>
 
+<!-- Google Drive Backup MVP：Google Identity Services，只在使用者主動點擊備份／復原時
+     才會被 app.js 呼叫，不做任何背景/自動登入。async+defer 載入，不阻擋頁面渲染。 -->
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="app.js"></script>
 <script>
   if ('serviceWorker' in navigator) {

@@ -3,10 +3,16 @@
 /* ============================================================
    AI 工作台 v3（Sprint 003）— People First 架構
    Workspace → Project → Work → Flow → AI Team → Asset Library → Publish Center
-   不接任何 AI API、不接 GAS、不接 Google 帳號，資料保存在這台裝置（localStorage）
+   資料以 localStorage 為主要保存位置；Google Drive Backup（MVP）是使用者主動選擇才會用到的
+   選配備援——只在使用者點擊「立即備份」／「還原」時才連接 Google 帳號，不做背景自動同步、
+   不做靜默登入，且只申請 drive.appdata（App 專屬隱藏資料夾）＋ openid/email（僅用於畫面
+   顯示目前連接哪個帳號）這兩類最小權限，不讀取使用者 Drive 裡的其他檔案。
    ============================================================ */
 
 const STORAGE_KEY = 'ai_workspace_v3';
+// Google Drive Backup MVP：本機／備份檔資料結構版本號，見 defaultState()／ensureNewFields()／
+// migrateSchema() 的說明。
+const CURRENT_SCHEMA_VERSION = 1;
 
 // ── 角色（8 個，AI 可換）──────────────────────────────────────
 const ROLE_LIST = ['規劃師', '研究員', '寫作師', '潤稿師', '設計師', '工程師', '審查員', '發布助手'];
@@ -1176,6 +1182,19 @@ function buildSongIdeaBlock(work) {
   return '【歌曲靈感】\n' + work.songIdea.trim() + '\n\n';
 }
 
+// Google Drive Backup MVP：schemaVersion 逐版遞增轉換（R14：舊 schemaVersion 處理）。
+// 目前 CURRENT_SCHEMA_VERSION 是 1，是第一個有這個欄位的版本，沒有更早的結構需要轉換，
+// 這個函式目前是空轉但保留逐版 if 的骨架——之後版本 2、3...才需要在這裡逐一補轉換規則，
+// 不會因為現在沒有事情做就省略這個函式，避免之後新增版本時要臨時重建這個機制。
+function migrateSchema(s) {
+  // if (s.schemaVersion < 2) { ...v1→v2 轉換... s.schemaVersion = 2; }
+  if (s.schemaVersion > CURRENT_SCHEMA_VERSION) {
+    // 備份檔的 schemaVersion 比這個 App 版本認得的還新（例如之後小版本先在別的裝置更新過），
+    // 不強行降級處理資料，只註記，避免程式碼對「看不懂的新結構」做出錯誤假設。
+    s.schemaVersionNewerThanApp = true;
+  }
+}
+
 // 既有 localStorage（Mission 019 之前建立）可能沒有這些欄位，載入後自動補齊，不影響既有資料
 function ensureNewFields(s) {
   if (!s.promptTemplates) s.promptTemplates = buildDefaultPromptTemplates();
@@ -1226,6 +1245,20 @@ function ensureNewFields(s) {
     }
   });
   s.results.forEach(function (r) { if (r.cloudStatus === undefined) r.cloudStatus = 'none'; });
+  // Workspace Trust Sprint 1：舊資料沒有這些欄位時安全補上。
+  // dataSafetyOnboarded 刻意預設 false（不是 true）——新舊使用者都要看過一次資料安全提醒，
+  // 這點跟其他 onboarded 類欄位（例如 preferredAiOnboarded）的既有慣例不同，是 CEO 明確核准的決定。
+  if (s.lastBackupAt === undefined) s.lastBackupAt = null;
+  if (s.resultsCountAtLastBackup === undefined) s.resultsCountAtLastBackup = 0;
+  if (s.dataSafetyOnboarded === undefined) s.dataSafetyOnboarded = false;
+  // Google Drive Backup MVP：舊資料沒有 schemaVersion 一律視為版本 1（這是第一個
+  // 有這個欄位的版本，沒有更早的結構需要轉換）；舊資料沒有雲端相關欄位時安全補上。
+  if (!Number.isInteger(s.schemaVersion) || s.schemaVersion <= 0) s.schemaVersion = 1;
+  migrateSchema(s);
+  if (s.driveAccountEmail === undefined) s.driveAccountEmail = null;
+  if (s.driveAccountSub === undefined) s.driveAccountSub = null;
+  if (s.driveLastBackupAt === undefined) s.driveLastBackupAt = null;
+  if (!Array.isArray(s.driveBackupTimestamps)) s.driveBackupTimestamps = [];
 }
 function buildChannelDraft(channel, result) {
   const excerpt = (result.content || '').split('\n').filter(Boolean).slice(0, 2).join(' ');
@@ -1258,7 +1291,27 @@ function defaultState() {
     myAiList: [],
     preferredAiOnboarded: false,
     mutedCapabilityHints: [],
-    nextProjectId: 1, nextWorkId: 1, nextResultId: 1, nextPublishId: 1
+    nextProjectId: 1, nextWorkId: 1, nextResultId: 1, nextPublishId: 1,
+    // Workspace Trust Sprint 1：資料安全相關欄位。
+    // dataSafetyOnboarded 新舊使用者一律預設 false（刻意跟 preferredAiOnboarded 的
+    // 「舊帳號直接視為已詢問過」慣例不同）——資料遺失風險對所有使用者一視同仁，
+    // 不分先來後到，見 ensureNewFields() 的對應處理。
+    lastBackupAt: null,
+    resultsCountAtLastBackup: 0,
+    dataSafetyOnboarded: false,
+    // Google Drive Backup MVP：CURRENT_SCHEMA_VERSION 是「本機／備份檔資料結構」的版本號，
+    // 不是 App 版本號——之後資料結構有不相容變動時，這裡才需要遞增，並在 migrateSchema()
+    // 補上對應的轉換規則。目前是第一版，所有既有欄位都算 schemaVersion 1。
+    schemaVersion: CURRENT_SCHEMA_VERSION,
+    // driveAccountEmail／driveAccountSub：Google 帳號防呆用（CEO 核准方案 A）。
+    // sub 是 OIDC 穩定識別碼，程式邏輯（例如「這次選的帳號是不是跟上次備份時同一個」）
+    // 一律比對 sub；email 只當畫面上給人看的標籤，不參與任何判斷邏輯。
+    driveAccountEmail: null,
+    driveAccountSub: null,
+    driveLastBackupAt: null,
+    // 備份節流用：只記錄「成功」備份的時間戳記（失敗重試不算），捲動視窗判斷
+    // 每小時/每日上限，見 canStartDriveBackup()。定期修剪超過 24 小時的紀錄，避免無限增長。
+    driveBackupTimestamps: []
   };
 }
 
@@ -1334,19 +1387,56 @@ function createFinalProduct(s, work, project) {
   return final;
 }
 
+// Workspace Trust Sprint 1（Task 7）：修正既有風險——資料存在但損毀時（不是被清除，
+// 是壞掉），以前的行為是靜默 catch、直接用示範假資料覆蓋，使用者完全不會被告知。
+// 現在：先把損毀的原始內容備份到另一個 key（保留還原的可能性，不是馬上蓋掉），
+// 設一個旗標讓 startApp() 導向明確的告知畫面，而不是讓使用者以為這就是自己的資料。
+//
+// Blocking 1（技術長複審修正）：偵測到損毀時，絕對不能呼叫 saveState()——
+// 原本的寫法在建立示範資料後仍然存回主 key，等於損毀的原始內容被合法示範資料
+// 覆蓋掉，下次重新啟動時 localStorage 讀到的已經是「看起來正常」的示範資料，
+// 不會再偵測到損毀、也不會再顯示告知畫面。現在的行為：主 key 原封不動保留損毀內容，
+// 只在記憶體裡建立暫時的預設 state 讓畫面能運作，不主動寫回任何地方；使用者按
+// 「繼續使用」後，除非透過既有的正常操作（新增專案、還原備份等）觸發原本就存在的
+// saveState() 呼叫，否則主 key 不會被這個復原流程本身順便蓋掉。
+let dataCorruptionDetected = false;
 function loadState() {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) { state = JSON.parse(raw); ensureNewFields(state); saveState(); return; }
-  } catch (e) { /* 重建 */ }
+  const raw = localStorage.getItem(STORAGE_KEY);
+  if (raw) {
+    try {
+      state = JSON.parse(raw);
+      ensureNewFields(state);
+      saveState();
+      return;
+    } catch (e) {
+      backupCorruptedRawIfNeeded(raw);
+      dataCorruptionDetected = true;
+      state = defaultState();
+      seedDemoData(state);
+      return;
+    }
+  }
   state = defaultState();
   seedDemoData(state);
   saveState();
 }
 
+// 損毀內容備份成獨立 key；同一段損毀內容重複偵測到時（例如使用者反覆重新整理，
+// 但一直沒有採取行動救回或覆蓋），不重複建立新的備份 key，避免 localStorage
+// 被無限累積的備份 key 塞滿——這是「不會形成死循環」要求的具體落地。
+function backupCorruptedRawIfNeeded(raw) {
+  const existingBackupKeys = Object.keys(localStorage).filter(function (k) { return k.indexOf(STORAGE_KEY + '_corrupted_backup_') === 0; });
+  const alreadyBackedUp = existingBackupKeys.some(function (k) { return localStorage.getItem(k) === raw; });
+  if (alreadyBackedUp) return;
+  try { localStorage.setItem(STORAGE_KEY + '_corrupted_backup_' + Date.now(), raw); } catch (e) { /* 空間也滿了，放棄備份損毀內容，但仍然要告知使用者 */ }
+}
+
+// Blocking 3（技術長複審修正）：回傳 true/false，讓呼叫端（尤其是 Restore 流程）
+// 能明確知道這次寫入到底有沒有真的成功，不能假設「呼叫了就一定成功」。
+// 既有呼叫點都沒有讀回傳值，這是純增量、不影響既有行為。
 function saveState() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); }
-  catch (e) { showToast('保存失敗，可能是這台裝置空間不足'); }
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify(state)); return true; }
+  catch (e) { showToast('保存失敗，可能是這台裝置空間不足'); return false; }
 }
 
 // ── 畫面切換 ──────────────────────────────────────────────────
@@ -2704,42 +2794,11 @@ function getVersionHistory(result) {
 }
 function viewVersion(id) { activeResultId = id; render(); }
 
-// ── 雲端作品庫（Alpha 階段：只做 UI + localStorage 狀態，不接 Google Drive）──
-function saveToCloud(resultId) {
-  if (!state.gasWebhookUrl) { showToast('請先到「我的工作台」開通雲端設定'); return; }
-  const r = getResult(resultId);
-  r.cloudStatus = 'saved';
-  saveState();
-  render();
-  showToast('已加入雲端作品庫（本輪為狀態模擬，尚未實際連接 Google Drive）');
-}
-
-function updateGasWebhookUrl(v) { state.gasWebhookUrl = (v || '').trim(); saveState(); }
-
-function openGasInstructions() { showScreen('screen-gas-instructions'); }
-
-// 一鍵複製腳本代碼：本輪為 placeholder，未來由 GAS 階段實作真正邏輯（建資料夾/分類/存 Docs/寫 Sheets 索引）
-const GAS_CODE_TEMPLATE = [
-  '// AI 工作台｜雲端作品庫連線腳本（Placeholder，尚未實作真正邏輯）',
-  '// 部署方式：Google Drive → 新增 → Google Apps Script → 貼上這段 → 部署為 Web App',
-  '',
-  'function doPost(e) {',
-  '  // 未來這裡會依序：',
-  '  // 1. 建立或尋找「AI工作台」資料夾',
-  '  // 2. 依作品類型建立子資料夾（教材／歌曲／影片...）',
-  '  // 3. 將文字成果存成 Google Docs',
-  '  // 4. 將索引寫回 Google Sheets',
-  '  // 5. 回傳 Google Doc 連結',
-  '  return ContentService.createTextOutput(JSON.stringify({ ok: true, message: "placeholder" }))',
-  '    .setMimeType(ContentService.MimeType.JSON);',
-  '}'
-].join('\n');
-
-function copyGasCode() {
-  if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(GAS_CODE_TEMPLATE).then(function () { showToast('已複製腳本代碼！'); });
-  } else { fallbackCopy(GAS_CODE_TEMPLATE); }
-}
+// Workspace Trust Sprint 1（Task 9）：原本這裡是「雲端作品庫」相關函式
+// （saveToCloud／updateGasWebhookUrl／openGasInstructions／copyGasCode／GAS_CODE_TEMPLATE）。
+// 已整批移除——這些函式從未真正把資料送到任何地方，saveToCloud() 只是切換本地欄位，
+// 部署的 GAS 腳本本身也只是 placeholder，卻用「安全且完全私密」的語氣描述，
+// 容易讓使用者誤以為已有真正雲端備份。移除比留著誤導性的死程式碼更誠實。
 
 // ── Publish Center（發布中心）──────────────────────────────────
 function markPublished(resultId) {
@@ -2768,12 +2827,145 @@ function copyChannelDraft(channel) {
 // ── 我的工作台 ────────────────────────────────────────────────
 function updateUserName(v) { state.userName = (v || '').trim() || '朋友'; saveState(); }
 function updateWorkspaceName(v) { state.workspaceName = (v || '').trim() || '我的工作台'; saveState(); }
+// Workspace Trust Sprint 1（Task 2）：匯出＋記錄備份快照，讓 Data Safety Center
+// 能顯示「最後備份時間」與「距上次備份新增了幾筆成果」。
+// Non-blocking 1（技術長複審）：先更新 lastBackupAt／resultsCountAtLastBackup，
+// 再組裝要下載的 blob，這樣下載檔本身就包含「這次備份」的正確時間戳記，
+// 不是上一次備份時的舊時間戳記。
 function exportData() {
+  state.lastBackupAt = new Date().toISOString();
+  state.resultsCountAtLastBackup = state.results.length;
+  saveState();
   const blob = new Blob([JSON.stringify(state, null, 2)], { type: 'application/octet-stream' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a'); a.href = url; a.download = '我的工作台備份.json';
   document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+  render();
   showToast('已匯出，檔案在你的下載資料夾');
+}
+
+// 現有陣列裡最大的 id + 1，陣列是空的就從 1 開始——用來在 next*Id 缺漏或不合法時
+// 安全重建，保證不會是 undefined／NaN，也不會撞到現有任何一筆資料的 id。
+function computeNextId(items) {
+  let max = 0;
+  items.forEach(function (item) { if (typeof item.id === 'number' && item.id > max) max = item.id; });
+  return max + 1;
+}
+
+// 共用的備份檔解析／驗證邏輯（Task 5 還原、Task 6 測試備份都呼叫這裡，
+// 確保「什麼樣的檔案算有效備份檔」只有一個判斷標準，不會兩邊各自寫一套、之後容易漂移）。
+// 只做格式檢查＋安全正規化，不寫入 localStorage——呼叫端自己決定驗證通過後要不要真的覆蓋 state。
+//
+// Blocking 2（技術長複審修正）：原本只檢查 projects/works/results 是陣列就視為有效，
+// 驗證不足，非 Workspace 的 JSON（例如缺 publishRecords 的殘缺檔）可能被誤判成可用備份。
+// 現在把 publishRecords 也列入必要結構；並且在通過結構檢查後，立刻安全重算任何缺漏或不合法的
+// next*Id（舊版備份可能沒有這些欄位），使用「現有最大 id + 1」，不會是 undefined／NaN，
+// 也不會撞號——這個正規化直接寫回 parsed 物件，所以 Recovery Test 跟正式還原看到的都是
+// 同一份已經安全的資料，不用兩邊各自處理一次。
+function parseBackupFile(rawText) {
+  let parsed;
+  try { parsed = JSON.parse(rawText); } catch (e) { return { valid: false }; }
+  if (!parsed || typeof parsed !== 'object'
+    || !Array.isArray(parsed.projects) || !Array.isArray(parsed.works)
+    || !Array.isArray(parsed.results) || !Array.isArray(parsed.publishRecords)) {
+    return { valid: false };
+  }
+  if (!Number.isInteger(parsed.nextProjectId) || parsed.nextProjectId <= 0) parsed.nextProjectId = computeNextId(parsed.projects);
+  if (!Number.isInteger(parsed.nextWorkId) || parsed.nextWorkId <= 0) parsed.nextWorkId = computeNextId(parsed.works);
+  if (!Number.isInteger(parsed.nextResultId) || parsed.nextResultId <= 0) parsed.nextResultId = computeNextId(parsed.results);
+  if (!Number.isInteger(parsed.nextPublishId) || parsed.nextPublishId <= 0) parsed.nextPublishId = computeNextId(parsed.publishRecords);
+  return {
+    valid: true,
+    data: parsed,
+    summary: {
+      backedUpAt: parsed.lastBackupAt || null,
+      projectCount: parsed.projects.length,
+      workCount: parsed.works.length,
+      resultCount: parsed.results.length,
+      projectNames: parsed.projects.map(function (p) { return p.name; })
+    }
+  };
+}
+
+function readFileAsText(fileInput) {
+  return new Promise(function (resolve, reject) {
+    const file = fileInput && fileInput.files && fileInput.files[0];
+    if (!file) { reject(new Error('no file selected')); return; }
+    const reader = new FileReader();
+    reader.onload = function (e) { resolve(e.target.result); };
+    reader.onerror = function () { reject(new Error('file read error')); };
+    reader.readAsText(file);
+  });
+}
+
+// Task 5：Full Replace Import——整包覆蓋現有 state，不做合併（CEO 已核准的策略，
+// 理由見 Proposal：這是單裝置救回，不是多裝置資料合併，合併需要處理每種 entity 的
+// ID 重新對應，超出這次範圍）。還原前必須明確二次確認，說清楚「會完全覆蓋」。
+function importDataFile(fileInput) {
+  readFileAsText(fileInput).then(function (rawText) {
+    const result = parseBackupFile(rawText);
+    fileInput.value = '';
+    if (!result.valid) {
+      showToast('匯入失敗，請確認選的是本工作台匯出的備份檔');
+      return;
+    }
+    const s = result.summary;
+    const confirmed = confirm(
+      '這會用備份檔內容「完全覆蓋」這台裝置目前的所有資料，此動作無法復原。\n\n' +
+      '備份檔內容：' + s.projectCount + ' 個專案・' + s.workCount + ' 件工作・' + s.resultCount + ' 筆成果\n\n' +
+      '確定要繼續嗎？'
+    );
+    if (!confirmed) return;
+    // Blocking 3（技術長複審修正）：Full Replace 前先留住目前記憶體中的 state，
+    // 寫入 localStorage 真的成功才顯示「已還原資料」；失敗時（例如裝置空間不足）
+    // 把記憶體中的 state 復原成還原前的內容並重新渲染畫面，不能留下「畫面已經是
+    // 新資料、但重新整理後又變回舊資料」這種不一致狀態，也不能在寫入失敗時仍回報成功。
+    const previousState = state;
+    state = result.data;
+    ensureNewFields(state);
+    const saved = saveState();
+    if (!saved) {
+      state = previousState;
+      render();
+      showToast('還原失敗，裝置儲存空間可能不足，原有資料未被取代。');
+      return;
+    }
+    showScreen('screen-home');
+    showToast('已還原資料');
+  }).catch(function () {
+    fileInput.value = '';
+    showToast('匯入失敗，請確認選的是本工作台匯出的備份檔');
+  });
+}
+
+// Task 6：Recovery Test（測試我的備份檔）——只解析驗證，全程不寫入 state，
+// 讓使用者在真的需要還原之前，就能先確認「這份備份檔真的可以用」。
+function testBackupFile(fileInput) {
+  readFileAsText(fileInput).then(function (rawText) {
+    const result = parseBackupFile(rawText);
+    fileInput.value = '';
+    renderRecoveryTestResult(result);
+  }).catch(function () {
+    fileInput.value = '';
+    renderRecoveryTestResult({ valid: false });
+  });
+}
+
+function renderRecoveryTestResult(result) {
+  const box = document.getElementById('dsc-recovery-test-result');
+  if (!box) return;
+  if (!result.valid) {
+    box.innerHTML = '<div class="notice" style="border-color:var(--red)">⚠️ 這個檔案看起來不是有效的備份檔。<br>你目前的資料完全沒有被更動。</div>';
+    return;
+  }
+  const s = result.summary;
+  box.innerHTML = '<div class="notice" style="border-color:var(--green-soft)">' +
+    '✅ 這份備份檔案有效<br>' +
+    (s.backedUpAt ? '備份時間：' + formatDateTime(s.backedUpAt) + '<br>' : '') +
+    '包含：' + s.projectCount + ' 個專案・' + s.workCount + ' 件工作・' + s.resultCount + ' 筆成果' +
+    (s.projectNames.length ? '<br>專案：' + s.projectNames.map(escHtml).join('、') : '') +
+    '<br><br>這只是測試，你目前的資料完全沒有被更動。' +
+    '</div>';
 }
 
 // ── 渲染 ──────────────────────────────────────────────────────
@@ -2782,6 +2974,9 @@ function render() {
   if (!active) return;
   const id = active.id;
   if (id === 'screen-home') renderHome();
+  if (id === 'screen-data-safety-center') renderDataSafetyCenter();
+  if (id === 'screen-cloud-restore-preview') renderDriveRestorePreview();
+  if (id === 'screen-cloud-version-choice') renderDriveVersionChoice();
   if (id === 'screen-project') renderProject();
   if (id === 'screen-add-work') renderAddWork();
   if (id === 'screen-product-category') renderProductCategory();
@@ -2823,6 +3018,8 @@ function render() {
 
 function renderHome() {
   document.getElementById('home-greeting').textContent = greetPrefix() + '，' + state.userName + ' ' + (greetPrefix() === '晚安' ? '🌙' : '☀️');
+
+  renderHomeDataSafetySummary();
 
   const list = document.getElementById('home-project-list');
   if (state.projects.length === 0) {
@@ -2886,6 +3083,920 @@ function renderProject() {
       '<button class="card-btn doing" onclick="openWork(' + w.id + ')">繼續工作</button></div>';
   }).join('');
 }
+
+// ── 資料安全（Workspace Trust Sprint 1）─────────────────────────
+
+// Task 10：事件驅動備份提醒，取代固定天數。兩個訊號都是從既有資料即時算出來的，
+// 不需要另外新增一個「事件系統」去監聽每個完成動作——這正是 Over-Engineering
+// Self-Check 的「能用現有內容/欄位算出來，就不要新增架構」。
+// 訊號 A（完成重要作品）：任一 isFinal 成果的完成時間晚於上次備份時間
+//（從未備份過時，只要存在任何 isFinal 成果就算）。
+// 訊號 B（大量新增內容）：目前 results 總數比上次備份時多出達門檻（5 筆）。
+const BACKUP_REMINDER_THRESHOLD = 5;
+function backupReminderStatus() {
+  const hasNewFinal = state.results.some(function (r) {
+    return r.isFinal && (!state.lastBackupAt || new Date(r.completedAt) > new Date(state.lastBackupAt));
+  });
+  const newCount = state.results.length - state.resultsCountAtLastBackup;
+  const hasBulkNew = newCount >= BACKUP_REMINDER_THRESHOLD;
+  if (!hasNewFinal && !hasBulkNew) return { show: false };
+  if (hasNewFinal) return { show: true, reason: '你剛完成了一件作品，建議備份一下' };
+  return { show: true, reason: '自從上次備份後，新增了 ' + newCount + ' 筆成果' };
+}
+
+function openDataSafetyCenter() { showScreen('screen-data-safety-center'); }
+
+function renderHomeDataSafetySummary() {
+  const box = document.getElementById('home-data-safety-summary');
+  if (!box) return;
+  const reminder = backupReminderStatus();
+  const lastBackupLine = state.lastBackupAt
+    ? '最後備份：' + formatRelativeTime(state.lastBackupAt)
+    : '從未備份過';
+  box.innerHTML = '<div class="line">資料儲存在：這台裝置（瀏覽器本機）</div>' +
+    '<div class="line">' + lastBackupLine + '　｜　' + state.projects.length + ' 個專案・' + state.works.length + ' 件工作・' + state.results.length + ' 筆成果</div>' +
+    (reminder.show ? '<div class="line" style="color:var(--red)">⚠️ ' + escHtml(reminder.reason) + '</div>' : '') +
+    '<div class="line" style="color:var(--green-soft);font-weight:700">前往資料安全中心 →</div>';
+}
+
+function renderDataSafetyCenter() {
+  const reminder = backupReminderStatus();
+  const statusBox = document.getElementById('dsc-backup-status');
+  if (state.lastBackupAt) {
+    statusBox.innerHTML = '最後備份：' + formatDateTime(state.lastBackupAt) + '（' + formatRelativeTime(state.lastBackupAt) + '）' +
+      (reminder.show ? '<br><span style="color:var(--red)">⚠️ ' + escHtml(reminder.reason) + '</span>' : '');
+  } else {
+    statusBox.innerHTML = '<span style="color:var(--red)">⚠️ 從未備份過</span>';
+  }
+  document.getElementById('dsc-stats').textContent = state.projects.length + ' 個專案・' + state.works.length + ' 件工作・' + state.results.length + ' 筆成果';
+  // 每次進入畫面清空上一次的測試結果，避免使用者看到不是這次選的檔案的驗證結果
+  const testResultBox = document.getElementById('dsc-recovery-test-result');
+  if (testResultBox) testResultBox.innerHTML = '';
+  renderDriveBackupSection();
+}
+
+// ── Google Drive Backup MVP ───────────────────────────────────
+// 「使用者主動備份與復原」，不是背景自動同步。所有動作都由使用者點擊觸發，
+// 沒有任何背景排程、沒有靜默 OAuth。CEO 核准方案 A：drive.appdata（App 專屬隱藏
+// 資料夾，讀不到使用者 Drive 裡其他檔案）＋ openid/email（只用來顯示「目前連接哪個
+// 帳號」，程式邏輯一律用 sub 做穩定比對，email 只是給人看的標籤）。
+//
+// ⚠️ DRIVE_CLIENT_ID 目前是佔位字串，需要由人在 Google Cloud Console 建立正式
+// OAuth Client ID（設定 Authorized JavaScript origins 為正式網址、完成 OAuth 同意
+// 畫面與隱私權政策連結）後才能真正運作——這一步需要人工登入 Google Cloud Console
+// 操作，開發長無法自己建立，見實作計畫「風險」一節。程式碼在這之前已經是完整可運作的
+// 邏輯，只差這一個設定值。
+const DRIVE_CLIENT_ID = '1055556462623-r90lii2j4abjf3r2vrttmvgt384mkl64.apps.googleusercontent.com';
+const DRIVE_SCOPES = 'https://www.googleapis.com/auth/drive.appdata https://www.googleapis.com/auth/userinfo.email openid';
+const DRIVE_BACKUP_FILENAME_CURRENT = 'workspace-backup-current.json';
+const DRIVE_BACKUP_FILENAME_PREVIOUS = 'workspace-backup-previous.json';
+const DRIVE_HOURLY_LIMIT = 6;   // CEO 核准：每小時最多 6 次「成功」備份
+const DRIVE_DAILY_LIMIT = 30;   // CEO 核准：每日最多 30 次「成功」備份，失敗重試不計入
+const PRE_RESTORE_SNAPSHOT_KEY = STORAGE_KEY + '_pre_restore_snapshot';
+const PRE_RESTORE_SNAPSHOT_RETENTION_DAYS = 14; // CEO 核准：復原成功後保留 14 天，逾期自動清除
+
+// Token 只存在頁面記憶體（POC 已驗證的既有結論），重新整理就會消失，不寫進
+// localStorage／state——避免把敏感憑證留在裝置的持久化儲存裡。
+let driveAccessToken = null;
+let driveTokenClient = null;
+let activeDriveOperation = null; // null｜'backup'｜'restore'，備份/復原互斥鎖（R9）
+// 復原流程從「找到雲端備份」到「使用者實際確認」中間隔著一個畫面／一次使用者互動，
+// 不是同一條 Promise 鏈能一路串到底，所以用這個模組層級變數暫存待確認的復原內容，
+// 使用者確認或取消後就清空，避免殘留舊資料被誤用。
+let pendingDriveRestoreContext = null;
+
+// ── GIS（Google Identity Services）載入與 Token 取得 ──
+function isGisLoaded() { return typeof window !== 'undefined' && window.google && window.google.accounts && window.google.accounts.oauth2; }
+
+// 補正（技術長退回：GIS popup_closed 未正確處理）：initTokenClient 原本只設定
+// callback，沒有設定 error_callback。GIS 對「使用者主動關閉 popup」「popup 被瀏覽器
+// 擋下無法開啟」「其他非 OAuth 層級的錯誤」是透過 error_callback 這個獨立管道通知，
+// 不會呼叫 callback——沒有 error_callback，這些情況下 Promise 永遠不會 settle，
+// withDriveRetry／withDriveOperationLock 的 finally 就永遠不會執行，操作鎖卡死、
+// UI 停在「備份中／讀取中」。這裡補上 error_callback，一樣採用跟 callback 相同的
+// 「每次呼叫時動態覆蓋」設計，讓每一次 requestDriveAccessToken() 都能收到通知。
+function ensureDriveTokenClient() {
+  if (!isGisLoaded()) throw new Error('gis_not_loaded');
+  if (!driveTokenClient) {
+    driveTokenClient = window.google.accounts.oauth2.initTokenClient({
+      client_id: DRIVE_CLIENT_ID,
+      scope: DRIVE_SCOPES,
+      callback: function () {},       // 由 requestDriveAccessToken() 每次呼叫時動態覆蓋
+      error_callback: function () {}  // 同上，動態覆蓋
+    });
+  }
+  return driveTokenClient;
+}
+
+// error_callback 收到的是 GIS 層級的錯誤物件（{ type: 'popup_closed' | 'popup_failed_to_open' | ... }），
+// 跟 callback 的 resp.error（OAuth 層級的錯誤字串，例如 access_denied）是兩種不同來源，
+// 呼叫端（showDriveError）需要分開判斷才能給使用者正確、不誇大的訊息。
+function classifyGisError(gisError) {
+  const type = gisError && gisError.type;
+  if (type === 'popup_closed') return { type: 'popup_closed' };
+  if (type === 'popup_failed_to_open') return { type: 'popup_failed_to_open' };
+  return { type: 'gis_error', reason: type || 'unknown' };
+}
+
+// 每次都帶 prompt:'select_account'（CEO 明確要求保留）：使用者每次授權都會看到
+// Google 原生帳號選擇畫面，不會悄悄沿用瀏覽器已登入的帳號，這是目前技術上能做到的
+// 「不增加身分範圍也能防呆」的部分（見實作計畫第六節 Q2）。
+//
+// 補正：request-level 完成鎖（settled／requestId）。同一次呼叫可能收到不只一次
+// callback／error_callback 事件（例如：成功 callback 先到，Promise 已經 resolve，
+// 但 GIS 之後又遲發一個 popup_closed 的 error_callback；或是同一種事件被重複觸發）。
+// 規則：
+//   - 這次呼叫只有第一個抵達的事件能真正決定 Promise 的結果（settled 由 false→true）。
+//   - 之後不管是 callback 還是 error_callback，只要 settled 已經是 true，一律直接
+//     return，不得再次 resolve／reject，也不得改變已經確定的結果。
+//   - requestId 額外防呆：萬一發生更極端的情況（例如上一個請求還沒 settle，
+//     GIS singleton client 的 callback／error_callback 已經被下一次呼叫覆蓋掉），
+//     舊事件比對 requestId 不符，直接視為過期事件忽略，不影響新請求的結果。
+let driveTokenRequestSeq = 0;
+function requestDriveAccessToken() {
+  return new Promise(function (resolve, reject) {
+    let client;
+    try { client = ensureDriveTokenClient(); }
+    catch (e) { reject({ type: 'gis_not_loaded' }); return; }
+
+    driveTokenRequestSeq += 1;
+    const requestId = driveTokenRequestSeq;
+    let settled = false;
+    function isStaleOrSettled() { return settled || requestId !== driveTokenRequestSeq; }
+
+    client.callback = function (resp) {
+      if (isStaleOrSettled()) return;
+      if (resp && resp.error) {
+        // OAuth 層級錯誤（例如使用者在同意畫面按「取消」＝access_denied）：
+        // 不代表永久失敗，只回報這次沒有拿到 token，交由呼叫端決定要不要提示重試。
+        settled = true;
+        reject({ type: 'oauth_error', reason: resp.error });
+        return;
+      }
+      settled = true;
+      driveAccessToken = resp.access_token;
+      resolve(resp.access_token);
+    };
+    client.error_callback = function (gisError) {
+      if (isStaleOrSettled()) return;
+      settled = true;
+      reject(classifyGisError(gisError));
+    };
+    try {
+      client.requestAccessToken({ prompt: 'select_account' });
+    } catch (e) {
+      // requestAccessToken() 本身同步拋出例外（極少見，例如 client_id 設定錯誤）：
+      // 直接視為這次請求失敗，同樣要讓 Promise settle，不留下永遠不 resolve 的鎖。
+      if (!isStaleOrSettled()) { settled = true; reject({ type: 'gis_not_loaded' }); }
+    }
+  });
+}
+
+// 只用最小必要 scope 換取的 access token 呼叫 userinfo，取得 { email, sub }。
+// sub 是內部穩定識別碼，email 只是顯示標籤（CEO 核准方案 A，見實作計畫第六節）。
+function fetchDriveAccountInfo(accessToken) {
+  return fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+    headers: { Authorization: 'Bearer ' + accessToken }
+  }).then(function (res) {
+    if (!res.ok) throw { type: 'account_info_failed', status: res.status };
+    return res.json();
+  }).then(function (info) {
+    return { email: info.email || null, sub: info.sub || null };
+  });
+}
+
+// ── 操作互斥鎖（R9：快速連點不產生重複操作；備份/復原進行中禁用重複操作）──
+function isDriveOperationBusy() { return activeDriveOperation !== null; }
+function withDriveOperationLock(kind, fn) {
+  if (activeDriveOperation) {
+    showToast('目前有備份／復原正在進行中，請稍候。');
+    return Promise.resolve();
+  }
+  activeDriveOperation = kind;
+  renderDriveBackupSection();
+  return Promise.resolve().then(fn).finally(function () {
+    activeDriveOperation = null;
+    renderDriveBackupSection();
+  });
+}
+
+// ── 備份節流（CEO 核准：每小時 6 次／每日 30 次，只計算成功備份，失敗重試不計）──
+function pruneOldBackupTimestamps() {
+  const cutoff = Date.now() - 24 * 3600 * 1000;
+  state.driveBackupTimestamps = (state.driveBackupTimestamps || []).filter(function (t) { return new Date(t).getTime() >= cutoff; });
+}
+function driveBackupRateStatus() {
+  pruneOldBackupTimestamps();
+  const now = Date.now();
+  const hourAgo = now - 3600 * 1000;
+  const hourlyCount = state.driveBackupTimestamps.filter(function (t) { return new Date(t).getTime() >= hourAgo; }).length;
+  const dailyCount = state.driveBackupTimestamps.length; // 陣列已經只保留 24 小時內的紀錄
+  return {
+    hourlyCount: hourlyCount,
+    dailyCount: dailyCount,
+    hourlyLimitReached: hourlyCount >= DRIVE_HOURLY_LIMIT,
+    dailyLimitReached: dailyCount >= DRIVE_DAILY_LIMIT,
+    canBackupNow: hourlyCount < DRIVE_HOURLY_LIMIT && dailyCount < DRIVE_DAILY_LIMIT
+  };
+}
+function recordSuccessfulDriveBackup() {
+  state.driveBackupTimestamps.push(new Date().toISOString());
+  pruneOldBackupTimestamps();
+  saveState();
+}
+
+// ── 重試與截尾指數退避（R15：403/429/暫時性錯誤重試，401/權限錯誤不重試）──
+function isRetryableDriveError(err) {
+  if (err && err.type === 'network_error') return true;
+  const status = err && err.status;
+  if (status === 429) return true;
+  if (status === 403) {
+    const reason = err.reason || '';
+    return reason === 'rateLimitExceeded' || reason === 'userRateLimitExceeded';
+  }
+  return false;
+}
+function withDriveRetry(fn, maxAttempts, onRetrying) {
+  maxAttempts = maxAttempts || 5;
+  let attempt = 0;
+  function attemptOnce() {
+    attempt += 1;
+    return Promise.resolve().then(fn).catch(function (err) {
+      if (attempt >= maxAttempts || !isRetryableDriveError(err)) throw err;
+      const delayMs = Math.min(30000, 1000 * Math.pow(2, attempt - 1));
+      if (onRetrying) onRetrying(attempt, delayMs);
+      return new Promise(function (resolve) { setTimeout(resolve, delayMs); }).then(attemptOnce);
+    });
+  }
+  return attemptOnce();
+}
+
+// ── Drive API（v3，appDataFolder，最小權限）──
+function driveApiRequest(url, options, accessToken) {
+  const opts = Object.assign({}, options, {
+    headers: Object.assign({}, (options && options.headers) || {}, { Authorization: 'Bearer ' + accessToken })
+  });
+  return fetch(url, opts).then(function (res) {
+    if (res.ok) return res;
+    return res.json().catch(function () { return {}; }).then(function (body) {
+      const reason = body && body.error && body.error.errors && body.error.errors[0] && body.error.errors[0].reason;
+      const err = { type: 'drive_api_error', status: res.status, reason: reason };
+      throw err;
+    });
+  }).catch(function (err) {
+    if (err && err.type) throw err;
+    throw { type: 'network_error' }; // fetch 本身拋出（離線／逾時），不是 Drive API 回應的錯誤
+  });
+}
+
+function driveFindFileByName(name, accessToken) {
+  const q = encodeURIComponent("name='" + name + "' and trashed=false");
+  const url = 'https://www.googleapis.com/drive/v3/files?spaces=appDataFolder&q=' + q + '&fields=files(id,name)';
+  return driveApiRequest(url, { method: 'GET' }, accessToken).then(function (res) { return res.json(); }).then(function (data) {
+    return (data.files && data.files[0]) || null;
+  });
+}
+
+function driveDownloadFile(fileId, accessToken) {
+  const url = 'https://www.googleapis.com/drive/v3/files/' + fileId + '?alt=media';
+  return driveApiRequest(url, { method: 'GET' }, accessToken).then(function (res) { return res.text(); });
+}
+
+// 有 fileId 就用 files.update（PATCH，內容用 uploadType=media），沒有就用 files.create
+// （POST，multipart，metadata 指定 parents:['appDataFolder']）——固定 file id 更新，
+// 呼應 POC 已驗證「更新同一份備份、id 不變、不產生重複檔案」的行為。
+function driveUploadOrUpdate(name, content, accessToken, existingFileId) {
+  if (existingFileId) {
+    const url = 'https://www.googleapis.com/upload/drive/v3/files/' + existingFileId + '?uploadType=media';
+    return driveApiRequest(url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: content }, accessToken)
+      .then(function (res) { return res.json(); });
+  }
+  const boundary = 'gdrivebackup' + Date.now();
+  const metadata = { name: name, parents: ['appDataFolder'] };
+  const body = '--' + boundary + '\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n' + JSON.stringify(metadata) +
+    '\r\n--' + boundary + '\r\nContent-Type: application/json\r\n\r\n' + content + '\r\n--' + boundary + '--';
+  const url = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+  return driveApiRequest(url, { method: 'POST', headers: { 'Content-Type': 'multipart/related; boundary=' + boundary }, body: body }, accessToken)
+    .then(function (res) { return res.json(); });
+}
+
+// ── 雲端備份payload 結構與驗證（現況 MVP：schemaVersion＋摘要層級資料＋完整 state）──
+function buildCloudBackupPayload() {
+  return JSON.stringify({
+    schemaVersion: CURRENT_SCHEMA_VERSION,
+    backupType: 'google-drive',
+    createdAt: new Date().toISOString(),
+    summary: {
+      projectCount: state.projects.length,
+      workCount: state.works.length,
+      resultCount: state.results.length
+    },
+    state: state
+  });
+}
+
+// 跟 parseBackupFile() 共用「必要陣列存在」的核心判斷，但額外多驗證外層信封
+// （schemaVersion／summary／state）——雲端備份payload 比本機 JSON 匯出多一層包裝。
+function parseCloudBackupPayload(rawText) {
+  let parsed;
+  try { parsed = JSON.parse(rawText); } catch (e) { return { valid: false }; }
+  if (!parsed || typeof parsed !== 'object' || !parsed.state || !parsed.summary
+    || !Array.isArray(parsed.state.projects) || !Array.isArray(parsed.state.works)
+    || !Array.isArray(parsed.state.results) || !Array.isArray(parsed.state.publishRecords)) {
+    return { valid: false };
+  }
+  return { valid: true, data: parsed, summary: parsed.summary, createdAt: parsed.createdAt };
+}
+
+// ── 帳號防呆（CEO 核准：切換帳號後找不到備份不得直接建立或覆蓋，必須先提醒）──
+function isDifferentDriveAccount(accountInfo) {
+  return !!(state.driveAccountSub && accountInfo.sub && state.driveAccountSub !== accountInfo.sub);
+}
+
+// ── 本機安全快照（單一格，不無限累積；14 天保存期限；CEO 核准規則）──
+function createPreRestoreSnapshot() {
+  const snapshot = { createdAt: new Date().toISOString(), state: state };
+  try { localStorage.setItem(PRE_RESTORE_SNAPSHOT_KEY, JSON.stringify(snapshot)); return true; }
+  catch (e) { return false; }
+}
+function getPreRestoreSnapshot() {
+  const raw = localStorage.getItem(PRE_RESTORE_SNAPSHOT_KEY);
+  if (!raw) return null;
+  try {
+    const snapshot = JSON.parse(raw);
+    if (!snapshot || !snapshot.createdAt || !snapshot.state) return null;
+    return snapshot;
+  } catch (e) { return null; }
+}
+function isPreRestoreSnapshotExpired(snapshot) {
+  const ageMs = Date.now() - new Date(snapshot.createdAt).getTime();
+  return ageMs > PRE_RESTORE_SNAPSHOT_RETENTION_DAYS * 24 * 3600 * 1000;
+}
+function clearPreRestoreSnapshot() { localStorage.removeItem(PRE_RESTORE_SNAPSHOT_KEY); }
+// 逾期自動清除：只在讀取時檢查並清掉，不需要背景排程（沿用「不做背景自動同步」的既有原則，
+// 過期判斷跟一般 UI 渲染一樣，使用者下次打開畫面時才會被動觸發檢查）。
+function pruneExpiredPreRestoreSnapshot() {
+  const snapshot = getPreRestoreSnapshot();
+  if (snapshot && isPreRestoreSnapshotExpired(snapshot)) clearPreRestoreSnapshot();
+}
+// 清除前必須確認「目前資料已成功載入且通過完整性驗證」（CEO 核准規則）：
+// 只要目前 state 本身是透過既有 ensureNewFields() 正常載入（loadState() 不是走
+// 資料損毀分支），就視為已通過完整性驗證，不需要另外重新解析一次。
+function canClearPreRestoreSnapshot() { return !dataCorruptionDetected; }
+
+// ── iPhone 預期管理（偵測到就顯示清楚提示，取代按鈕，不宣稱支援也不讓功能默默失效）──
+function isIphoneDevice() {
+  const ua = navigator.userAgent || '';
+  return /iPhone|iPod/.test(ua);
+}
+
+// ── 備份主流程（current/previous 輪替＋完整性驗證，R4/R6）──
+function startDriveBackup() {
+  return withDriveOperationLock('backup', function () {
+    const rate = driveBackupRateStatus();
+    if (!rate.canBackupNow) {
+      showToast(rate.dailyLimitReached
+        ? '今天的備份次數已達上限（每日 ' + DRIVE_DAILY_LIMIT + ' 次），請明天再試。'
+        : '這一小時的備份次數已達上限（每小時 ' + DRIVE_HOURLY_LIMIT + ' 次），請稍後再試。');
+      return;
+    }
+    return withDriveRetry(function () {
+      return requestDriveAccessToken().then(function (token) {
+        return fetchDriveAccountInfo(token).then(function (accountInfo) {
+          if (isDifferentDriveAccount(accountInfo)) {
+            renderDriveAccountMismatchNotice(accountInfo, 'backup');
+            return null; // 交由使用者在提示畫面決定，先不繼續備份
+          }
+          return performDriveBackupUpload(token, accountInfo);
+        });
+      });
+    }, 5, function (attempt, delayMs) {
+      showToast('連線不穩，正在重試…（第 ' + attempt + ' 次）');
+    }).catch(function (err) {
+      showDriveError(err, '備份失敗，請稍後再試。你的資料沒有遺失，仍安全保存在這台裝置。');
+    });
+  });
+}
+
+// ── 補正一（技術長第三次複審更正用詞）：可恢復式輪替（recoverable rotation）
+//   current/previous ──────────────────────────────────────────────
+//
+// 重要更正：這裡刻意不再稱為「交易式」（transactional）保證。Google Drive API
+// 沒有「同時替換兩個檔案」的原子操作，files.update 是逐檔獨立的 HTTP 請求，
+// 沒有辦法保證「previous 寫入」跟「current 寫入」這兩步要嘛都成功、要嘛都不生效——
+// 這不符合「transactional」這個詞在資料庫領域的實際定義（all-or-nothing、
+// 具備真正的原子性），繼續用這個詞會誤導技術長與 CEO 對安全等級的判斷，因此改稱
+// 「可恢復式輪替」：意思是「輪替中斷後，系統知道怎麼安全地把它接續做完」，
+// 而不是「輪替過程本身具備原子性」。
+//
+// 這裡能做到、也確實做到的保證：
+//   1. current.json 只有在「新內容已經完整上傳＋下載回來驗證通過」之後才會被取代，
+//      讀取 current.json 的人永遠看到完整有效的舊版或新版，不會看到部分寫入的內容。
+//   2. 任何一步失敗，都會把「已經確認完成到哪一步、需要哪些資料才能接續」持久寫進
+//      localStorage（DRIVE_BACKUP_ROTATION_STATE_KEY），下次備份或還原前會先檢查
+//      並嘗試安全地把上次沒做完的輪替接續完成（用完全相同的內容重新上傳，
+//      files.update 對同樣內容重複寫入是安全的，不會造成任何資料落差）。
+//
+// 誠實揭露的最壞情況（technical lead 需要知道、不能被「可恢復」這個詞蓋過去）：
+//   a. 中斷發生在「previous 寫入完成之後、current 寫入完成之前」：previous.json
+//      這時已經等於「輪替前的 current 內容」，不是「輪替前的原始 previous 內容」——
+//      也就是說 previous 事實上已經跟 current（舊值）相同，不是真正獨立的
+//      「上一份」備份，直到下次接續完成輪替為止。
+//   b. current.json 在這個中繼狀態下維持舊內容不變，尚未變成使用者這次真正要備份
+//      的新內容——如果使用者這時去查看雲端備份，看到的還是舊資料。
+//   c. 「下次自動接續」完全依賴同一台裝置、同一個瀏覽器的 localStorage 還留著
+//      DRIVE_BACKUP_ROTATION_STATE_KEY 這筆紀錄。如果使用者換了裝置、清除了瀏覽器
+//      資料、或瀏覽器設定為無痕/不保留資料，這個接續資訊就不存在了——輪替會停在
+//      中繼狀態，不會自動修復，只有使用者下次在「同一台裝置、同一個瀏覽器」執行
+//      備份時才會被接續。
+//   d. 因此這不是資料庫等級的「transactional guarantee」，而是「local-device-assisted
+//      recoverable rotation」：可恢復，但恢復能力綁定在單一裝置的本機儲存上。
+//
+// 是否該把這筆輪替接續紀錄也同步到 Drive 端（例如另存一個 staging 檔），讓恢復能力
+// 不必依賴單一裝置？評估後的建議是「暫不實作」，原因：
+//   - current.json 本身在任何中斷點都不會是損毀或半寫入內容（見保證 1），所以就算
+//     這筆本機接續紀錄永久遺失，最壞後果只是「這次備份沒有完整輪替成功，previous
+//      暫時跟 current 舊值相同」，使用者只要在任何裝置上重新執行一次備份，
+//      performDriveBackupUpload 會重新走一次完整流程（重新下載 current、
+//      重新分辨要不要建立新的輪替），系統會自我修復，不會累積損壞。
+//   - 加上 Drive 端 staging 檔會多一組跨檔案一致性問題要處理（staging 檔本身要不要
+//     也做同樣的可恢復寫入？誰來清除過期的 staging 檔？），複雜度的增加沒有對應到
+//     實際風險的降低——因為就算不接續，系統下次備份仍會自我修復，不會卡死。
+//   - 這是本回合的建議、非最終定案，實際是否需要視技術長是否認為「單一裝置恢復」
+//     的安全等級不足以滿足 MVP 上線標準而定。
+const DRIVE_BACKUP_ROTATION_STATE_KEY = STORAGE_KEY + '_drive_backup_rotation';
+
+function writeDriveRotationState(fields) {
+  try { localStorage.setItem(DRIVE_BACKUP_ROTATION_STATE_KEY, JSON.stringify(Object.assign({ updatedAt: new Date().toISOString() }, fields))); return true; }
+  catch (e) { return false; }
+}
+function readDriveRotationState() {
+  const raw = localStorage.getItem(DRIVE_BACKUP_ROTATION_STATE_KEY);
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch (e) { return null; }
+}
+function clearDriveRotationState() { localStorage.removeItem(DRIVE_BACKUP_ROTATION_STATE_KEY); }
+
+function performDriveBackupUpload(token, accountInfo) {
+  // 每次備份前，先檢查上次是否有沒做完的輪替殘留，優先安全接續完成，
+  // 不會因為使用者又按了一次「立即備份」就丟掉上次卡住的接續資訊、另起爐灶。
+  const leftover = readDriveRotationState();
+  if (leftover && leftover.phase) {
+    return resumeDriveRotation(leftover, token, accountInfo);
+  }
+  return driveFindFileByName(DRIVE_BACKUP_FILENAME_CURRENT, token).then(function (currentFile) {
+    if (!currentFile) {
+      // 第一次備份，沒有舊 current 可以搬去 previous，不需要輪替，
+      // 直接寫入 current；這一步失敗，current 本來就不存在，不會有「改變原 current」的問題。
+      return uploadAndVerify(DRIVE_BACKUP_FILENAME_CURRENT, buildCloudBackupPayload(), token, null, true).then(function () {
+        finishDriveBackupSuccess(accountInfo);
+      });
+    }
+    return driveDownloadFile(currentFile.id, token).then(function (oldCurrentContent) {
+      return driveFindFileByName(DRIVE_BACKUP_FILENAME_PREVIOUS, token).then(function (previousFile) {
+        const newContent = buildCloudBackupPayload();
+        // 在真的動 previous 之前，先把「接續這次輪替需要的全部資訊」持久記錄下來——
+        // 這一步本身若失敗（例如裝置空間不足），直接中止，current／previous 都完全
+        //還沒被碰過，是最安全的失敗點。
+        const stateWritten = writeDriveRotationState({
+          phase: 'writing_previous',
+          oldCurrentContent: oldCurrentContent,
+          newContent: newContent,
+          currentFileId: currentFile.id,
+          previousFileId: previousFile && previousFile.id
+        });
+        if (!stateWritten) throw { type: 'rotation_state_write_failed' };
+        return continueDriveRotationFromWritingPrevious(token, accountInfo);
+      });
+    });
+  });
+}
+
+// 從「開始寫 previous」這一步往下執行——不論是全新輪替、還是接續上次中斷的輪替，
+// 都走同一條路徑，因為需要的資訊（oldCurrentContent／newContent／file id）已經
+// 持久記錄在 DRIVE_BACKUP_ROTATION_STATE_KEY 裡，讀出來就能接續，不需要重新下載。
+function continueDriveRotationFromWritingPrevious(token, accountInfo) {
+  const rotation = readDriveRotationState();
+  return uploadAndVerify(DRIVE_BACKUP_FILENAME_PREVIOUS, rotation.oldCurrentContent, token, rotation.previousFileId, false)
+    .then(function (previousFileMeta) {
+      writeDriveRotationState(Object.assign({}, rotation, { phase: 'writing_current', previousFileId: previousFileMeta.id }));
+      return continueDriveRotationFromWritingCurrent(token, accountInfo);
+    });
+}
+
+function continueDriveRotationFromWritingCurrent(token, accountInfo) {
+  const rotation = readDriveRotationState();
+  return uploadAndVerify(DRIVE_BACKUP_FILENAME_CURRENT, rotation.newContent, token, rotation.currentFileId, true)
+    .then(function () {
+      clearDriveRotationState();
+      finishDriveBackupSuccess(accountInfo);
+    });
+}
+
+// 接續上次中斷的輪替：依殘留的 phase 決定要從哪一步繼續，用的是持久記錄裡「一模一樣」
+// 的 oldCurrentContent／newContent，不會因為「這次重新產生的備份內容」跟「上次中斷時
+// 的內容」不一致而讓 previous／current 錯配。
+function resumeDriveRotation(rotation, token, accountInfo) {
+  if (rotation.phase === 'writing_previous') return continueDriveRotationFromWritingPrevious(token, accountInfo);
+  if (rotation.phase === 'writing_current') return continueDriveRotationFromWritingCurrent(token, accountInfo);
+  // 未知的殘留狀態，保守起見清掉，不嘗試接續（避免用不明內容誤寫檔案）
+  clearDriveRotationState();
+  return Promise.reject({ type: 'rotation_state_unknown' });
+}
+
+// content 一律傳明確字串（不再用 null 隱含「這次重新產生」，因為輪替接續時必須用
+// 持久記錄裡當初的內容，不能每次呼叫都重新產生一份不同的內容）。
+// isCurrentFile 決定驗證方式：current.json 驗證「內容是不是有效的雲端備份格式」，
+// previous.json 驗證「內容是不是跟原本要搬過去的內容逐字相同」。
+// 上傳後立即下載回來比對，通過才算「完成寫入及完整性驗證」（CEO 明確要求）。
+function uploadAndVerify(filename, content, token, existingFileId, isCurrentFile) {
+  return driveUploadOrUpdate(filename, content, token, existingFileId).then(function (fileMeta) {
+    return driveDownloadFile(fileMeta.id, token).then(function (downloaded) {
+      const parsedOk = isCurrentFile ? parseCloudBackupPayload(downloaded).valid : (downloaded === content);
+      if (!parsedOk) throw { type: 'verify_failed', filename: filename };
+      return fileMeta;
+    });
+  });
+}
+
+function finishDriveBackupSuccess(accountInfo) {
+  state.driveAccountEmail = accountInfo.email;
+  state.driveAccountSub = accountInfo.sub;
+  state.driveLastBackupAt = new Date().toISOString();
+  recordSuccessfulDriveBackup();
+  render();
+  showToast('已備份到 Google Drive（' + formatDateTime(state.driveLastBackupAt) + '）');
+}
+
+// ── 復原主流程（R1-R3/R5/R10-R13）──
+function startDriveRestore() {
+  return withDriveOperationLock('restore', function () {
+    return withDriveRetry(function () {
+      return requestDriveAccessToken().then(function (token) {
+        return fetchDriveAccountInfo(token).then(function (accountInfo) {
+          // 帳號防呆順序（CEO 核准）：先確認是不是跟上次不同的帳號，才決定要不要繼續找
+          // 備份——appDataFolder 本來就是依帳號各自獨立隔離，換帳號後「找不到備份」跟
+          // 「這個帳號本來就沒備份過」表面上長得一樣，但語意不同，必須先攔下來讓使用者
+          // 自己決定，不能直接當成「第一次使用」帶過。
+          if (isDifferentDriveAccount(accountInfo)) {
+            renderDriveAccountMismatchNotice(accountInfo, 'restore');
+            return;
+          }
+          return driveFindFileByName(DRIVE_BACKUP_FILENAME_CURRENT, token).then(function (currentFile) {
+            if (!currentFile) {
+              renderDriveNoBackupFound(accountInfo);
+              return;
+            }
+            return driveDownloadFile(currentFile.id, token).then(function (raw) {
+              const parsed = parseCloudBackupPayload(raw);
+              if (!parsed.valid) { showToast('雲端備份內容看起來已損壞，無法還原。你目前的資料完全沒有被更動。'); return; }
+              const localHasData = state.projects.length > 0 || state.works.length > 0 || state.results.length > 0;
+              pendingDriveRestoreContext = { parsed: parsed, accountInfo: accountInfo, token: token, cloudFileId: currentFile.id };
+              // showScreen() 本身會觸發 render() 再呼叫一次對應的 render 函式（既有 dispatcher
+              // 機制），這裡不需要在 showScreen() 之前手動先呼叫一次 renderDriveVersionChoice()／
+              // renderDriveRestorePreview()——那樣反而會呼叫兩次，且兩個 render 函式已改為
+              // 不自己呼叫 showScreen()，需要由這裡明確指定要切去哪個畫面。
+              showScreen(localHasData ? 'screen-cloud-version-choice' : 'screen-cloud-restore-preview');
+            });
+          });
+        });
+      });
+    }, 5, function (attempt, delayMs) {
+      showToast('連線不穩，正在重試…（第 ' + attempt + ' 次）');
+    }).catch(function (err) {
+      showDriveError(err, '無法連接到你的 Google Drive，請稍後再試。');
+    });
+  });
+}
+
+// 使用者在預覽畫面確認後才呼叫——先建立本機安全快照，快照本身也要驗證存得下去
+// 才繼續，寫入失敗就中止，不繼續套用還原（本機資料完全未變動）。
+// 供「還原預覽」與「選擇要使用的資料版本，使用雲端版本」兩個畫面共用——語意上是
+// 同一件事（用雲端內容覆蓋本機），只是觸發情境不同，都從 pendingDriveRestoreContext 取資料。
+//
+// ── 補正二（技術長第三次複審修正）：跨頁面中斷的復原保護，修正中斷縫隙 ──
+// 原本的設計有一個真實縫隙：saveState() 成功寫入雲端資料之後、writeRestoreTransaction
+// ('cloud_state_applied') 執行之前，如果頁面被關閉或重新整理，下次啟動讀到的交易階段
+// 還停在 'snapshot_created'，但主 state 其實已經被替換成雲端資料了——舊版
+// checkAndRecoverIncompleteRestoreTransaction() 看到 'snapshot_created' 會誤判成
+// 「主資料還沒被換掉」而直接清除交易紀錄，導致未經驗證的雲端資料被悄悄保留下來，
+// 也失去了自動回復的機會。
+//
+// 修正方式：交易紀錄不再只依賴「階段名稱」判斷，而是額外持久化這次交易「預期套用後
+// 的資料指紋」（expectedFingerprint，在真正呼叫 saveState() 之前就先寫入，比階段名稱
+// 更早），啟動恢復時一律比對「目前主資料的指紋」跟「交易紀錄裡的預期指紋」是否相符，
+// 不再假設某個階段名稱等於資料沒被換過——階段名稱只是輔助資訊，指紋比對才是真正的
+// 判斷依據。
+const RESTORE_TRANSACTION_KEY = STORAGE_KEY + '_restore_transaction';
+
+function writeRestoreTransaction(phase, extra) {
+  try { localStorage.setItem(RESTORE_TRANSACTION_KEY, JSON.stringify(Object.assign({ phase: phase, updatedAt: new Date().toISOString() }, extra || {}))); return true; }
+  catch (e) { return false; }
+}
+function readRestoreTransaction() {
+  const raw = localStorage.getItem(RESTORE_TRANSACTION_KEY);
+  if (!raw) return null;
+  try { return JSON.parse(raw); } catch (e) { return null; }
+}
+function clearRestoreTransaction() { localStorage.removeItem(RESTORE_TRANSACTION_KEY); }
+
+// 簡單、確定性的雜湊（不需要密碼學等級強度，只需要能可靠比對「現在載入的這份 state，
+// 是不是這次交易原本要套用的那份」），避免直接用整份 JSON 字串比對（沒必要在
+// localStorage 裡重複存一份完整內容當指紋，浪費空間）。
+function computeStateFingerprint(s) {
+  const json = JSON.stringify(s);
+  let hash = 0;
+  for (let i = 0; i < json.length; i++) { hash = ((hash << 5) - hash + json.charCodeAt(i)) | 0; }
+  return 'len' + json.length + '_h' + hash;
+}
+
+// 跟 parseBackupFile／parseCloudBackupPayload 用同一套「必要陣列存在」標準，
+// 這裡直接檢查已經載入記憶體的 state 物件本身（不是重新解析 raw text）。
+function isStateStructurallyValid(s) {
+  return !!(s && typeof s === 'object'
+    && Array.isArray(s.projects) && Array.isArray(s.works)
+    && Array.isArray(s.results) && Array.isArray(s.publishRecords));
+}
+
+function confirmApplyDriveRestore() {
+  const ctx = pendingDriveRestoreContext;
+  if (!ctx) return;
+  const transactionId = 'restore-' + Date.now() + '-' + Math.random().toString(36).slice(2);
+  writeRestoreTransaction('pending', { transactionId: transactionId });
+  const snapshotOk = createPreRestoreSnapshot();
+  if (!snapshotOk) {
+    clearRestoreTransaction();
+    showToast('無法建立還原前的安全快照（裝置空間可能不足），已取消還原，本機資料未變動。');
+    return;
+  }
+  writeRestoreTransaction('snapshot_created', { transactionId: transactionId });
+  const previousState = state;
+  const newState = ctx.parsed.data.state;
+  ensureNewFields(newState);
+  newState.driveAccountEmail = ctx.accountInfo.email;
+  newState.driveAccountSub = ctx.accountInfo.sub;
+  // 關鍵修正：在真正呼叫 saveState() 之前，先把「即將套用的這份資料」的指紋持久寫下來
+  // （phase='applying'）。這一步比 saveState() 更早，所以即使 saveState() 成功後、
+  // 下一行 phase 推進之前就中斷，這個 expectedFingerprint 也已經確實存在，
+  // 啟動恢復時才能可靠比對「主資料是不是已經被換成這份」。
+  const expectedFingerprint = computeStateFingerprint(newState);
+  const stateWritten = writeRestoreTransaction('applying', { transactionId: transactionId, expectedFingerprint: expectedFingerprint });
+  if (!stateWritten) {
+    showToast('無法記錄還原交易狀態（裝置空間可能不足），已取消還原，本機資料未變動。');
+    return;
+  }
+  state = newState;
+  const saved = saveState();
+  if (!saved) {
+    state = previousState;
+    clearRestoreTransaction();
+    render();
+    showToast('還原失敗，裝置儲存空間可能不足，原有資料未被取代。');
+    return;
+  }
+  // 這一行寫入之後，如果頁面在這裡被關閉或重新整理，下次啟動時
+  // checkAndRecoverIncompleteRestoreTransaction() 會比對指紋發現主資料其實已經換過了
+  // （即使階段名稱還停在 'applying'），自動重新驗證、驗證失敗才回復安全快照。
+  writeRestoreTransaction('cloud_state_applied', { transactionId: transactionId, expectedFingerprint: expectedFingerprint });
+  if (!isStateStructurallyValid(state)) {
+    revertToPreRestoreSnapshotInternal('復原後的資料驗證失敗，已自動回復到還原前的狀態。');
+    return;
+  }
+  writeRestoreTransaction('validation_completed', { transactionId: transactionId, expectedFingerprint: expectedFingerprint });
+  clearRestoreTransaction();
+  pendingDriveRestoreContext = null;
+  showScreen('screen-home');
+  showToast('已從 Google Drive 還原資料（還原前的資料已自動保留 14 天，可在資料安全中心復原或清除）');
+}
+
+// 回復到還原前的安全快照。修正（技術長第三次複審）：saveState() 的回傳值現在會被
+// 檢查——失敗時絕對不能清除交易紀錄、也不能宣稱「已自動回復」，否則會製造「畫面說
+// 已經回復、但實際上主資料還是剛才有問題的內容」這種比原本更糟的假象。失敗時交易
+// 紀錄保留，讓使用者知道問題還沒解決，可以之後手動處理（例如清空間後重新整理）。
+// 也處理「連安全快照本身都不存在」這種更少見的情況，誠實告知而不是靜默什麼都不做。
+function revertToPreRestoreSnapshotInternal(message) {
+  const snapshot = getPreRestoreSnapshot();
+  if (!snapshot) {
+    render();
+    showToast('偵測到還原異常，但找不到還原前的安全快照可以回復，請檢查資料是否正常，或改用本機備份還原。');
+    return;
+  }
+  state = snapshot.state;
+  ensureNewFields(state);
+  const saved = saveState();
+  if (!saved) {
+    render();
+    showToast('偵測到還原異常，嘗試自動回復時失敗（裝置空間可能不足）。目前資料狀態可能不一致，請手動處理或改用本機備份還原。');
+    return; // 交易紀錄刻意不清除，保留線索
+  }
+  clearRestoreTransaction();
+  render();
+  showToast(message);
+}
+
+// App 啟動時檢查（在 loadState() 之後呼叫）：若上一次的復原交易沒有走到
+// validation_completed 就中斷了（頁面關閉／重新整理／當機），一律用指紋比對判斷，
+// 不再假設某個階段名稱代表主資料有沒有被換過：
+//   - 沒有 expectedFingerprint（連 'applying' 階段都沒走到）：主資料確定沒被換掉，
+//     只清掉殘留紀錄即可。
+//   - 有 expectedFingerprint：比對目前主資料的指紋——
+//       相符 → 雲端資料確實已經套用進主 key，重新驗證結構是否完整，完整就正常結案，
+//              不完整就回復安全快照。
+//       不相符 → 雲端資料其實還沒真的套用進主 key（例如卡在 saveState() 呼叫之前就
+//              中斷），主資料仍是原本的內容，安全，只清掉殘留紀錄。
+function checkAndRecoverIncompleteRestoreTransaction() {
+  const txn = readRestoreTransaction();
+  if (!txn) return;
+  if (!txn.expectedFingerprint) {
+    clearRestoreTransaction();
+    return;
+  }
+  const currentFingerprint = computeStateFingerprint(state);
+  if (currentFingerprint !== txn.expectedFingerprint) {
+    // 主資料的指紋跟這筆交易預期套用的內容不符，代表 saveState() 那一步根本沒有
+    // 真的發生過（中斷點在更早之前），本機資料維持原狀，安全，只需要清掉殘留紀錄。
+    clearRestoreTransaction();
+    return;
+  }
+  // 指紋相符：主資料確實已經是這筆交易要套用的雲端內容，不論階段名稱停在哪裡，
+  // 都要重新驗證，不能假設「階段名稱看起來還沒完成」就代表資料沒事。
+  if (isStateStructurallyValid(state)) { clearRestoreTransaction(); return; }
+  revertToPreRestoreSnapshotInternal('偵測到上次的 Google Drive 還原沒有正常完成，已自動回復到還原前的狀態。');
+}
+
+function cancelDriveRestorePreview() { pendingDriveRestoreContext = null; showScreen('screen-data-safety-center'); }
+
+// ── 錯誤呈現（區分需要重新授權 vs 一般失敗，見狀態機第四節）──
+// 補正（技術長退回）：使用者主動關閉 Google 登入視窗，或視窗被瀏覽器擋下無法開啟，
+// 都是使用者可以理解、可以馬上再試一次的情況，不是「備份失敗／資料損壞／權限永久
+// 失效／系統嚴重錯誤」，訊息用詞要誠實反映這一點，不誇大也不嚇人。
+function showDriveError(err, fallbackMessage) {
+  if (err && err.type === 'gis_not_loaded') { showToast('Google 服務載入失敗，請檢查網路連線後重新整理。'); return; }
+  if (err && err.type === 'popup_closed') { showToast('Google 登入視窗已關閉，這次操作尚未完成。你可以稍後再試一次。'); return; }
+  if (err && err.type === 'popup_failed_to_open') { showToast('無法開啟 Google 登入視窗，請確認瀏覽器沒有封鎖快顯視窗後再試一次。'); return; }
+  if (err && err.type === 'oauth_error') { showToast('尚未完成 Google 帳號授權，可以再試一次。'); return; }
+  if (err && err.type === 'gis_error') { showToast('這次操作尚未完成，可以稍後再試一次。'); return; }
+  if (err && (err.status === 401 || (err.status === 403 && err.reason !== 'rateLimitExceeded' && err.reason !== 'userRateLimitExceeded'))) {
+    showToast('Google Drive 連線已過期或權限不足，請重新連接。');
+    return;
+  }
+  showToast(fallbackMessage);
+}
+
+// ── Google Drive Backup 畫面 ───────────────────────────────────
+
+// Data Safety Center 裡「☁️ Google Drive 備份」區塊——跟既有本機 JSON 區塊視覺上明確
+// 分開（見任務書「本機備援並存」要求），iPhone 裝置直接顯示提示取代按鈕，不宣稱支援
+// 也不讓功能默默失效。
+function renderDriveBackupSection() {
+  const box = document.getElementById('dsc-drive-backup-section');
+  if (!box) return;
+  if (isIphoneDevice()) {
+    box.innerHTML = '<div class="section-label">☁️ Google Drive 備份</div>' +
+      '<div class="notice">Google Drive 備份目前支援電腦 Chrome 與 Android；iPhone 仍在測試中。<br>你仍可以使用上方「匯出我的資料」保存在這台裝置。</div>';
+    return;
+  }
+  const rate = driveBackupRateStatus();
+  const busy = isDriveOperationBusy();
+  const accountLine = state.driveAccountEmail
+    ? '目前連接帳號：' + escHtml(state.driveAccountEmail)
+    : '尚未連接 Google Drive';
+  const lastBackupLine = state.driveLastBackupAt
+    ? '雲端最後備份：' + formatDateTime(state.driveLastBackupAt) + '（' + formatRelativeTime(state.driveLastBackupAt) + '）'
+    : '尚未備份到雲端過';
+  const rateLine = (rate.hourlyLimitReached || rate.dailyLimitReached)
+    ? '<div class="line" style="color:var(--red)">⚠️ ' + (rate.dailyLimitReached ? '今天的備份次數已達上限（' + DRIVE_DAILY_LIMIT + ' 次）' : '這一小時的備份次數已達上限（' + DRIVE_HOURLY_LIMIT + ' 次）') + '</div>'
+    : (rate.hourlyCount > 0 ? '<div class="line">今天已備份 ' + rate.dailyCount + ' 次（每小時上限 ' + DRIVE_HOURLY_LIMIT + '，每日上限 ' + DRIVE_DAILY_LIMIT + '）</div>' : '');
+  const snapshot = getPreRestoreSnapshot();
+  const snapshotBlock = snapshot ? renderPreRestoreSnapshotBlock(snapshot) : '';
+  box.innerHTML = '<div class="section-label">☁️ Google Drive 備份</div>' +
+    '<div class="card"><div class="line">' + accountLine + '</div><div class="line">' + lastBackupLine + '</div>' + rateLine + '</div>' +
+    '<button class="btn" style="margin-top:10px" ' + (busy ? 'disabled' : '') + ' onclick="startDriveBackup()">' + (activeDriveOperation === 'backup' ? '⏳ 備份中…' : '☁️ 備份到 Google Drive') + '</button>' +
+    '<button class="btn outline" style="margin-top:10px" ' + (busy ? 'disabled' : '') + ' onclick="startDriveRestore()">' + (activeDriveOperation === 'restore' ? '⏳ 讀取中…' : '☁️ 從 Google Drive 復原') + '</button>' +
+    snapshotBlock;
+}
+
+function renderPreRestoreSnapshotBlock(snapshot) {
+  return '<div class="notice" style="margin-top:10px">' +
+    '上一次還原前，已自動保留一份本機安全快照（' + formatDateTime(snapshot.createdAt) + '），將保留 14 天。<br><br>' +
+    '<button class="btn outline" onclick="restoreFromPreRestoreSnapshotAction()">回復到還原前的狀態</button>' +
+    '<button class="btn outline" style="margin-top:8px" onclick="clearPreRestoreSnapshotAction()">立即清除</button>' +
+    '</div>';
+}
+
+function restoreFromPreRestoreSnapshotAction() {
+  const snapshot = getPreRestoreSnapshot();
+  if (!snapshot) return;
+  if (!confirm('確定要回復到還原前的狀態嗎？這會覆蓋掉你剛剛還原／使用雲端版本後的內容。')) return;
+  state = snapshot.state;
+  ensureNewFields(state);
+  const saved = saveState();
+  if (!saved) { showToast('回復失敗，裝置儲存空間可能不足。'); return; }
+  clearPreRestoreSnapshot();
+  render();
+  showToast('已回復到還原前的狀態');
+}
+
+function clearPreRestoreSnapshotAction() {
+  if (!canClearPreRestoreSnapshot()) { showToast('目前資料狀態異常，暫時無法清除安全快照。'); return; }
+  if (!confirm('確定要清除還原前保留的安全快照嗎？清除後將無法再回復到還原前的狀態。')) return;
+  clearPreRestoreSnapshot();
+  render();
+  showToast('已清除安全快照');
+}
+
+// 找到雲端備份、本機目前沒什麼資料好保護時的簡單預覽（單一主要動作）
+// 注意：這個函式只負責把資料填進畫面，不呼叫 showScreen() 切到自己這個畫面——
+// 這個函式本身已經被登記在 render() 的дispatcher 裡（畫面啟用時會自動呼叫一次），
+// 如果函式內又呼叫 showScreen('screen-cloud-restore-preview')，會變成
+// render() → renderDriveRestorePreview() → showScreen() → render() → ... 的無窮遞迴
+//（實際測試時發現過這個問題，已修正）。呼叫端（startDriveRestore()）負責先準備好
+// pendingDriveRestoreContext 再呼叫 showScreen() 切換過來。
+function renderDriveRestorePreview() {
+  const ctx = pendingDriveRestoreContext;
+  if (!ctx) { showScreen('screen-data-safety-center'); return; }
+  const s = ctx.parsed.summary;
+  document.getElementById('cdrp-account').textContent = ctx.accountInfo.email || '（無法顯示帳號）';
+  document.getElementById('cdrp-summary').innerHTML =
+    '備份時間：' + (ctx.parsed.createdAt ? formatDateTime(ctx.parsed.createdAt) : '未知') + '<br>' +
+    '內容：' + s.projectCount + ' 個專案・' + s.workCount + ' 件工作・' + s.resultCount + ' 筆成果';
+}
+
+// 補正三：這裡原本叫「雲端版本較新」，但程式邏輯只檢查「本機是否已有資料」，
+// 完全沒有比較過雲端與本機兩邊的實際時間或內容，沒有根據可以宣稱雲端「比較新」。
+// 這次 MVP 不做複雜的雙邊時間/版本比對，改用中性名稱與文案：只誠實顯示「雲端備份
+// 時間」與「這台裝置最後備份時間」兩者的摘要，讓使用者自己判斷要用哪一份，
+// 不替使用者做「哪個比較新」這個沒有根據的判斷。
+// 注意：同樣不呼叫 showScreen() 切到自己這個畫面，理由跟 renderDriveRestorePreview() 一樣
+//（避免跟 render() dispatcher 形成無窮遞迴，實測時發現過）。呼叫端負責切換畫面。
+function renderDriveVersionChoice() {
+  const ctx = pendingDriveRestoreContext;
+  if (!ctx) { showScreen('screen-data-safety-center'); return; }
+  const s = ctx.parsed.summary;
+  document.getElementById('cvc-account').textContent = ctx.accountInfo.email || '（無法顯示帳號）';
+  document.getElementById('cvc-cloud-summary').innerHTML =
+    '雲端備份時間：' + (ctx.parsed.createdAt ? formatDateTime(ctx.parsed.createdAt) : '未知') + '<br>' +
+    '雲端：' + s.projectCount + ' 個專案・' + s.workCount + ' 件工作・' + s.resultCount + ' 筆成果';
+  document.getElementById('cvc-local-summary').innerHTML =
+    '這台裝置最後備份：' + (state.driveLastBackupAt ? formatDateTime(state.driveLastBackupAt) : '尚未備份過') + '<br>' +
+    '這台裝置：' + state.projects.length + ' 個專案・' + state.works.length + ' 件工作・' + state.results.length + ' 筆成果';
+}
+
+function keepLocalVersionInstead() { pendingDriveRestoreContext = null; showScreen('screen-data-safety-center'); showToast('已保留這台裝置目前的資料，沒有變動。'); }
+
+// 找不到雲端備份：三個明確出口，不得只顯示「沒有備份資料」（任務書明確要求）
+function renderDriveNoBackupFound(accountInfo) {
+  pendingDriveRestoreContext = { accountInfo: accountInfo };
+  document.getElementById('cnbf-account').textContent = accountInfo.email || '（無法顯示帳號）';
+  showScreen('screen-cloud-no-backup-found');
+}
+
+function createFirstCloudBackupNow() {
+  const accountInfo = pendingDriveRestoreContext && pendingDriveRestoreContext.accountInfo;
+  pendingDriveRestoreContext = null;
+  showScreen('screen-data-safety-center');
+  if (accountInfo) { state.driveAccountEmail = accountInfo.email; state.driveAccountSub = accountInfo.sub; }
+  startDriveBackup();
+}
+
+function reselectDriveAccount() {
+  pendingDriveRestoreContext = null;
+  driveAccessToken = null;
+  showScreen('screen-data-safety-center');
+  startDriveRestore();
+}
+
+function useLocalImportInstead() {
+  pendingDriveRestoreContext = null;
+  showScreen('screen-data-safety-center');
+  document.getElementById('dsc-restore-file-input').click();
+}
+
+// 帳號切換防呆：偵測到跟上次不同的帳號，先提醒，不直接建立或覆蓋（CEO 核准規則）
+function renderDriveAccountMismatchNotice(accountInfo, context) {
+  pendingDriveRestoreContext = { accountInfo: accountInfo, mismatchContext: context };
+  document.getElementById('cam-previous-account').textContent = state.driveAccountEmail || '（先前未記錄帳號）';
+  document.getElementById('cam-new-account').textContent = accountInfo.email || '（無法顯示帳號）';
+  document.getElementById('cam-context-hint').textContent = context === 'backup'
+    ? '你正要備份到這個新帳號。'
+    : '你正要從這個新帳號還原。';
+  showScreen('screen-cloud-account-mismatch');
+}
+
+function proceedWithNewDriveAccount() {
+  const ctx = pendingDriveRestoreContext;
+  if (!ctx) return;
+  const mismatchContext = ctx.mismatchContext;
+  const accountInfo = ctx.accountInfo;
+  pendingDriveRestoreContext = null;
+  state.driveAccountEmail = accountInfo.email;
+  state.driveAccountSub = accountInfo.sub;
+  saveState();
+  showScreen('screen-data-safety-center');
+  if (mismatchContext === 'backup') { startDriveBackup(); } else { startDriveRestore(); }
+}
+
+function cancelDriveAccountSwitch() { pendingDriveRestoreContext = null; showScreen('screen-data-safety-center'); }
 
 function renderAddWork() {
   const flow = FLOWS[pendingFlowId];
@@ -3256,10 +4367,9 @@ function renderAssets() {
   if (items.length === 0) { list.innerHTML = '<div class="empty-state"><div class="icon">📚</div><div class="txt">這個分類還沒有成果</div></div>'; return; }
   list.innerHTML = items.map(function (r) {
     const versions = getVersionHistory(r);
-    const cloudBadge = r.isFinal ? (r.cloudStatus === 'saved' ? '<span class="final-badge" style="background:var(--green-soft)">☁️ 已存雲端</span>' : '') : '';
     const titlePrefix = r.isFinal ? categoryEmoji(r.category) + ' ' : '';
     return '<div class="result-card" onclick="openResult(' + r.id + ')">' +
-      '<h4>' + titlePrefix + escHtml(r.title) + (r.isFinal ? '<span class="final-badge">最終版</span>' : '') + cloudBadge + '</h4>' +
+      '<h4>' + titlePrefix + escHtml(r.title) + (r.isFinal ? '<span class="final-badge">最終版</span>' : '') + '</h4>' +
       '<div class="meta">來自「' + escHtml(r.projectName) + ' / ' + escHtml(r.workName) + '」　·　' + r.ai + '　·　' + formatDate(r.completedAt) + '</div>' +
       (versions.length > 1 ? '<div class="meta">版本數：v' + versions.length + '　修改次數：' + (versions.length - 1) + '</div>' : '') +
       (r.isFinal ? '<div class="meta">發布狀態：' + (isPublished(r.id) ? '已發布' : '尚未發布') + '</div>' : '') +
@@ -3309,20 +4419,11 @@ function renderAssetDetail() {
     ? '<button class="btn outline" onclick="openPolishFromAsset(' + r.id + ')">🎨 打磨這個版本</button>'
     : '';
 
+  // Workspace Trust Sprint 1（Task 9）：原本這裡會顯示「加入雲端作品庫」按鈕與
+  // 「☁️ 已加入雲端作品庫」狀態，但 saveToCloud() 從未真正把資料送到任何地方，
+  // 只是切換本地欄位——已停用，避免使用者誤以為作品已經有雲端備份。
   const cloudBox = document.getElementById('rd-cloud-box');
-  if (r.isFinal) {
-    if (!state.gasWebhookUrl) {
-      cloudBox.innerHTML = '<div class="notice">尚未開通雲端設定。</div>' +
-        '<button class="btn outline" onclick="showScreen(\'screen-settings\')">前往我的工作台開通</button>';
-    } else if (r.cloudStatus === 'saved') {
-      cloudBox.innerHTML = '<div class="notice">☁️ 已加入雲端作品庫</div>';
-    } else {
-      cloudBox.innerHTML = '<div class="notice">尚未存雲端</div>' +
-        '<button class="btn outline" onclick="saveToCloud(' + r.id + ')">☁️ 存到我的雲端作品庫</button>';
-    }
-  } else {
-    cloudBox.innerHTML = '<div class="notice">尚未完成打磨，暫不建議發布。</div>';
-  }
+  cloudBox.innerHTML = '';
 }
 
 function renderPublish() {
@@ -3406,7 +4507,6 @@ function renderSettings() {
   document.getElementById('settings-username').value = state.userName;
   document.getElementById('settings-workspacename').value = state.workspaceName;
   document.getElementById('settings-count').textContent = state.projects.length + ' 個專案、' + state.works.length + ' 件工作、' + state.results.length + ' 筆成果';
-  document.getElementById('settings-gas-url').value = state.gasWebhookUrl || '';
 }
 
 // ── 我的工具 ──────────────────────────────────────────────────
@@ -3454,17 +4554,17 @@ function chooseOnboardingAi(name) {
   state.preferredAiOnboarded = true;
   saveState();
   showToast('已設定常用 AI：' + name);
-  showScreen('screen-home');
+  showScreen(homeOrDataSafetyOnboardingScreen());
 }
 function chooseOnboardingNoAi() {
   state.preferredAiOnboarded = true;
   saveState();
-  showScreen('screen-home');
+  showScreen(homeOrDataSafetyOnboardingScreen());
 }
 function skipOnboardingPreferredAi() {
   state.preferredAiOnboarded = true;
   saveState();
-  showScreen('screen-home');
+  showScreen(homeOrDataSafetyOnboardingScreen());
 }
 
 // ── 我的常用 AI（我的工作台 → 我的常用 AI，可修改／新增／刪除／排序）──
@@ -3560,13 +4660,49 @@ function renderPromptDetail() {
 }
 
 function formatDate(iso) { const d = new Date(iso); return (d.getMonth() + 1) + '/' + d.getDate(); }
+function formatDateTime(iso) {
+  const d = new Date(iso);
+  const pad = function (n) { return n < 10 ? '0' + n : '' + n; };
+  return (d.getFullYear()) + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+}
+// 相對時間（「3 天前」／「剛剛」），首頁摘要卡片與 Data Safety Center 都要用，只寫一次
+function formatRelativeTime(iso) {
+  if (!iso) return null;
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const diffMin = Math.floor(diffMs / 60000);
+  if (diffMin < 1) return '剛剛';
+  if (diffMin < 60) return diffMin + ' 分鐘前';
+  const diffHour = Math.floor(diffMin / 60);
+  if (diffHour < 24) return diffHour + ' 小時前';
+  const diffDay = Math.floor(diffHour / 24);
+  return diffDay + ' 天前';
+}
 function escHtml(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
 
 // ── 啟動 ──────────────────────────────────────────────────────
 // 先載入工具資料（官方工具清單／合作模板），確保 loadState() 建立預設狀態時 TOOLS_CATALOG 已經就緒
 function startApp() {
   loadState();
-  showScreen(state.preferredAiOnboarded ? 'screen-home' : 'screen-preferred-ai-onboarding');
+  if (dataCorruptionDetected) { showScreen('screen-data-corruption-notice'); return; }
+  // 補正二：每次啟動都先確認上一次的 Google Drive 復原交易有沒有正常做完，
+  // 在使用者看到任何畫面之前先處理好，不會讓一個沒收尾的復原交易停留在背景。
+  checkAndRecoverIncompleteRestoreTransaction();
+  showScreen(state.preferredAiOnboarded ? homeOrDataSafetyOnboardingScreen() : 'screen-preferred-ai-onboarding');
+}
+function acknowledgeDataCorruption() {
+  showScreen(state.preferredAiOnboarded ? homeOrDataSafetyOnboardingScreen() : 'screen-preferred-ai-onboarding');
+}
+// Workspace Trust Sprint 1（Task 8）：唯一一個判斷「現在該不該顯示首次資料安全提醒」的地方，
+// 所有「原本要去首頁」的路徑都改呼叫這裡，不要在每個呼叫點各自判斷一次
+// dataSafetyOnboarded，避免之後漏掉某一條路徑、造成有些使用者永遠看不到提醒。
+function homeOrDataSafetyOnboardingScreen() {
+  return state.dataSafetyOnboarded ? 'screen-home' : 'screen-data-safety-onboarding';
+}
+function acknowledgeDataSafetyOnboarding(goBackup) {
+  state.dataSafetyOnboarded = true;
+  saveState();
+  if (goBackup) { showScreen('screen-home'); exportData(); return; }
+  showScreen('screen-home');
 }
 loadToolData().then(function () {
   if (document.readyState === 'loading') {
