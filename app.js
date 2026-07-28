@@ -3106,12 +3106,29 @@ function backupReminderStatus() {
 
 function openDataSafetyCenter() { showScreen('screen-data-safety-center'); }
 
+// 真人驗收發現：上方摘要（首頁卡片／資料安全中心狀態列）原本只讀 state.lastBackupAt
+// （只有本機 JSON 匯出 exportData() 會寫入這個欄位），跟下方 Google Drive 區塊讀的
+// state.driveLastBackupAt（只有 finishDriveBackupSuccess() 會寫入）是兩個完全獨立的
+// 欄位——使用者只做過 Google Drive 備份、從未按過本機「⬇️ 立即備份」時，上方就會一直
+// 顯示「從未備份過」，即使下方雲端區塊明明顯示著雲端備份時間，兩處互相矛盾。
+// 這裡取兩個來源裡「時間較新」的一筆，並清楚標示是哪一種備份（不再用含義不明的
+// 「最後備份」），只有兩邊都沒有任何紀錄時才顯示「從未備份過」。
+function mostRecentBackupInfo() {
+  const local = state.lastBackupAt ? { at: state.lastBackupAt, label: '本機備份' } : null;
+  const drive = state.driveLastBackupAt ? { at: state.driveLastBackupAt, label: 'Google Drive 備份' } : null;
+  if (!local && !drive) return null;
+  if (local && !drive) return local;
+  if (drive && !local) return drive;
+  return new Date(local.at).getTime() >= new Date(drive.at).getTime() ? local : drive;
+}
+
 function renderHomeDataSafetySummary() {
   const box = document.getElementById('home-data-safety-summary');
   if (!box) return;
   const reminder = backupReminderStatus();
-  const lastBackupLine = state.lastBackupAt
-    ? '最後備份：' + formatRelativeTime(state.lastBackupAt)
+  const mostRecent = mostRecentBackupInfo();
+  const lastBackupLine = mostRecent
+    ? '最後備份（' + mostRecent.label + '）：' + formatRelativeTime(mostRecent.at)
     : '從未備份過';
   box.innerHTML = '<div class="line">資料儲存在：這台裝置（瀏覽器本機）</div>' +
     '<div class="line">' + lastBackupLine + '　｜　' + state.projects.length + ' 個專案・' + state.works.length + ' 件工作・' + state.results.length + ' 筆成果</div>' +
@@ -3122,8 +3139,15 @@ function renderHomeDataSafetySummary() {
 function renderDataSafetyCenter() {
   const reminder = backupReminderStatus();
   const statusBox = document.getElementById('dsc-backup-status');
+  const statusLines = [];
   if (state.lastBackupAt) {
-    statusBox.innerHTML = '最後備份：' + formatDateTime(state.lastBackupAt) + '（' + formatRelativeTime(state.lastBackupAt) + '）' +
+    statusLines.push('本機備份：' + formatDateTime(state.lastBackupAt) + '（' + formatRelativeTime(state.lastBackupAt) + '）');
+  }
+  if (state.driveLastBackupAt) {
+    statusLines.push('Google Drive 最後備份：' + formatDateTime(state.driveLastBackupAt) + '（' + formatRelativeTime(state.driveLastBackupAt) + '）');
+  }
+  if (statusLines.length > 0) {
+    statusBox.innerHTML = statusLines.join('<br>') +
       (reminder.show ? '<br><span style="color:var(--red)">⚠️ ' + escHtml(reminder.reason) + '</span>' : '');
   } else {
     statusBox.innerHTML = '<span style="color:var(--red)">⚠️ 從未備份過</span>';
@@ -3158,7 +3182,6 @@ const PRE_RESTORE_SNAPSHOT_RETENTION_DAYS = 14; // CEO 核准：復原成功後�
 // Token 只存在頁面記憶體（POC 已驗證的既有結論），重新整理就會消失，不寫進
 // localStorage／state——避免把敏感憑證留在裝置的持久化儲存裡。
 let driveAccessToken = null;
-let driveTokenClient = null;
 let activeDriveOperation = null; // null｜'backup'｜'restore'，備份/復原互斥鎖（R9）
 // 復原流程從「找到雲端備份」到「使用者實際確認」中間隔著一個畫面／一次使用者互動，
 // 不是同一條 Promise 鏈能一路串到底，所以用這個模組層級變數暫存待確認的復原內容，
@@ -3167,26 +3190,6 @@ let pendingDriveRestoreContext = null;
 
 // ── GIS（Google Identity Services）載入與 Token 取得 ──
 function isGisLoaded() { return typeof window !== 'undefined' && window.google && window.google.accounts && window.google.accounts.oauth2; }
-
-// 補正（技術長退回：GIS popup_closed 未正確處理）：initTokenClient 原本只設定
-// callback，沒有設定 error_callback。GIS 對「使用者主動關閉 popup」「popup 被瀏覽器
-// 擋下無法開啟」「其他非 OAuth 層級的錯誤」是透過 error_callback 這個獨立管道通知，
-// 不會呼叫 callback——沒有 error_callback，這些情況下 Promise 永遠不會 settle，
-// withDriveRetry／withDriveOperationLock 的 finally 就永遠不會執行，操作鎖卡死、
-// UI 停在「備份中／讀取中」。這裡補上 error_callback，一樣採用跟 callback 相同的
-// 「每次呼叫時動態覆蓋」設計，讓每一次 requestDriveAccessToken() 都能收到通知。
-function ensureDriveTokenClient() {
-  if (!isGisLoaded()) throw new Error('gis_not_loaded');
-  if (!driveTokenClient) {
-    driveTokenClient = window.google.accounts.oauth2.initTokenClient({
-      client_id: DRIVE_CLIENT_ID,
-      scope: DRIVE_SCOPES,
-      callback: function () {},       // 由 requestDriveAccessToken() 每次呼叫時動態覆蓋
-      error_callback: function () {}  // 同上，動態覆蓋
-    });
-  }
-  return driveTokenClient;
-}
 
 // error_callback 收到的是 GIS 層級的錯誤物件（{ type: 'popup_closed' | 'popup_failed_to_open' | ... }），
 // 跟 callback 的 resp.error（OAuth 層級的錯誤字串，例如 access_denied）是兩種不同來源，
@@ -3198,56 +3201,82 @@ function classifyGisError(gisError) {
   return { type: 'gis_error', reason: type || 'unknown' };
 }
 
+// let（不是 const）：正式環境維持 2 分鐘不變，只是刻意讓自動測試可以在頁面內把這個值
+// 改小，才能在測試裡用真實（但很短）的等待時間驗證逾時行為，不需要真的等 2 分鐘，
+// 也不用依賴 fake timer 工具去猜測跟這個版本相容與否。
+let DRIVE_AUTH_TIMEOUT_MS = 120000; // 2 分鐘：足夠使用者完成帳號選擇／輸入密碼／兩步驟驗證，但不會無限期卡住
+
 // 每次都帶 prompt:'select_account'（CEO 明確要求保留）：使用者每次授權都會看到
 // Google 原生帳號選擇畫面，不會悄悄沿用瀏覽器已登入的帳號，這是目前技術上能做到的
 // 「不增加身分範圍也能防呆」的部分（見實作計畫第六節 Q2）。
 //
-// 補正：request-level 完成鎖（settled／requestId）。同一次呼叫可能收到不只一次
-// callback／error_callback 事件（例如：成功 callback 先到，Promise 已經 resolve，
-// 但 GIS 之後又遲發一個 popup_closed 的 error_callback；或是同一種事件被重複觸發）。
-// 規則：
-//   - 這次呼叫只有第一個抵達的事件能真正決定 Promise 的結果（settled 由 false→true）。
-//   - 之後不管是 callback 還是 error_callback，只要 settled 已經是 true，一律直接
-//     return，不得再次 resolve／reject，也不得改變已經確定的結果。
-//   - requestId 額外防呆：萬一發生更極端的情況（例如上一個請求還沒 settle，
-//     GIS singleton client 的 callback／error_callback 已經被下一次呼叫覆蓋掉），
-//     舊事件比對 requestId 不符，直接視為過期事件忽略，不影響新請求的結果。
-let driveTokenRequestSeq = 0;
+// 補正（技術長退回第三次：timeout 後遲發的 GIS callback 可能污染下一次請求）：
+// 原本的設計用一個 singleton token client（driveTokenClient，跨所有呼叫共用同一個
+// 物件），每次呼叫 requestDriveAccessToken() 都動態覆寫這個共用物件的
+// callback／error_callback，並用一個全域遞增的 requestId 跟閉包內的 settled 旗標
+// 判斷「這個事件還算不算數」。這個設計對「同一次請求收到重複事件」是有效的，但擋不住
+// 一個更根本的問題：GIS 內部沒有請求識別碼，事後觸發回呼時，只會呼叫「當下掛在這個
+// client 物件上」的那個函式。如果請求 A 逾時放棄後，請求 B 緊接著開始，B 呼叫
+// requestAccessToken() 時會把 client.callback／error_callback 換成 B 自己的閉包——
+// 這時如果 A 那個已經放棄的 Google 帳號選擇視窗才終於觸發事件，GIS 實際呼叫到的會是
+// 「現在掛在 client 上」的 B 的閉包，不是 A 的。B 的閉包只看得到自己的 requestId
+// 剛好等於目前最新值（因為 B 就是最新的），會誤判成「這是我自己等到的結果」，讓 A
+// 已經放棄的流程污染 B 的請求（例如把 A 那邊使用者選的帳號，誤植成 B 的 token）。
+// 修正：不再共用單一個 client 物件。每次呼叫都用 initTokenClient() 建立一個全新、
+// 專屬於這次請求的 client，callback／error_callback 在建立當下就直接綁定在這次
+// 請求自己的閉包裡，之後永遠不會被其他請求覆寫。這樣不管 GIS 事後多晚才觸發事件，
+// physically 只可能呼叫到「當初建立那個 client 時」綁定的那個閉包——A 的事件不管
+// 多晚才來，永遠只會進到 A 自己的閉包，A 自己的 settled 旗標會擋下（因為 A 早就
+// 已經因為逾時而 settled），完全不可能誤觸到 B 的閉包，也就不再需要、也不應該再用
+// 「跟全域序號比對是否為最新」這種判斷方式（那正是問題根源：它假設事件一定屬於目前
+// 最新的請求，但現在每次請求有自己獨立、不共用的 client，這個假設不再必要）。
 function requestDriveAccessToken() {
   return new Promise(function (resolve, reject) {
-    let client;
-    try { client = ensureDriveTokenClient(); }
-    catch (e) { reject({ type: 'gis_not_loaded' }); return; }
+    if (!isGisLoaded()) { reject({ type: 'gis_not_loaded' }); return; }
 
-    driveTokenRequestSeq += 1;
-    const requestId = driveTokenRequestSeq;
     let settled = false;
-    function isStaleOrSettled() { return settled || requestId !== driveTokenRequestSeq; }
+    let timeoutId;
 
-    client.callback = function (resp) {
-      if (isStaleOrSettled()) return;
-      if (resp && resp.error) {
-        // OAuth 層級錯誤（例如使用者在同意畫面按「取消」＝access_denied）：
-        // 不代表永久失敗，只回報這次沒有拿到 token，交由呼叫端決定要不要提示重試。
-        settled = true;
-        reject({ type: 'oauth_error', reason: resp.error });
-        return;
-      }
+    let client;
+    try {
+      client = window.google.accounts.oauth2.initTokenClient({
+        client_id: DRIVE_CLIENT_ID,
+        scope: DRIVE_SCOPES,
+        callback: function (resp) {
+          if (settled) return; // 這次請求自己已經 settle 過（例如已經逾時放棄），忽略遲到的事件
+          clearTimeout(timeoutId);
+          if (resp && resp.error) {
+            // OAuth 層級錯誤（例如使用者在同意畫面按「取消」＝access_denied）：
+            // 不代表永久失敗，只回報這次沒有拿到 token，交由呼叫端決定要不要提示重試。
+            settled = true;
+            reject({ type: 'oauth_error', reason: resp.error });
+            return;
+          }
+          settled = true;
+          driveAccessToken = resp.access_token;
+          resolve(resp.access_token);
+        },
+        error_callback: function (gisError) {
+          if (settled) return;
+          clearTimeout(timeoutId);
+          settled = true;
+          reject(classifyGisError(gisError));
+        }
+      });
+    } catch (e) { reject({ type: 'gis_not_loaded' }); return; }
+
+    timeoutId = setTimeout(function () {
+      if (settled) return;
       settled = true;
-      driveAccessToken = resp.access_token;
-      resolve(resp.access_token);
-    };
-    client.error_callback = function (gisError) {
-      if (isStaleOrSettled()) return;
-      settled = true;
-      reject(classifyGisError(gisError));
-    };
+      reject({ type: 'auth_timeout' });
+    }, DRIVE_AUTH_TIMEOUT_MS);
+
     try {
       client.requestAccessToken({ prompt: 'select_account' });
     } catch (e) {
       // requestAccessToken() 本身同步拋出例外（極少見，例如 client_id 設定錯誤）：
       // 直接視為這次請求失敗，同樣要讓 Promise settle，不留下永遠不 resolve 的鎖。
-      if (!isStaleOrSettled()) { settled = true; reject({ type: 'gis_not_loaded' }); }
+      if (!settled) { clearTimeout(timeoutId); settled = true; reject({ type: 'gis_not_loaded' }); }
     }
   });
 }
@@ -3380,8 +3409,30 @@ function driveUploadOrUpdate(name, content, accessToken, existingFileId) {
     .then(function (res) { return res.json(); });
 }
 
+// 補正（技術長退回第三次：舊雲端備份相容）：判斷一個值是不是「可以拿來當備份時間用」
+// 的合法時間字串——缺漏（undefined）、null、空字串、或無法解析成合法日期，都算不合法。
+// 用在復原舊格式雲端備份、接續舊格式殘留輪替狀態時，判斷要不要用其他來源補值。
+function isValidTimestampString(v) {
+  return typeof v === 'string' && v.length > 0 && !isNaN(new Date(v).getTime());
+}
+
 // ── 雲端備份payload 結構與驗證（現況 MVP：schemaVersion＋摘要層級資料＋完整 state）──
-function buildCloudBackupPayload() {
+// 真人驗收發現：這裡原本直接內嵌目前的 state（含目前的 state.driveLastBackupAt，
+// 也就是「上一次」備份的時間，不是「這一次」），因為 finishDriveBackupSuccess()
+// 要等上傳＋驗證都成功後才會把 driveLastBackupAt 更新成這次的時間——這個順序完全
+// 正確（不能在還沒確定成功前就更新本機狀態），但也代表每次上傳的雲端快照裡，
+// state.driveLastBackupAt 永遠是「上一次」的舊值（第一次備份時甚至是 null）。
+// 別人拿這份快照去做跨裝置復原時，套用進去的 state.driveLastBackupAt 就會是這個
+// 舊值／null，導致復原後資料安全中心仍可能顯示「從未備份過」。
+// 修正：呼叫端傳入「這次備份萬一成功後，即將寫入本機的時間」（pendingDriveLastBackupAt，
+// 跟 finishDriveBackupSuccess() 最終真正寫入的時間用同一個值），這裡只在「要內嵌進
+// payload 的那份 state 副本」覆蓋這個欄位，不影響、不提前更動真正的 state 物件本身
+// ——本機 state.driveLastBackupAt 仍然只有在 finishDriveBackupSuccess() 確認成功
+// 之後才會更新，失敗時完全不受影響。
+function buildCloudBackupPayload(pendingDriveLastBackupAt) {
+  const stateForPayload = pendingDriveLastBackupAt
+    ? Object.assign({}, state, { driveLastBackupAt: pendingDriveLastBackupAt })
+    : state;
   return JSON.stringify({
     schemaVersion: CURRENT_SCHEMA_VERSION,
     backupType: 'google-drive',
@@ -3391,7 +3442,7 @@ function buildCloudBackupPayload() {
       workCount: state.works.length,
       resultCount: state.results.length
     },
-    state: state
+    state: stateForPayload
   });
 }
 
@@ -3538,6 +3589,11 @@ function readDriveRotationState() {
 function clearDriveRotationState() { localStorage.removeItem(DRIVE_BACKUP_ROTATION_STATE_KEY); }
 
 function performDriveBackupUpload(token, accountInfo) {
+  // 這次備份萬一成功，本機最終會寫入的時間——跟內嵌進雲端快照的 driveLastBackupAt
+  // 用同一個值（見 buildCloudBackupPayload() 說明），確保「這份快照裡記載的備份時間」
+  // 就是「這次備份完成的時間」，不是上一次的舊值。resumeDriveRotation 走的是接續上次
+  // 中斷的輪替，沿用上次持久記錄裡的 pendingBackupAt（見下方），不是這裡重新產生的值。
+  const pendingBackupAt = new Date().toISOString();
   // 每次備份前，先檢查上次是否有沒做完的輪替殘留，優先安全接續完成，
   // 不會因為使用者又按了一次「立即備份」就丟掉上次卡住的接續資訊、另起爐灶。
   const leftover = readDriveRotationState();
@@ -3548,13 +3604,13 @@ function performDriveBackupUpload(token, accountInfo) {
     if (!currentFile) {
       // 第一次備份，沒有舊 current 可以搬去 previous，不需要輪替，
       // 直接寫入 current；這一步失敗，current 本來就不存在，不會有「改變原 current」的問題。
-      return uploadAndVerify(DRIVE_BACKUP_FILENAME_CURRENT, buildCloudBackupPayload(), token, null, true).then(function () {
-        finishDriveBackupSuccess(accountInfo);
+      return uploadAndVerify(DRIVE_BACKUP_FILENAME_CURRENT, buildCloudBackupPayload(pendingBackupAt), token, null, true).then(function () {
+        finishDriveBackupSuccess(accountInfo, pendingBackupAt);
       });
     }
     return driveDownloadFile(currentFile.id, token).then(function (oldCurrentContent) {
       return driveFindFileByName(DRIVE_BACKUP_FILENAME_PREVIOUS, token).then(function (previousFile) {
-        const newContent = buildCloudBackupPayload();
+        const newContent = buildCloudBackupPayload(pendingBackupAt);
         // 在真的動 previous 之前，先把「接續這次輪替需要的全部資訊」持久記錄下來——
         // 這一步本身若失敗（例如裝置空間不足），直接中止，current／previous 都完全
         //還沒被碰過，是最安全的失敗點。
@@ -3563,7 +3619,8 @@ function performDriveBackupUpload(token, accountInfo) {
           oldCurrentContent: oldCurrentContent,
           newContent: newContent,
           currentFileId: currentFile.id,
-          previousFileId: previousFile && previousFile.id
+          previousFileId: previousFile && previousFile.id,
+          pendingBackupAt: pendingBackupAt
         });
         if (!stateWritten) throw { type: 'rotation_state_write_failed' };
         return continueDriveRotationFromWritingPrevious(token, accountInfo);
@@ -3584,12 +3641,66 @@ function continueDriveRotationFromWritingPrevious(token, accountInfo) {
     });
 }
 
+// 補正（技術長退回第三次：舊 rotation state 接續後的雲端 current 快照）：接續一筆
+// 「這一輪修正之前」留下的殘留輪替狀態時，rotation.pendingBackupAt 可能完全不存在
+// （那時候還沒有這個欄位），rotation.newContent 內嵌的 state.driveLastBackupAt 也
+// 可能缺漏／為 null（那時候 buildCloudBackupPayload() 還沒有補這個欄位）。如果直接
+// 原樣上傳，即使本機這次事後把 driveLastBackupAt 更新對了，實際上傳到雲端的
+// current.json 內嵌值仍然是空的——下一台裝置復原這份快照時，還是會顯示「從未備份過」，
+// 這是只修好本機畫面、卻留下錯誤雲端快照的半套修正，不能接受。
+// 在真正上傳 current 之前，依序嘗試找出一個可驗證、非憑空捏造的時間來源，需要時才
+// 補進 newContent 內嵌的 state.driveLastBackupAt（已經合法就完全不覆蓋）：
+//   1. rotation.pendingBackupAt——這一輪修正後才有的欄位，本來就合法就直接用。
+//   2. newContent 自己的頂層 createdAt——buildCloudBackupPayload() 一律會寫這個
+//      欄位，代表「這份雲端內容當初是什麼時候組出來的」，新舊版都有，是最可靠的來源。
+//   3. rotation.updatedAt——writeDriveRotationState() 每次寫入都一定會有，代表
+//      「這筆殘留輪替紀錄最後一次被更新的時間」，是最後一道防線，正常情況下用不到，
+//      因為前兩個來源理論上至少會有一個存在。
+// 回傳的 pendingBackupAt 也會拿去更新本機 state.driveLastBackupAt（見下方呼叫處），
+// 確保「本機記錄的備份時間」跟「這次真正上傳到雲端 current.json 裡的值」永遠一致。
+// 補正（技術長最終複審：損壞 rotation state 必須 fail safe）：三個時間來源
+// （pendingBackupAt／newContent 的 createdAt／rotation.updatedAt）都缺漏或不合法時，
+// 原本會 fallback 成 new Date().toISOString()——這等於替一筆真假都無法證明的殘留
+// 狀態背書，讓使用者以為這是一次「剛剛發生」的成功備份，但實際上完全無法確認這份
+// 內容是什麼時候產生的。這種情況下唯一誠實、安全的做法是整個接續流程直接失敗：
+// 不上傳、不清除 rotation state、不更新本機 driveLastBackupAt、不增加備份次數、
+// 不顯示成功——這裡改成拋出明確、可辨識的錯誤（invalid_rotation_backup_time），
+// 讓呼叫端整個中止，保留原始殘留狀態方便之後人工診斷或安全處理。
+function ensureRotationContentHasValidDriveLastBackupAt(rotation) {
+  let parsed;
+  try { parsed = JSON.parse(rotation.newContent); } catch (e) { parsed = null; }
+  const embedded = parsed && parsed.state && parsed.state.driveLastBackupAt;
+  if (isValidTimestampString(embedded)) {
+    // 已經是合法時間，不覆蓋——不管是這一輪修正後正常寫入的，還是巧合本來就有效。
+    const pendingBackupAt = isValidTimestampString(rotation.pendingBackupAt) ? rotation.pendingBackupAt : embedded;
+    return { content: rotation.newContent, pendingBackupAt: pendingBackupAt };
+  }
+  const derivedAt = (isValidTimestampString(rotation.pendingBackupAt) && rotation.pendingBackupAt)
+    || (parsed && isValidTimestampString(parsed.createdAt) && parsed.createdAt)
+    || (isValidTimestampString(rotation.updatedAt) && rotation.updatedAt)
+    || null;
+  if (!derivedAt) {
+    // 三個來源全部無效：不得用 new Date() 捏造時間，直接視為這筆殘留輪替狀態已經
+    // 損壞到無法安全接續，中止整個流程（見上方說明）。
+    throw { type: 'invalid_rotation_backup_time' };
+  }
+  if (!parsed || !parsed.state) {
+    // newContent 本身格式異常（理論上不會發生）：這裡沒辦法安全補值，原樣傳回，
+    // 交由 uploadAndVerify() 之後的雲端格式驗證判斷是否失敗——這是既有機制已經涵蓋
+    // 的另一種失敗，不屬於這次「備份時間無法證明」的 fail-safe 範圍。
+    return { content: rotation.newContent, pendingBackupAt: derivedAt };
+  }
+  parsed.state.driveLastBackupAt = derivedAt;
+  return { content: JSON.stringify(parsed), pendingBackupAt: derivedAt };
+}
+
 function continueDriveRotationFromWritingCurrent(token, accountInfo) {
   const rotation = readDriveRotationState();
-  return uploadAndVerify(DRIVE_BACKUP_FILENAME_CURRENT, rotation.newContent, token, rotation.currentFileId, true)
+  const prepared = ensureRotationContentHasValidDriveLastBackupAt(rotation);
+  return uploadAndVerify(DRIVE_BACKUP_FILENAME_CURRENT, prepared.content, token, rotation.currentFileId, true)
     .then(function () {
       clearDriveRotationState();
-      finishDriveBackupSuccess(accountInfo);
+      finishDriveBackupSuccess(accountInfo, prepared.pendingBackupAt);
     });
 }
 
@@ -3619,10 +3730,14 @@ function uploadAndVerify(filename, content, token, existingFileId, isCurrentFile
   });
 }
 
-function finishDriveBackupSuccess(accountInfo) {
+// pendingBackupAt：跟這次上傳的雲端快照內嵌的 driveLastBackupAt 用同一個值（見
+// buildCloudBackupPayload()／performDriveBackupUpload() 說明），確保本機記錄的
+// 「這次備份時間」跟雲端快照裡記載的完全一致。沒有傳入時（理論上不會發生，保留
+// 純粹是防呆）才退回用當下時間，避免留下 undefined。
+function finishDriveBackupSuccess(accountInfo, pendingBackupAt) {
   state.driveAccountEmail = accountInfo.email;
   state.driveAccountSub = accountInfo.sub;
-  state.driveLastBackupAt = new Date().toISOString();
+  state.driveLastBackupAt = pendingBackupAt || new Date().toISOString();
   recordSuccessfulDriveBackup();
   render();
   showToast('已備份到 Google Drive（' + formatDateTime(state.driveLastBackupAt) + '）');
@@ -3735,6 +3850,18 @@ function confirmApplyDriveRestore() {
   ensureNewFields(newState);
   newState.driveAccountEmail = ctx.accountInfo.email;
   newState.driveAccountSub = ctx.accountInfo.sub;
+  // 補正（技術長退回第三次：舊雲端備份相容）：舊版 buildCloudBackupPayload() 沒有內嵌
+  // driveLastBackupAt（或內嵌的是「上一次」的舊值／null，見上方說明），這裡拿這份雲端
+  // payload 本身的 createdAt（上傳當下組出這份內容的時間，parseCloudBackupPayload()
+  // 已經解析出來放在 ctx.parsed.createdAt）補上，避免復原後主資料裡的
+  // driveLastBackupAt 是空的，導致「剛復原成功」跟「資料安全中心／Google Drive 區塊
+  // 仍顯示從未備份過」互相矛盾。必須在下面計算 fingerprint 之前完成——這樣「這次還原
+  // 真正套用的內容」跟拿去驗證、之後拿去比對的指紋才會是同一份，順序上不能顛倒。
+  // 只在 driveLastBackupAt 缺漏／null／不是合法時間時才補，已經有合法值的新版備份
+  // 不受影響、不覆蓋。
+  if (!isValidTimestampString(newState.driveLastBackupAt) && isValidTimestampString(ctx.parsed.createdAt)) {
+    newState.driveLastBackupAt = ctx.parsed.createdAt;
+  }
   // 關鍵修正：在真正呼叫 saveState() 之前，先把「即將套用的這份資料」的指紋持久寫下來
   // （phase='applying'）。這一步比 saveState() 更早，所以即使 saveState() 成功後、
   // 下一行 phase 推進之前就中斷，這個 expectedFingerprint 也已經確實存在，
@@ -3834,8 +3961,16 @@ function showDriveError(err, fallbackMessage) {
   if (err && err.type === 'gis_not_loaded') { showToast('Google 服務載入失敗，請檢查網路連線後重新整理。'); return; }
   if (err && err.type === 'popup_closed') { showToast('Google 登入視窗已關閉，這次操作尚未完成。你可以稍後再試一次。'); return; }
   if (err && err.type === 'popup_failed_to_open') { showToast('無法開啟 Google 登入視窗，請確認瀏覽器沒有封鎖快顯視窗後再試一次。'); return; }
+  // 這裡刻意用「這次操作沒有完成」這種操作中性的說法（跟 popup_closed 用同一種語氣），
+  // 因為 requestDriveAccessToken() 同時被備份／復原兩種流程呼叫——寫死「沒有建立備份」
+  // 這種只適用備份情境的字眼，會在使用者其實是在嘗試復原時顯示不合語意的訊息。
+  if (err && err.type === 'auth_timeout') { showToast('尚未完成 Google 授權，這次操作沒有完成，請重新嘗試。'); return; }
   if (err && err.type === 'oauth_error') { showToast('尚未完成 Google 帳號授權，可以再試一次。'); return; }
   if (err && err.type === 'gis_error') { showToast('這次操作尚未完成，可以稍後再試一次。'); return; }
+  // 殘留輪替狀態損壞到無法證明備份時間（見 ensureRotationContentHasValidDriveLastBackupAt()）：
+  // 誠實告知「這次沒有建立備份」，不宣稱失敗原因是使用者操作，也不宣稱資料損壞（本機資料
+  // 本身完全沒有被更動），單純是這筆殘留的雲端輪替紀錄目前沒辦法安全接續。
+  if (err && err.type === 'invalid_rotation_backup_time') { showToast('偵測到未完成的雲端備份資料異常，本次沒有建立備份，請重新嘗試。'); return; }
   if (err && (err.status === 401 || (err.status === 403 && err.reason !== 'rateLimitExceeded' && err.reason !== 'userRateLimitExceeded'))) {
     showToast('Google Drive 連線已過期或權限不足，請重新連接。');
     return;
