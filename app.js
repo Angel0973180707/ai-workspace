@@ -257,11 +257,17 @@ const FLOWS = {
   // 「腳本」一次產出含開場鉤子與字卡重點的完整文字，不用分三步；發布文案／作品打磨
   // 移除（每個 Flow 只完成一種 Deliverable，作品打磨已有 Polish Studio 通用機制涵蓋）；
   // 「製作影片」比照歌曲 Flow「製作歌曲」，不是 AI 寫文字，是帶著已完成內容去外部工具動手做。
+  //
+  // Video Workflow vNext（CEO 核准）：新增「配音與字幕」步驟，插在「腳本」與「製作影片」
+  // 之間——這是本輪真人測試發現的必做項目（逐幕配音稿／語氣／語速停頓／字幕），不是
+  // 資料契約或畫面骨架，是真正呼叫 AI 產出正式文字的一步。「製作影片」維持在陣列最後一個，
+  // MVD／isWorkComplete() 判斷「最後一步」的既有邏輯不受影響。
   video: {
     id: 'video', name: '影片製作流程',
     steps: [
       { name: '主題', role: '規劃師', category: '影片' },
       { name: '腳本', role: '寫作師', category: '腳本' },
+      { name: '配音與字幕', role: '寫作師', category: '腳本' },
       { name: '製作影片', role: '工程師', category: '影片' }
     ]
   },
@@ -517,6 +523,20 @@ const CREATIVE_PREFERENCE_CATEGORIES = {
       { id: 'medium', label: '中', default: true, productPhrase: '節奏舒服、不匆忙' },
       { id: 'fast', label: '快', productPhrase: '明快有活力、容易吸引注意' }
     ] },
+    // Video Workflow vNext（Style Anchor 補齊）：新增「配音性格」「語速」兩類，
+    // 給「配音與字幕」步驟跟單幕重做用，其餘既有 5 類完全不動，沿用同一套選單／
+    // 預設值／相容機制（舊工作沒有這兩個欄位時，resolveCreativePreferences() 已有的
+    // Object.assign 合併邏輯會自動補上系統預設，不需要另外寫遷移程式碼）。
+    { key: 'voiceCharacter', label: '配音性格', options: [
+      { id: 'warm', label: '溫暖親切', default: true, productPhrase: '聲音溫暖、像朋友在說話' },
+      { id: 'professional', label: '專業穩重', productPhrase: '聲音沉穩、值得信任' },
+      { id: 'playful', label: '活潑俏皮', productPhrase: '聲音輕快、帶點活力' }
+    ] },
+    { key: 'voicePace', label: '語速', options: [
+      { id: 'slow', label: '慢', productPhrase: '講話速度放慢、方便聽清楚' },
+      { id: 'medium', label: '中', default: true, productPhrase: '講話速度適中、自然順暢' },
+      { id: 'fast', label: '快', productPhrase: '講話速度稍快、明快有節奏' }
+    ] },
     // 「避免」這個類別 CEO 沒有指定預設值（跟其他類別不同），保持沒有預設選項，
     // 使用者沒有主動選擇時，注入文字跟作品語言裡都不會出現這個類別，不是 bug
     { key: 'avoid', label: '避免', options: [
@@ -531,7 +551,7 @@ const CREATIVE_PREFERENCE_CATEGORIES = {
 // 情緒／色調類的感受詞最能代表整體印象排最前面，「避免」本質是限制不是感受，排最後、最少入選
 const CREATIVE_PREFERENCE_PRIORITY = {
   song: ['mood', 'tempo', 'vocal', 'instrument', 'avoid'],
-  video: ['tone', 'visual', 'light', 'tempo', 'avoid']
+  video: ['tone', 'visual', 'light', 'tempo', 'voiceCharacter', 'voicePace', 'avoid']
 };
 
 function defaultCreativePreferences(flowId) {
@@ -643,6 +663,291 @@ function parseVideoScriptSections(content) {
   if (imagesMatch && imagesMatch[1].trim()) sections.images = imagesMatch[1].trim();
   if (styleMatch && styleMatch[1].trim()) sections.style = styleMatch[1].trim();
   return sections;
+}
+
+// ═════════════════════════════════════════════════════════════
+// Master Script ／ Style Anchor（Video Workflow vNext，CEO 核准實作）
+// 正式原則（CEO 明確裁示，不得違反）：
+//   state.results[].content 是唯一的正式成果來源；work.masterScript 是每次該成果
+//   被保存或更新時，同一個操作內同步解析出的結構化索引，本身永遠不能被單獨編輯，
+//   也不能跟正式成果不同步。解析失敗時完全不更新 work.masterScript、不指向新內容，
+//   保留上一個合法版本（或維持 null），避免下游任何步驟讀到「格式錯誤但被誤判成功」
+//   的內容。
+//
+// 延伸既有 parseVideoScriptSections() 的中文全形括號標記慣例，改成逐幕結構——沿用
+// 同一套「用標記切分文字」的技術，不是發明新的資料格式或解析技術。
+// ═════════════════════════════════════════════════════════════
+
+const MASTER_SCRIPT_OVERVIEW_FIELDS = [
+  { key: 'purpose', label: '目的' },
+  { key: 'audience', label: '觀眾' },
+  { key: 'lengthRange', label: '長度' },
+  { key: 'mainThread', label: '主軸' },
+  { key: 'narrativeTone', label: '敘事調性' },
+  { key: 'characterProfile', label: '主要人物設定' },
+  { key: 'musicDirection', label: '音樂方向' }
+];
+const MASTER_SCRIPT_SCENE_FIELDS = [
+  { key: 'narration', label: '旁白／文案' },
+  { key: 'subtitle', label: '字幕' },
+  { key: 'visualIntent', label: '畫面意圖' },
+  { key: 'estimatedSeconds', label: '預估秒數' },
+  { key: 'mood', label: '情緒與語氣' },
+  { key: 'materialNeeds', label: '素材需求' },
+  { key: 'imagePrompt', label: '圖片 Prompt' },
+  { key: 'videoPrompt', label: '影片 Prompt' }
+];
+const VOICEOVER_SCENE_FIELDS = [
+  { key: 'voiceoverScript', label: '配音稿' },
+  { key: 'tone', label: '配音語氣' },
+  { key: 'paceNotes', label: '語速與停頓' },
+  { key: 'subtitle', label: '字幕' }
+];
+
+// 抓「標籤：內容」這一行到下一個「中文標籤：」或區塊結尾之前的所有內容（允許內容跨行）。
+function extractLabeledField(block, label) {
+  const pattern = new RegExp(label + '[：:]([\\s\\S]*?)(?=\\n[^\\n]{1,12}[：:]|$)');
+  const m = block.match(pattern);
+  return m ? m[1].trim() : '';
+}
+
+// 解析「腳本」步驟的正式輸出。要求格式：
+// 【總覽】\n目的：……\n觀眾：……\n長度：……\n主軸：……\n敘事調性：……\n主要人物設定：……\n音樂方向：……
+// 【第1幕｜幕名稱】\n旁白／文案：……\n字幕：……\n畫面意圖：……\n預估秒數：……\n情緒與語氣：……\n素材需求：……\n圖片 Prompt：……\n影片 Prompt：……
+// 【第2幕｜……】……
+// 缺少【總覽】、缺少目的／主軸、一幕都沒抓到、或任一幕缺旁白／畫面意圖，都視為格式不完整，
+// 回傳 valid:false，呼叫端必須保留舊版本、不得推進步驟（見 submitPasteBack() 的腳本分支）。
+function parseMasterScript(content) {
+  if (!content) return { valid: false };
+  const overviewMatch = content.match(/【總覽】([\s\S]*?)(?=【第\d+幕|$)/);
+  if (!overviewMatch) return { valid: false };
+  const overview = {};
+  MASTER_SCRIPT_OVERVIEW_FIELDS.forEach(function (f) { overview[f.key] = extractLabeledField(overviewMatch[1], f.label); });
+  if (!overview.purpose || !overview.mainThread) return { valid: false };
+
+  const scenes = [];
+  const sceneRegex = /【第(\d+)幕(?:｜([^】]*))?】([\s\S]*?)(?=【第\d+幕|$)/g;
+  let m;
+  while ((m = sceneRegex.exec(content)) !== null) {
+    const block = m[3];
+    const scene = { sceneNo: parseInt(m[1], 10), sceneName: (m[2] || '').trim() };
+    MASTER_SCRIPT_SCENE_FIELDS.forEach(function (f) { scene[f.key] = extractLabeledField(block, f.label); });
+    scenes.push(scene);
+  }
+  if (scenes.length === 0) return { valid: false };
+  const allScenesValid = scenes.every(function (s) { return s.narration && s.visualIntent; });
+  if (!allScenesValid) return { valid: false };
+
+  return {
+    valid: true, purpose: overview.purpose, audience: overview.audience, lengthRange: overview.lengthRange,
+    mainThread: overview.mainThread, narrativeTone: overview.narrativeTone, characterProfile: overview.characterProfile,
+    musicDirection: overview.musicDirection, scenes: scenes
+  };
+}
+
+// 解析「配音與字幕」步驟的正式輸出。格式：【第1幕】\n配音稿：……\n配音語氣：……\n語速與停頓：……\n字幕：……
+// 幕數必須完整涵蓋目前 Master Script 的每一幕（多幕沒關係，忽略多出來的；少幕視為不完整）。
+function parseVoiceoverAndSubtitles(content, masterScript) {
+  if (!content || !masterScript || !masterScript.scenes || masterScript.scenes.length === 0) return { valid: false };
+  const scenes = [];
+  const sceneRegex = /【第(\d+)幕[^】]*】([\s\S]*?)(?=【第\d+幕|$)/g;
+  let m;
+  while ((m = sceneRegex.exec(content)) !== null) {
+    const block = m[2];
+    const scene = { sceneNo: parseInt(m[1], 10) };
+    VOICEOVER_SCENE_FIELDS.forEach(function (f) { scene[f.key] = extractLabeledField(block, f.label); });
+    scenes.push(scene);
+  }
+  if (scenes.length === 0) return { valid: false };
+  const allValid = scenes.every(function (s) { return s.voiceoverScript; });
+  if (!allValid) return { valid: false };
+  const sceneNos = scenes.map(function (s) { return s.sceneNo; });
+  const allScenesCovered = masterScript.scenes.every(function (s) { return sceneNos.indexOf(s.sceneNo) !== -1; });
+  if (!allScenesCovered) return { valid: false };
+  return { valid: true, scenes: scenes };
+}
+
+// Style Anchor＝呈現形式／敘事調性／視覺風格／人物設定／色調／光線／畫面比例／畫面節奏／
+// 配音性格／語速／音樂方向／避免事項 12 項的集合，刻意不建立第二套資料——全部從既有的
+// work.videoType／work.imageRatio／creativePreferences（含這次新增的配音性格／語速兩類）
+// ＋隨 Master Script 一起產出的 3 個文字欄位（敘事調性／人物設定／音樂方向）組成。
+//
+// CEO 核准的最終校準：Master Script 確認成功的當下，必須把「當下」的 Style Anchor 完整
+// 凍結存進 work.masterScript.styleAnchorSnapshot，往後圖片/影片 Prompt、配音與字幕、
+// 單幕重做、剪輯交接一律讀這份快照，不得讀取當下可能已被使用者改掉的即時 Creative
+// Preferences——否則使用者事後調整偏好設定，會讓已確認的影片內容被悄悄改變語氣或風格。
+function buildStyleAnchorSnapshot(work, masterScriptFields) {
+  return {
+    videoType: work.videoType || null,
+    imageRatio: work.imageRatio || null,
+    creativePreferences: resolveCreativePreferences(work),
+    narrativeTone: masterScriptFields.narrativeTone || '',
+    characterProfile: masterScriptFields.characterProfile || '',
+    musicDirection: masterScriptFields.musicDirection || '',
+    capturedAt: new Date().toISOString()
+  };
+}
+
+// 把快照組成一段文字，注入下游 Prompt。所有下游步驟一律呼叫這個函式（透過
+// getConfirmedStyleAnchorText()），不得直接呼叫 buildCreativePreferencesText() 或直接讀
+// work.videoType／work.imageRatio，避免繞過快照讀到之後被改掉的即時設定。
+function buildStyleAnchorText(snapshot) {
+  if (!snapshot) return '（尚未建立風格設定快照）';
+  const typeInfo = VIDEO_TYPES.find(function (t) { return t.id === snapshot.videoType; });
+  const ratioInfo = VIDEO_RATIO_OPTIONS.find(function (r) { return r.id === snapshot.imageRatio; });
+  const categories = CREATIVE_PREFERENCE_CATEGORIES.video;
+  const prefLines = categories.map(function (cat) {
+    const chosenId = snapshot.creativePreferences && snapshot.creativePreferences[cat.key];
+    if (!chosenId) return null;
+    const opt = cat.options.find(function (o) { return o.id === chosenId; });
+    return opt ? '・' + cat.label + '：' + opt.label : null;
+  }).filter(Boolean);
+
+  let text = '這支影片已確認的 Style Anchor（全片共用，往後每一幕都要沿用同一組設定，不得自行更改）：\n';
+  text += '・呈現形式：' + (typeInfo ? typeInfo.label : '（未設定）') + '\n';
+  text += '・畫面比例：' + (ratioInfo ? ratioInfo.label : '（未設定）') + '\n';
+  if (prefLines.length) text += prefLines.join('\n') + '\n';
+  if (snapshot.narrativeTone) text += '・敘事調性：' + snapshot.narrativeTone + '\n';
+  if (snapshot.characterProfile) text += '・主要人物設定：' + snapshot.characterProfile + '\n';
+  if (snapshot.musicDirection) text += '・音樂方向：' + snapshot.musicDirection + '\n';
+  if (snapshot.creativePreferences && snapshot.creativePreferences.custom && snapshot.creativePreferences.custom.trim()) {
+    text += '・使用者自訂偏好：' + snapshot.creativePreferences.custom.trim() + '\n';
+  }
+  return text.trim();
+}
+
+// 唯一負責把「腳本」步驟的正式 Result 同步成結構化 work.masterScript 的地方。
+// 呼叫時機：submitPasteBack() 確認一筆新的合法內容時、以及 getMasterScript() 發現目前
+// 指向的正式 Result 跟 work.masterScript 記錄的來源對不上時（自我校正）。解析失敗時
+// 完全不動 work.masterScript（保留上一個合法版本，或維持 null）——這個函式本身只負責
+// 「同步」，不負責「擋流程」，擋流程的判斷交給呼叫端（submitPasteBack）。
+function syncMasterScriptFromResult(work, result) {
+  const parsed = parseMasterScript(result.content);
+  if (!parsed.valid) return false;
+  const snapshot = buildStyleAnchorSnapshot(work, parsed);
+  work.masterScript = {
+    sourceResultId: result.id,
+    sourceVersion: result.version,
+    purpose: parsed.purpose, audience: parsed.audience, lengthRange: parsed.lengthRange, mainThread: parsed.mainThread,
+    narrativeTone: parsed.narrativeTone, characterProfile: parsed.characterProfile, musicDirection: parsed.musicDirection,
+    scenes: parsed.scenes,
+    styleAnchorSnapshot: snapshot,
+    voiceoverSourceResultId: null, voiceoverSourceVersion: null
+  };
+  return true;
+}
+
+// 同步「配音與字幕」步驟的正式 Result 到 work.masterScript.scenes[].voiceover。
+// 防止舊配音字幕內容被誤套在重新產生過的新版 Master Script 上：只接受
+// result.masterScriptResultId（配音字幕成果保存當下記錄的來源母稿 id）跟目前
+// work.masterScript.sourceResultId 完全相同的成果，對不上就視為「這一版母稿還沒有
+// 對應的配音字幕」，不強行套用——這不是完整的連動追蹤系統，只是單一個版本標記比對，
+// 使用者重新確認腳本後，需要自己重新做一次配音與字幕（MVP 範圍明確排除自動連動）。
+function syncVoiceoverFromResult(work, result) {
+  if (!work.masterScript) return false;
+  if (result.masterScriptResultId !== work.masterScript.sourceResultId) return false;
+  const parsed = parseVoiceoverAndSubtitles(result.content, work.masterScript);
+  if (!parsed.valid) return false;
+  work.masterScript.scenes.forEach(function (scene) {
+    const voice = parsed.scenes.find(function (s) { return s.sceneNo === scene.sceneNo; });
+    if (voice) scene.voiceover = { voiceoverScript: voice.voiceoverScript, tone: voice.tone, paceNotes: voice.paceNotes, subtitle: voice.subtitle };
+  });
+  work.masterScript.voiceoverSourceResultId = result.id;
+  work.masterScript.voiceoverSourceVersion = result.version;
+  return true;
+}
+
+// 下游（圖片/影片 Prompt 顯示、配音與字幕、單幕重做、剪輯交接）一律呼叫這個函式讀取
+// Master Script，不直接讀 work.masterScript——這裡會先確認目前指向的正式 Result
+// 有沒有變動，變動就自我校正重新同步一次，保證讀到的永遠是「腳本」步驟目前確認的
+// 最新版本，不會有下游讀到舊版本的風險（比照還原交易的 fingerprint 比對精神）。
+function getMasterScript(work) {
+  if (!work || work.flowId !== 'video') return null;
+  const scriptIdx = FLOWS.video.steps.findIndex(function (s) { return s.name === '腳本'; });
+  const scriptResultId = work.stepResultIds[scriptIdx];
+  const scriptResult = scriptResultId ? state.results.find(function (r) { return r.id === scriptResultId; }) : null;
+  if (scriptResult && (!work.masterScript || work.masterScript.sourceResultId !== scriptResult.id)) {
+    syncMasterScriptFromResult(work, scriptResult);
+  }
+  if (!work.masterScript) return null;
+
+  const voiceIdx = FLOWS.video.steps.findIndex(function (s) { return s.name === '配音與字幕'; });
+  if (voiceIdx >= 0) {
+    const voiceResultId = work.stepResultIds[voiceIdx];
+    const voiceResult = voiceResultId ? state.results.find(function (r) { return r.id === voiceResultId; }) : null;
+    if (voiceResult && work.masterScript.voiceoverSourceResultId !== voiceResult.id) {
+      syncVoiceoverFromResult(work, voiceResult);
+    }
+  }
+  return work.masterScript;
+}
+
+function getConfirmedStyleAnchorText(work) {
+  const ms = getMasterScript(work);
+  if (!ms) return '（尚未確認影片母稿與風格設定）';
+  return buildStyleAnchorText(ms.styleAnchorSnapshot);
+}
+
+// 給「創作偏好」設定畫面用：使用者在 Master Script 已確認之後又調整了 Creative
+// Preferences／影片類型／畫面比例時，回傳 true——只用來顯示提醒，不自動改變已確認的
+// 影片內容，使用者要套用新偏好必須重新產生或重新確認「腳本」步驟，才會建立新的快照。
+function styleAnchorOutOfSync(work) {
+  const ms = getMasterScript(work);
+  if (!ms || !ms.styleAnchorSnapshot) return false;
+  const snap = ms.styleAnchorSnapshot;
+  const live = resolveCreativePreferences(work);
+  const snapPrefs = snap.creativePreferences || {};
+  const prefsChanged = Object.keys(live).some(function (k) { return live[k] !== snapPrefs[k]; });
+  const typeChanged = (work.videoType || null) !== snap.videoType;
+  const ratioChanged = (work.imageRatio || null) !== snap.imageRatio;
+  return prefsChanged || typeChanged || ratioChanged;
+}
+
+// 把 work.masterScript 重新組成「腳本」步驟原本要求的正式格式文字。單幕重做（見
+// submitSceneRegenerate()）不直接改 work.masterScript 那一個欄位——會先合併新內容，
+// 再整份重新產生文字、存成「腳本」這一步的新版本、重新走一次 syncMasterScriptFromResult()，
+// 確保 state.results[].content 永遠是唯一正式來源，work.masterScript 只是它的衍生索引
+// （CEO 核准的「單一主資料」原則），不會出現母稿跟正式成果內容對不起來的狀況。
+function renderMasterScriptText(ms) {
+  let text = '【總覽】\n';
+  MASTER_SCRIPT_OVERVIEW_FIELDS.forEach(function (f) { text += f.label + '：' + (ms[f.key] || '') + '\n'; });
+  ms.scenes.forEach(function (scene) {
+    text += '\n【第' + scene.sceneNo + '幕｜' + (scene.sceneName || '') + '】\n';
+    MASTER_SCRIPT_SCENE_FIELDS.forEach(function (f) { text += f.label + '：' + (scene[f.key] || '') + '\n'; });
+  });
+  return text.trim();
+}
+
+// 同樣道理，把 work.masterScript.scenes[].voiceover 重新組成「配音與字幕」步驟的正式格式文字。
+function renderVoiceoverText(ms) {
+  let text = '';
+  ms.scenes.forEach(function (scene) {
+    text += '【第' + scene.sceneNo + '幕】\n';
+    VOICEOVER_SCENE_FIELDS.forEach(function (f) { text += f.label + '：' + ((scene.voiceover && scene.voiceover[f.key]) || '') + '\n'; });
+    text += '\n';
+  });
+  return text.trim();
+}
+
+// 單幕重做（MVP 邊界，CEO 核准範圍）：只解析「這一幕＋這個面向」的小範圍回應，
+// 不要求使用者重貼整份母稿。格式：
+// 圖片／影片：【第N幕｜圖片 Prompt】或【第N幕｜影片 Prompt】＋內容
+// 配音與字幕：【第N幕｜配音與字幕】＋VOICEOVER_SCENE_FIELDS 格式
+function parseSceneRegenerateResponse(content, sceneNo, aspect) {
+  if (!content) return { valid: false };
+  const label = aspect === 'image' ? '圖片 Prompt' : aspect === 'video' ? '影片 Prompt' : '配音與字幕';
+  const re = new RegExp('【第' + sceneNo + '幕｜' + label + '】([\\s\\S]*)');
+  const m = content.match(re);
+  if (!m) return { valid: false };
+  const block = m[1].trim();
+  if (aspect === 'voiceover') {
+    const scene = {};
+    VOICEOVER_SCENE_FIELDS.forEach(function (f) { scene[f.key] = extractLabeledField(block, f.label); });
+    if (!scene.voiceoverScript) return { valid: false };
+    return { valid: true, voiceover: scene };
+  }
+  if (!block) return { valid: false };
+  return { valid: true, text: block };
 }
 
 // ── Tool Companion（Sprint 3）─────────────────────────────────
@@ -895,13 +1200,52 @@ function buildDefaultPromptTemplates() {
     '你是商品行銷流程中的海報視覺設計師。\n\n請根據以下已完成的海報文案，直接完成一份完整、可以直接使用的視覺設計內容，讓使用者可以直接帶去圖片工具生成海報。\n\n商品／工作名稱：{{work_name}}\n目前步驟：{{step_name}}\n\n已有成果（含海報文案）：\n{{previous_results}}\n\n每個版本都務必依照以下兩個區塊格式輸出，保留【】標題文字（這是為了讓使用者的工作台能自動分開顯示，請勿省略或改變標題文字）：\n\n【圖片生成請求】\n**直接寫成一句完整的圖片生成請求，開頭就要是「請直接生成一張海報」這種明確要求動手生成的語氣，不是描述或建議**（例如「請直接生成一張海報：主標題『……』、副標題『……』，暖色調背景，簡約排版，把文字清楚放進畫面裡」），把海報文案的主標題／副標題／必要資訊明確寫進這句請求裡。這句話之後會被使用者原封不動貼給另一個 AI 或工具，如果那個 AI／工具本身具備生成圖片的能力，看到這句話就應該直接動手生成海報圖片，而不是回覆文字描述、方向建議或排版說明；如果不具備生成圖片能力，這句話仍然要清楚到可以直接複製貼進 Canva、Gemini 等其他工具使用。讓使用者能整段複製，不需要自己補充或重新組織文字。\n\n【風格建議】\n用 1-2 句話描述適合這張海報的整體視覺風格（例如色調、排版、氛圍），可以直接附加在圖片生成請求後面一起使用。\n\n這份內容會直接被使用者帶去圖片工具製作，內容要具體到可以直接生成，不是抽象的方向建議。兩個版本請給不同的視覺切角，不要只是換幾個字。' +
     abPolishModeBlock('（依上面兩個【】區塊格式完整輸出）', '完整內容')));
 
-  list.push(tpl('flow_specific', '規劃師', 'video', '主題', '影片製作／主題發想',
-    '你是影片製作流程中的主題發想夥伴。\n\n請根據使用者這次想拍的影片，快速幫忙定調，不要過度規劃——這一步的目的是快速抓到方向，馬上進入腳本撰寫，不是寫企劃書。\n\n影片／工作名稱：{{work_name}}\n\n已有成果：\n{{previous_results}}\n\n每個版本都要包含：\n1. 這支影片的核心主題（1-2句話講清楚就好）\n2. 適合的情緒或氣氛\n3. 一個可能的畫面或情境（簡短即可，不用寫完整分鏡）\n\n每個版本整體控制在 150 字以內，目標是盡快進入下一步（腳本撰寫），不是把主題想到完美。兩個版本請給不同的切角，不要只是換幾個字。' +
-    abPolishModeBlock('（依上面三點格式輸出，150 字以內）', '這個版本的主題內容')));
+  // Video Workflow vNext（CEO 核准）：「主題」步驟改為引導式協作——不是丟開放式問題
+  // 讓使用者自己想，而是 AI 先判斷目的／觀眾，資訊足夠就直接給 2-3 組「文案方向＋
+  // 影片風格」組合（各附差異／適用情境／短範例），使用者在同一個外部對話裡選擇、
+  // 混搭或微調，最後只回填一次「確定方向」。這整段漸進協作發生在外部 AI 對話視窗
+  // 裡（比照既有「歌名＋歌詞」模板的多輪對話設計），不是在工作台內新增好幾個確認
+  // 畫面——App 畫面數量不因為引導式協作而增加。
+  list.push(tpl('flow_specific', '規劃師', 'video', '主題', '影片製作／方向顧問',
+    '你是影片製作流程中的方向顧問。\n\n請根據使用者這次想拍的影片，先判斷目的與觀眾，再直接給出方向，不要用一堆開放式問題讓使用者自己想清楚。\n\n影片／工作名稱：{{work_name}}\n已有成果／工作 Brief（若有）：\n{{previous_results}}\n\n請依序完成：\n\n' +
+    '1. 先用 1-2 句話判斷這支影片可能的「目的」（例如：分享生活／推廣商品／記錄回憶／品牌宣傳）與「觀眾」（例如：親友／潛在客戶／一般大眾）。如果現有資訊已經足夠判斷，直接寫出你的判斷，不要用問句；只有目的或觀眾完全無法判斷時，才用最多 1-2 個問題請使用者補充，不要為了想更完整就一直追問。\n\n' +
+    '2. 接著直接提供 2-3 組「文案方向＋影片風格」組合，每組都要包含：\n   - 方向名稱（例如：溫馨陪伴／輕快活力／專業質感）\n   - 核心主軸（1-2句話）\n   - 適合情境（例如：適合想營造親近感的品牌／適合節奏明快的商品介紹）\n   - 簡短範例（1-2句實際的文案語氣範例，讓使用者感受差異，不是抽象形容詞堆砌）\n\n' +
+    '3. 完成後只需要輸出：\n\n請選擇你最喜歡的方向，也可以直接說「混合 A 跟 B」或提出微調想法：\n\n○ 方向 A\n○ 方向 B\n○ 方向 C（若有）\n○ 都不滿意（重新產生）\n\n不要再多問其他問題。\n\n' +
+    '接下來使用者可能：直接選一個方向、要求混搭（例如「A 的主軸但 B 的語氣」）、提出微調想法、或「都不滿意」。請依使用者的回覆調整，直到使用者明確確認一個最終方向為止。使用者確認後，請直接輸出定案內容，固定格式：\n\n' +
+    '【確定方向】\n目的：……\n觀眾：……\n文案方向／敘事調性：……（1-2句話講清楚就好）\n初步風格傾向：……（1-2句話，例如色調、氛圍）\n\n輸出完畢後另起一行加上：「📋 請複製以上「確定方向」，貼回 AI 工作台。」\n\n不要在使用者還沒明確確認前就輸出這個格式，也不要在確認後才附加其他版本或分析。'));
 
-  list.push(tpl('flow_specific', '寫作師', 'video', '腳本', '影片製作／腳本師',
-    '你是影片製作流程中的腳本師。\n\n請根據以下主題，直接完成一份完整、可以直接使用的正式影片腳本與畫面素材建議，不是草稿，也不用使用者再分開準備開場白、字卡或畫面描述。\n\n影片／工作名稱：{{work_name}}\n目前步驟：{{step_name}}\n影片目標：{{goal}}\n\n已有成果：\n{{previous_results}}\n\n每個版本都務必依照以下三個區塊格式輸出，保留【】標題文字，區塊之間空一行（這是為了讓使用者的工作台能自動分開顯示，請勿省略或改變標題文字）：\n\n【腳本】\n完整腳本（含開場、中段、結尾），開場前 3 秒要有抓住注意力的鉤子台詞，並在對應段落標註建議搭配的字卡／旁白重點。\n\n【圖片描述建議】\n抓出這支影片最關鍵的 3-5 個畫面。**每一張都要直接寫成一句完整的圖片生成請求**（例如「請生成一張……的圖片：陽光灑落的木質工作桌，特寫，暖色調」），不是單純的場景描述片語——使用者要能把單獨一句話整段複製，直接貼進 ChatGPT 或 Gemini 就會開始生成圖片，不需要自己補一句「請幫我生成」或重新組織文字。每句都要具體到場景、主體、動作、氛圍都寫清楚，不是抽象的方向。\n\n【風格建議】\n用 1-2 句話描述適合這支影片的整體視覺風格（例如色調、氛圍、質感），這段話也可以直接附加在每一張圖片生成請求後面一起使用。\n\n這份內容會直接被使用者帶去圖片工具與影片工具製作，內容要具體到可以直接照著拍或照著生成，不是抽象的方向建議，節奏要明快，適合第一次拍片的新手掌握。兩個版本請給不同的敘事切角，不要只是換幾個字。' +
-    abPolishModeBlock('（依上面三個【】區塊格式完整輸出）', '完整內容')));
+  // Video Workflow vNext（CEO 核准）：「腳本」步驟改成一次產出完整「影片母稿」
+  // （Master Script）——總覽＋逐幕內容，且每一幕直接附帶圖片／影片 Prompt，不再是
+  // 三段扁平文字。這是唯一一步要求 AI 一次產出較多內容的步驟，因為圖片／影片 Prompt
+  // 需要跟逐幕內容共用同一次生成的風格判斷，不需要另開一次對話重新餵一次風格設定。
+  // 標記格式（【總覽】／【第N幕｜名稱】）由 parseMasterScript() 解析，解析失敗時
+  // submitPasteBack() 會擋下、不推進步驟（見該函式與 CEO 核准的「單一主資料」原則）。
+  list.push(tpl('flow_specific', '寫作師', 'video', '腳本', '影片製作／腳本統籌',
+    '你是影片製作流程中的腳本統籌。\n\n請根據已確定的文案方向與風格設定，直接完成一份完整、正式、可以直接使用的「影片母稿」——包含整體資訊與逐幕內容，不是草稿，也不需要使用者再分開準備旁白、字幕、畫面描述或圖片／影片指令，這一步要一次產出後續所有步驟都能直接引用的正式內容。\n\n' +
+    '影片／工作名稱：{{work_name}}\n目前步驟：{{step_name}}\n影片目標：{{goal}}\n\n已有成果（含確定方向）：\n{{previous_results}}\n\n目前的風格設定（色調／光線／畫面節奏／配音性格／語速等，若使用者在創作偏好調整過，以下面設定為準）：\n{{creative_preferences}}\n\n' +
+    '請注意：這一步是延伸「已確定方向」的具體化，不是重新發想新的主軸或風格——如果前面已經有「確定方向」的內容，逐幕內容與風格必須沿著那個方向具體化，不能另闢新的主題或語氣。\n\n' +
+    '每個版本都務必依照以下格式輸出，保留【】標題文字，區塊之間空一行（這是為了讓使用者的工作台能自動解析逐幕內容，請勿省略或改變標題文字，也不要用 Markdown 的 ** 或 # 包住標題）：\n\n' +
+    '【總覽】\n目的：（1句話）\n觀眾：（1句話）\n長度：（例如：30-60秒）\n主軸：（1-2句話，這支影片最核心想傳達的一句話）\n敘事調性：（1句話，例如：陪伴分享／故事敘事／直接介紹）\n主要人物設定：（若影片有主要人物或角色，1-2句話描述；沒有明確人物就寫「無特定人物」）\n音樂方向：（1句話，例如：溫暖木吉他伴奏／輕快節奏電子樂）\n\n' +
+    '【第1幕｜幕名稱】\n旁白／文案：（這一幕實際要唸出來或顯示的文字，完整句子，不是關鍵字）\n字幕：（跟旁白對應，適合螢幕呈現的簡短版本，如果跟旁白幾乎一樣可以直接寫「同旁白」）\n畫面意圖：（這一幕想呈現的畫面，具體到場景、主體、動作、氛圍）\n預估秒數：（例如：8秒）\n情緒與語氣：（1句話）\n素材需求：（例如：1張人物特寫圖）\n圖片 Prompt：（直接寫成一句完整的圖片生成請求，開頭就是「請直接生成一張……的圖片」這種明確要求動手生成的語氣，把畫面意圖、風格設定的色調／光線都寫進這句話裡，使用者要能整段複製直接貼給圖片工具）\n影片 Prompt：（直接寫成一句完整的圖生影片請求，說明這張圖要怎麼動起來，例如鏡頭運動、動態效果，把畫面節奏也寫進去，使用者要能整段複製直接貼給影片工具）\n\n' +
+    '【第2幕｜幕名稱】\n（格式跟第1幕完全一樣，繼續下一幕）\n\n……（依「長度」設定的合理幕數繼續，通常 3-6 幕，不要為了長度硬湊幕數）\n\n總覽與所有幕都完成後，才進入下面的版本選擇規則。\n\n' +
+    '請直接完成兩個完整、正式、可以直接使用的版本，不是草稿、不是方向、不是分析：\n\n## Version A\n（依上面完整格式輸出【總覽】＋所有幕）\n\n## Version B\n（格式跟 Version A 完全一樣，但敘事切角要有實際差異，不能只換幾個字；兩版的幕數可以不同）\n\n' +
+    '兩個版本都完成後，最後只需要輸出：\n\n請選擇你最喜歡的版本：\n\n○ Version A\n\n○ Version B\n\n○ 都不喜歡（重新產生）\n\n不要再多問其他問題。\n\n' +
+    '接下來使用者只會回覆「A」「B」或「重新產生」：\n- 收到「A」或「B」：請直接重新輸出使用者選的那個版本的完整內容（只要【總覽】＋所有幕本身，不要包含「## Version A」這種版本標題，不要摘要、不要局部修改），輸出完畢後另起一行加上：「📋 請複製以上完整母稿，貼回 AI 工作台。」\n- 收到「重新產生」：請重新完成兩個新的 Version A／Version B，直到使用者選定為止。'));
+
+  // Video Workflow vNext（CEO 核准，本輪真人測試明確要求的必做項目）：「配音與字幕」
+  // 逐幕產出正式配音稿／配音語氣／語速與停頓／字幕，內容必須直接引用上一步「影片母稿」
+  // 裡每一幕的旁白／文案，不得重新創作或改寫內容本身——這是本輪跟「腳本」不一樣的地方：
+  // 「腳本」是產出新內容，「配音與字幕」是把已經定案的文字轉換成適合口白／字幕的格式，
+  // 不是重新發展一套新的文案。標記格式（【第N幕】）由 parseVoiceoverAndSubtitles() 解析，
+  // 幕數必須完整對應 Master Script，解析失敗時 submitPasteBack() 會擋下、不推進步驟。
+  list.push(tpl('flow_specific', '寫作師', 'video', '配音與字幕', '影片製作／配音與字幕指導',
+    '你是影片製作流程中的配音與字幕指導。\n\n請根據下面「影片母稿」裡每一幕已經定案的旁白／文案，直接完成一份完整、正式、可以直接使用的逐幕配音稿與字幕——**不得改寫或重新創作旁白內容本身**，只能把既有文字調整成適合口白唸出來的斷句與節奏，並補上配音語氣、語速與停頓標記、正式字幕。\n\n' +
+    '影片／工作名稱：{{work_name}}\n目前步驟：{{step_name}}\n\n已有成果（含影片母稿，逐幕旁白請直接引用，不要改寫內容）：\n{{previous_results}}\n\n目前的風格設定（配音性格／語速等）：\n{{creative_preferences}}\n\n' +
+    '請針對母稿裡的**每一幕**（幕數要完全對應，不能少幕），依照以下格式輸出，保留【】標題文字，區塊之間空一行（這是為了讓使用者的工作台能自動解析，請勿省略或改變標題文字）：\n\n' +
+    '【第1幕】\n配音稿：（把該幕旁白調整成適合口白唸出來的斷句版本，內容意思必須跟原本旁白一致，只能調整標點、停頓與口語化語氣，不能改變原意或加入新內容）\n配音語氣：（1句話，例如：溫暖、稍微放慢，像在跟朋友分享）\n語速與停頓：（具體標註，例如：整體語速中等；在「……」這句之後停頓約 0.5 秒，加強情緒）\n字幕：（適合螢幕呈現的簡短版本，跟配音稿意思一致；如果字數需要拆成兩行請直接換行呈現）\n\n' +
+    '【第2幕】\n（格式相同，繼續下一幕，直到涵蓋母稿的所有幕）\n\n' +
+    '全部幕都完成後，才進入下面的確認規則。\n\n' +
+    '完成後只需要輸出上面逐幕內容，最後加一行：「📋 請複製以上逐幕配音與字幕，貼回 AI 工作台。」不要多問其他問題，不要提供多個版本選擇（這一步是把已定案內容轉換格式，不需要 A／B 版本挑選）。'));
 
   list.push(tpl('flow_specific', '寫作師', 'ebook', '撰寫', '電子書／內文作者',
     '你是電子書流程中的內文作者。\n\n請根據以下大綱與蒐集的資料，直接完成正式電子書內文，讓使用者可以直接使用，不是草稿。\n\n電子書／工作名稱：{{work_name}}\n目前步驟：{{step_name}}\n電子書目標：{{goal}}\n\n已有成果：\n{{previous_results}}\n\n每個版本都要包含完整章節內文，用詞要白話、避免術語堆疊，讓讀者不用查資料就看得懂。兩個版本請用不同的敘事語氣或切入角度，不要只是換幾個字。' +
@@ -1090,7 +1434,17 @@ function buildContextPack(workId) {
     completed_steps: flow.steps.slice(0, work.currentStepIndex).map(function (s) { return s.name; }).join('、') || '（尚未完成任何步驟）',
     previous_results: buildPreviousResults(workId),
     related_assets: buildRelatedAssets(work.projectId, workId),
-    creative_preferences: buildCreativePreferencesText(work),
+    // Video Workflow vNext：「腳本」步驟確認之後的每一步（配音與字幕、製作影片…），一律讀取
+    // 該次 Master Script 確認當下凍結的 Style Anchor 快照，不讀即時的 Creative Preferences——
+    // 避免使用者事後調整偏好設定，讓已確認的影片內容被悄悄改變語氣或風格（CEO 明確要求）。
+    // 「腳本」步驟本身、以及其他 Flow，都還是讀即時設定，不受影響。
+    creative_preferences: (function () {
+      if (work.flowId === 'video') {
+        const scriptIdx = FLOWS.video.steps.findIndex(function (s) { return s.name === '腳本'; });
+        if (work.currentStepIndex > scriptIdx && getMasterScript(work)) return getConfirmedStyleAnchorText(work);
+      }
+      return buildCreativePreferencesText(work);
+    })(),
     step_instruction: '請以「' + step.role + '」的身份，完成「' + step.name + '」這個步驟。',
     output_format: '請參考下方指令母模的詳細輸出要求。'
   };
@@ -1945,14 +2299,69 @@ function submitPasteBack() {
     parsedSongTitle = validation.title;
   }
 
+  // Video Workflow vNext（CEO 核准的最終校準）：「腳本」步驟的貼回內容必須先驗證能不能
+  // 解析成合法的逐幕 Master Script，才可以：①指向正式 stepResultId ②同步 work.masterScript
+  // ③建立 Style Anchor 快照 ④標記完成 ⑤允許進入下一步。解析失敗時，內容仍然保存下來
+  // （避免使用者的輸入遺失），但不指向正式成果、不推進步驟、不動先前合法的 work.masterScript，
+  // 不允許下游用無效版本繼續——這是 CEO 明確要求「不得發生正式 Result 指向新無效內容，
+  // 但 work.masterScript 仍指向上一個合法版本」的直接落實。
+  if (work.flowId === 'video' && step.name === '腳本') {
+    const parsed = parseMasterScript(content);
+    if (!parsed.valid) {
+      saveUnconfirmedVideoDraft(work, project, step, content, 'isMasterScriptDraft');
+      showPasteBackWarning(escHtml('內容已保留，但尚未成功建立逐幕影片母稿。請確認格式並重新貼回，完成後才能進入下一步。'));
+      return;
+    }
+  }
+  // 「配音與字幕」步驟同樣的道理：必須逐幕對應到目前的 Master Script，且不得改寫旁白內容
+  // 本身（Prompt 已要求 AI 只能調整成口白／字幕格式，這裡只驗證格式與幕數是否完整對應）。
+  if (work.flowId === 'video' && step.name === '配音與字幕') {
+    const ms = getMasterScript(work);
+    const parsed = ms ? parseVoiceoverAndSubtitles(content, ms) : { valid: false };
+    if (!parsed.valid) {
+      saveUnconfirmedVideoDraft(work, project, step, content, 'isVoiceoverDraft');
+      showPasteBackWarning(escHtml('內容已保留，但尚未成功建立逐幕配音與字幕。請確認格式並重新貼回，完成後才能進入下一步。'));
+      return;
+    }
+  }
+
   const r = makeResult(state, work, project, work.currentStepIndex, content, false);
   work.stepResultIds[work.currentStepIndex] = r.id;
   if (parsedSongTitle) work.songTitle = parsedSongTitle;
+  if (work.flowId === 'video' && step.name === '腳本') syncMasterScriptFromResult(work, r);
+  if (work.flowId === 'video' && step.name === '配音與字幕' && work.masterScript) {
+    r.masterScriptResultId = work.masterScript.sourceResultId;
+    syncVoiceoverFromResult(work, r);
+  }
   textarea.value = '';
   saveState();
 
   lastSubmittedResultId = r.id;
   showScreen('screen-satisfaction');
+}
+
+// 貼回內容格式不符時，仍保存為未確認草稿（不遺失使用者輸入），但刻意不呼叫 makeResult()
+// （不進 work.stepVersions 版本歷程、不動 work.stepResultIds），避免草稿被任何既有機制
+// 誤認成正式版本。flagKey 是 'isMasterScriptDraft' 或 'isVoiceoverDraft'，跟既有的
+// isBriefDraft 是同一種「草稿標記」慣例，成果庫／相關成果等既有清單只要延伸同一種
+// 排除寫法（!r.isBriefDraft）就能一併排除，不需要另外新增判斷邏輯。
+function saveUnconfirmedVideoDraft(work, project, step, content, flagKey) {
+  const draft = {
+    id: state.nextResultId++,
+    title: work.name + '｜' + step.name + '（格式待確認）',
+    projectId: project.id, projectName: project.name,
+    workId: work.id, workName: work.name,
+    flowId: work.flowId, flowName: FLOWS[work.flowId].name,
+    stepName: step.name, role: step.role, stepIndex: work.currentStepIndex,
+    ai: suggestedToolForStep(work.flowId, step.role, step.name).name,
+    content: content, category: step.category,
+    completedAt: new Date().toISOString(), isFinal: false,
+    version: 0, satisfaction: null, cloudStatus: 'none'
+  };
+  draft[flagKey] = true;
+  state.results.push(draft);
+  saveState();
+  return draft;
 }
 function pasteBackGoChooseVersion() {
   document.getElementById('pb-ab-warning').style.display = 'none';
@@ -2302,22 +2711,144 @@ function songNextLater() {
 // 不做特定工具的逐步引導（Sprint 3 Tool Companion）。
 let lastMakeVideoScript = '';
 let lastMakeVideoImages = '';
+// Video Workflow vNext：逐幕圖片／影片 Prompt 複製用，key 是 sceneNo（數字）
+let lastSceneImagePrompts = {};
+let lastSceneVideoPrompts = {};
 
 function copyMakeVideoScript() { copyPlainText(lastMakeVideoScript, '已複製腳本，帶去你的影片工具吧'); }
 function copyMakeVideoImages() { copyPlainText(lastMakeVideoImages, '已複製圖片描述與風格，帶去你的圖片工具吧'); }
+function copySceneImagePrompt(sceneNo) { copyPlainText(lastSceneImagePrompts[sceneNo] || '', '已複製第' + sceneNo + '幕的圖片生成指令，帶去你的圖片工具吧'); }
+function copySceneVideoPrompt(sceneNo) { copyPlainText(lastSceneVideoPrompts[sceneNo] || '', '已複製第' + sceneNo + '幕的影片生成指令，帶去你的影片工具吧'); }
 
+// 單幕重做（Video Workflow vNext MVP 邊界）：只改指定這一幕的圖片 Prompt／影片 Prompt／
+// 配音與字幕其中一項，不影響其他幕的母稿內容，也不需要重貼整份母稿——這是 CEO 核准的
+// 「單幕重做」範圍，刻意不做完整素材版本管理／自動連動影響追蹤／自動呼叫外部工具。
+let sceneRegenerateState = null; // { sceneNo, aspect: 'image'|'video'|'voiceover', returnScreen }
+
+function openSceneRegenerate(sceneNo, aspect, returnScreen) {
+  const work = getActiveWork();
+  const ms = getMasterScript(work);
+  if (!ms) { showToast('請先完成腳本這一步，才能重做單一幕'); return; }
+  sceneRegenerateState = { sceneNo: sceneNo, aspect: aspect, returnScreen: returnScreen };
+  showScreen('screen-scene-regenerate');
+}
+
+function buildSceneRegenerateInstruction() {
+  const work = getActiveWork();
+  const ms = getMasterScript(work);
+  const state_ = sceneRegenerateState;
+  const scene = ms.scenes.find(function (s) { return s.sceneNo === state_.sceneNo; });
+  const askLabel = state_.aspect === 'image' ? '圖片 Prompt' : state_.aspect === 'video' ? '影片 Prompt' : '配音與字幕';
+  const formatHint = state_.aspect === 'voiceover'
+    ? '配音稿：……\n配音語氣：……\n語速與停頓：……\n字幕：……'
+    : '（新的' + askLabel + '內容）';
+  return '你是影片製作教練，正在協助我只重新生成單一幕的' + askLabel + '，不是重做整支影片。\n\n' +
+    getConfirmedStyleAnchorText(work) + '\n\n' +
+    '這一幕已經確認、不可更動的內容：\n' +
+    '第' + scene.sceneNo + '幕｜' + (scene.sceneName || '') + '\n' +
+    '旁白／文案：' + (scene.narration || '') + '\n' +
+    '畫面意圖：' + (scene.visualIntent || '') + '\n' +
+    '情緒與語氣：' + (scene.mood || '') + '\n\n' +
+    '請只產生這一幕的' + askLabel + '，不要更動旁白／文案，也不要輸出其他幕的內容。請完全依照以下格式輸出，方便我直接貼回工作台：\n\n' +
+    '【第' + scene.sceneNo + '幕｜' + askLabel + '】\n' + formatHint;
+}
+
+function copySceneRegenerateInstructionText() {
+  const text = document.getElementById('scene-regen-instruction-box').textContent;
+  copyPlainText(text, '已複製修改指令');
+}
+
+function cancelSceneRegenerate() {
+  const returnScreen = sceneRegenerateState ? sceneRegenerateState.returnScreen : 'screen-work-detail';
+  sceneRegenerateState = null;
+  showScreen(returnScreen);
+}
+
+// 貼回單幕重做結果：只有解析成功（抓得到指定這一幕＋這個面向的內容）才會合併進
+// work.masterScript 並產生新版本；解析失敗時原樣保留使用者貼的文字讓他們確認，
+// 不動目前合法的母稿版本——比照腳本／配音與字幕整份貼回時同一套「解析失敗不可
+// 取代合法正式版本」原則（CEO 核准的第二項校準），只是這裡範圍縮小到單一幕。
+function submitSceneRegenerate() {
+  const work = getActiveWork();
+  const project = getProject(work.projectId);
+  const flow = FLOWS.video;
+  const content = document.getElementById('scene-regen-paste-input').value.trim();
+  const st = sceneRegenerateState;
+  const ms = getMasterScript(work);
+  const parsed = parseSceneRegenerateResponse(content, st.sceneNo, st.aspect);
+  const warnEl = document.getElementById('scene-regen-warning');
+  if (!parsed.valid) {
+    warnEl.style.display = 'block';
+    warnEl.textContent = '內容格式看起來不完整，請確認有沒有照【第' + st.sceneNo + '幕｜...】的格式輸出，重新貼回。';
+    return;
+  }
+  warnEl.style.display = 'none';
+  const scene = ms.scenes.find(function (s) { return s.sceneNo === st.sceneNo; });
+  if (st.aspect === 'image') scene.imagePrompt = parsed.text;
+  if (st.aspect === 'video') scene.videoPrompt = parsed.text;
+  if (st.aspect === 'voiceover') scene.voiceover = parsed.voiceover;
+
+  if (st.aspect === 'voiceover') {
+    const voiceIdx = flow.steps.findIndex(function (s) { return s.name === '配音與字幕'; });
+    const r = makeResult(state, work, project, voiceIdx, renderVoiceoverText(ms), false, '很滿意');
+    r.masterScriptResultId = ms.sourceResultId;
+    work.stepResultIds[voiceIdx] = r.id;
+    syncVoiceoverFromResult(work, r);
+  } else {
+    // 圖片／影片 Prompt 單幕重做不會動到旁白／文案，所以配音與字幕理論上不需要重做。
+    // 但腳本重新同步是整份重新解析（見 syncMasterScriptFromResult()），解析結果不含
+    // voiceover 欄位，會讓 work.masterScript.scenes[].voiceover 整批消失；而
+    // syncVoiceoverFromResult() 又會因為 masterScriptResultId 對不上新的腳本版本
+    // 而拒絕重新套用（這個防呆是刻意設計來擋「舊配音套到新腳本」，見該函式註解）。
+    // 所以這裡連同配音與字幕也一起產生一個新版本，內容不變、只是把
+    // masterScriptResultId 對齊到新的腳本版本，讓版本鏈維持一致，避免使用者被迫
+    // 重做一次完全沒有變動需要的配音與字幕。
+    const savedVoiceovers = ms.scenes.map(function (s) { return { sceneNo: s.sceneNo, voiceover: s.voiceover }; });
+    const scriptIdx = flow.steps.findIndex(function (s) { return s.name === '腳本'; });
+    const r = makeResult(state, work, project, scriptIdx, renderMasterScriptText(ms), false, '很滿意');
+    work.stepResultIds[scriptIdx] = r.id;
+    syncMasterScriptFromResult(work, r);
+    const hadVoiceover = savedVoiceovers.some(function (s) { return s.voiceover && s.voiceover.voiceoverScript; });
+    if (hadVoiceover) {
+      work.masterScript.scenes.forEach(function (scene) {
+        const saved = savedVoiceovers.find(function (s) { return s.sceneNo === scene.sceneNo; });
+        if (saved && saved.voiceover) scene.voiceover = saved.voiceover;
+      });
+      const voiceIdx = flow.steps.findIndex(function (s) { return s.name === '配音與字幕'; });
+      const vr = makeResult(state, work, project, voiceIdx, renderVoiceoverText(work.masterScript), false, '很滿意');
+      vr.masterScriptResultId = r.id;
+      work.stepResultIds[voiceIdx] = vr.id;
+      syncVoiceoverFromResult(work, vr);
+    }
+  }
+  saveState();
+  showToast('已更新第' + st.sceneNo + '幕的' + (st.aspect === 'image' ? '圖片' : st.aspect === 'video' ? '影片' : '配音與字幕') + '內容');
+  const returnScreen = st.returnScreen;
+  sceneRegenerateState = null;
+  showScreen(returnScreen);
+}
+
+function renderSceneRegenerate() {
+  const work = getActiveWork();
+  const ms = getMasterScript(work);
+  const st = sceneRegenerateState;
+  const scene = ms.scenes.find(function (s) { return s.sceneNo === st.sceneNo; });
+  const askLabel = st.aspect === 'image' ? '圖片生成指令' : st.aspect === 'video' ? '影片生成指令' : '配音與字幕';
+  document.getElementById('scene-regen-title').textContent = '重新生成第' + st.sceneNo + '幕的' + askLabel;
+  document.getElementById('scene-regen-scene-name').textContent = scene.sceneName ? '（' + scene.sceneName + '）' : '';
+  document.getElementById('scene-regen-instruction-box').textContent = buildSceneRegenerateInstruction();
+  document.getElementById('scene-regen-paste-input').value = '';
+  document.getElementById('scene-regen-warning').style.display = 'none';
+}
+
+// Video Workflow vNext：有 Master Script（新格式，逐幕）時，Phase A 改成逐幕卡片顯示，
+// 每一幕都能看到旁白／字幕／畫面意圖／秒數／情緒／素材需求，並各自複製自己的圖片 Prompt。
+// 舊影音工作（沒有 work.masterScript，例如這次 Sprint 之前就存在的工作）繼續用舊版
+// parseVideoScriptSections() 的三段式扁平顯示，不會打不開、不會白屏——這是 CEO 明確
+// 要求的「舊影音工作相容」。
 function renderMakeVideo() {
   const work = getActiveWork();
   const flow = FLOWS[work.flowId];
-  const scriptIdx = flow.steps.findIndex(function (s) { return s.name === '腳本'; });
-  const scriptResult = state.results.find(function (r) { return r.id === work.stepResultIds[scriptIdx]; });
-  const sections = parseVideoScriptSections(scriptResult ? scriptResult.content : '');
-  lastMakeVideoScript = sections.script;
-  lastMakeVideoImages = [sections.images, sections.style].filter(Boolean).join('\n\n');
-
-  document.getElementById('mv-script-content').textContent = sections.script || '（還沒有腳本內容）';
-  document.getElementById('mv-image-desc-content').textContent = sections.images || '（還沒有圖片描述）';
-  document.getElementById('mv-style-content').textContent = sections.style || '（還沒有風格建議）';
 
   // Sprint 2：圖片比例／數量，第一次進來依影片類型帶入建議預設值，使用者可以隨時改
   const defaults = videoTypeDefaults(work.videoType);
@@ -2343,6 +2874,45 @@ function renderMakeVideo() {
   // Phase 1B：改讀 Official Recommendation Center（collaboration-templates.json 的
   // video／工程師／製作影片／category:image），取代原本寫死在 VIDEO_IMAGE_TOOL_RECOMMENDATIONS 的清單。
   renderToolRecommendationCard('mv-recommended-tools', getRecommendedToolsChain('video', '工程師', '製作影片', 'image'), 'screen-make-video');
+
+  const ms = getMasterScript(work);
+  const legacyBlock = document.getElementById('mv-legacy-block');
+  const scenesBlock = document.getElementById('mv-scenes-block');
+  if (ms) {
+    legacyBlock.style.display = 'none';
+    scenesBlock.style.display = 'block';
+    document.getElementById('mv-overview-summary').textContent =
+      '主軸：' + (ms.mainThread || '（無）') + '　｜　長度：' + (ms.lengthRange || '（未設定）') + '　｜　共 ' + ms.scenes.length + ' 幕';
+    lastSceneImagePrompts = {};
+    document.getElementById('mv-scenes-list').innerHTML = ms.scenes.map(function (scene) {
+      lastSceneImagePrompts[scene.sceneNo] = scene.imagePrompt || '';
+      return '<div class="card" style="margin-top:14px">' +
+        '<div class="section-label">第' + scene.sceneNo + '幕' + (scene.sceneName ? '｜' + escHtml(scene.sceneName) : '') + '</div>' +
+        '<div class="line"><b>旁白／文案：</b>' + escHtml(scene.narration || '（無）') + '</div>' +
+        '<div class="line"><b>畫面意圖：</b>' + escHtml(scene.visualIntent || '（無）') + '</div>' +
+        '<div class="line"><b>預估秒數：</b>' + escHtml(scene.estimatedSeconds || '（未設定）') + '　<b>情緒：</b>' + escHtml(scene.mood || '（無）') + '</div>' +
+        '<div class="line"><b>素材需求：</b>' + escHtml(scene.materialNeeds || '（無）') + '</div>' +
+        '<div class="section-label" style="margin-top:10px;font-size:14px">圖片生成指令</div>' +
+        '<div class="copy-box">' + escHtml(scene.imagePrompt || '（還沒有圖片生成指令）') + '</div>' +
+        '<button class="btn outline" style="margin-top:6px" onclick="copySceneImagePrompt(' + scene.sceneNo + ')">📋 複製第' + scene.sceneNo + '幕圖片生成指令</button>' +
+        '<button class="btn outline" style="margin-top:6px" onclick="openSceneRegenerate(' + scene.sceneNo + ', \'image\', \'screen-make-video\')">🔁 只重新生成這一幕的圖片指令</button>' +
+        '</div>';
+    }).join('');
+    return;
+  }
+
+  // 舊格式 fallback
+  legacyBlock.style.display = 'block';
+  scenesBlock.style.display = 'none';
+  const scriptIdx = flow.steps.findIndex(function (s) { return s.name === '腳本'; });
+  const scriptResult = state.results.find(function (r) { return r.id === work.stepResultIds[scriptIdx]; });
+  const sections = parseVideoScriptSections(scriptResult ? scriptResult.content : '');
+  lastMakeVideoScript = sections.script;
+  lastMakeVideoImages = [sections.images, sections.style].filter(Boolean).join('\n\n');
+
+  document.getElementById('mv-script-content').textContent = sections.script || '（還沒有腳本內容）';
+  document.getElementById('mv-image-desc-content').textContent = sections.images || '（還沒有圖片描述）';
+  document.getElementById('mv-style-content').textContent = sections.style || '（還沒有風格建議）';
 }
 
 function chooseVideoRatio(id) {
@@ -2394,6 +2964,26 @@ function renderVideoTools() {
   // suppressPrimaryBadge=true：Kling 的官方建議已經在上面 vt-tool-guide 卡片顯示過，這裡是依影片
   // 類型的「其他」工具清單，不要讓清單第一項也被標成「⭐官方建議」，避免同畫面出現兩個官方建議。
   renderToolRecommendationCard('vt-recommended-tools', getVideoTypeToolRecommendations(work.videoType), 'screen-video-tools', '其他影片工具', true);
+
+  // Video Workflow vNext：有 Master Script 時，逐幕顯示影片 Prompt；舊工作沒有時整段隱藏
+  // （Phase B 原本就沒有舊格式的「影片素材指令」顯示，這是全新的逐幕內容，不是取代誰）。
+  const ms = getMasterScript(work);
+  const scenesBlock = document.getElementById('vt-scenes-block');
+  if (ms) {
+    scenesBlock.style.display = 'block';
+    lastSceneVideoPrompts = {};
+    document.getElementById('vt-scenes-list').innerHTML = ms.scenes.map(function (scene) {
+      lastSceneVideoPrompts[scene.sceneNo] = scene.videoPrompt || '';
+      return '<div class="card" style="margin-top:14px">' +
+        '<div class="section-label">第' + scene.sceneNo + '幕' + (scene.sceneName ? '｜' + escHtml(scene.sceneName) : '') + '</div>' +
+        '<div class="copy-box">' + escHtml(scene.videoPrompt || '（還沒有影片生成指令）') + '</div>' +
+        '<button class="btn outline" style="margin-top:6px" onclick="copySceneVideoPrompt(' + scene.sceneNo + ')">📋 複製第' + scene.sceneNo + '幕影片生成指令</button>' +
+        '<button class="btn outline" style="margin-top:6px" onclick="openSceneRegenerate(' + scene.sceneNo + ', \'video\', \'screen-video-tools\')">🔁 只重新生成這一幕的影片指令</button>' +
+        '</div>';
+    }).join('');
+  } else {
+    scenesBlock.style.display = 'none';
+  }
 }
 
 function goVideoConfirm() { showScreen('screen-video-confirm'); }
@@ -2415,7 +3005,64 @@ function videoConfirmLater() {
   showToast('已保存，之後回來可以繼續。');
   showScreen('screen-work-detail');
 }
-function videoConfirmDone() { showScreen('screen-save-video'); }
+// 剪輯交接（Stage 5，CEO 核准範圍）：只有有 Master Script 的工作才需要交接清單——純粹是
+// 從 getMasterScript() 組現有資料的畫面，不呼叫 AI、不產生新內容。舊影音工作（沒有母稿）
+// 直接跳過，維持原本「完成了 → 保存這支影片」的行為，不強迫使用者看一個沒有資料的空畫面。
+function videoConfirmDone() {
+  const work = getActiveWork();
+  if (getMasterScript(work)) { showScreen('screen-video-handoff'); return; }
+  showScreen('screen-save-video');
+}
+function videoHandoffContinue() { showScreen('screen-save-video'); }
+
+let lastVideoHandoffText = '';
+function copyVideoHandoffChecklist() { copyPlainText(lastVideoHandoffText, '已複製剪輯交接清單'); }
+
+function renderVideoHandoff() {
+  const work = getActiveWork();
+  const ms = getMasterScript(work);
+  const list = document.getElementById('vh-scenes-list');
+  const missing = [];
+  list.innerHTML = ms.scenes.map(function (scene) {
+    const voice = scene.voiceover;
+    if (!voice) missing.push('第' + scene.sceneNo + '幕還沒有配音與字幕內容');
+    if (!scene.imagePrompt) missing.push('第' + scene.sceneNo + '幕還沒有圖片生成指令');
+    if (!scene.videoPrompt) missing.push('第' + scene.sceneNo + '幕還沒有影片生成指令');
+    return '<div class="card" style="margin-top:14px">' +
+      '<div class="section-label">第' + scene.sceneNo + '幕' + (scene.sceneName ? '｜' + escHtml(scene.sceneName) : '') + '　（約 ' + escHtml(scene.estimatedSeconds || '未設定') + '）</div>' +
+      '<div class="line"><b>旁白／文案：</b>' + escHtml(scene.narration || '（無）') + '</div>' +
+      '<div class="line"><b>字幕：</b>' + escHtml((voice && voice.subtitle) || scene.subtitle || '（無）') + '</div>' +
+      (voice ? '<div class="line"><b>配音稿：</b>' + escHtml(voice.voiceoverScript || '（無）') + '</div>' +
+        '<div class="line"><b>配音語氣：</b>' + escHtml(voice.tone || '（無）') + '　<b>語速與停頓：</b>' + escHtml(voice.paceNotes || '（無）') + '</div>'
+        : '<div class="line">（尚未完成配音與字幕）</div>') +
+      '<div class="line"><b>畫面意圖：</b>' + escHtml(scene.visualIntent || '（無）') + '</div>' +
+      '<div class="line"><b>素材需求：</b>' + escHtml(scene.materialNeeds || '（無）') + '</div>' +
+      '<div class="btn-row" style="margin-top:8px;display:flex;gap:8px;flex-wrap:wrap">' +
+      '<button class="btn outline" onclick="openSceneRegenerate(' + scene.sceneNo + ', \'image\', \'screen-video-handoff\')">🔁 重做圖片指令</button>' +
+      '<button class="btn outline" onclick="openSceneRegenerate(' + scene.sceneNo + ', \'video\', \'screen-video-handoff\')">🔁 重做影片指令</button>' +
+      '<button class="btn outline" onclick="openSceneRegenerate(' + scene.sceneNo + ', \'voiceover\', \'screen-video-handoff\')">🔁 重做配音與字幕</button>' +
+      '</div>' +
+      '</div>';
+  }).join('');
+
+  const warnEl = document.getElementById('vh-missing-warning');
+  if (missing.length) {
+    warnEl.style.display = 'block';
+    warnEl.textContent = '⚠️ 還沒完成：' + missing.join('；');
+  } else {
+    warnEl.style.display = 'none';
+  }
+
+  lastVideoHandoffText = '【剪輯交接清單】' + work.name + '\n主軸：' + (ms.mainThread || '') + '　長度：' + (ms.lengthRange || '') + '\n\n' +
+    ms.scenes.map(function (scene) {
+      const voice = scene.voiceover;
+      return '第' + scene.sceneNo + '幕' + (scene.sceneName ? '｜' + scene.sceneName : '') + '（約 ' + (scene.estimatedSeconds || '未設定') + '）\n' +
+        '旁白／文案：' + (scene.narration || '') + '\n' +
+        '字幕：' + ((voice && voice.subtitle) || scene.subtitle || '') + '\n' +
+        (voice ? '配音稿：' + (voice.voiceoverScript || '') + '\n配音語氣：' + (voice.tone || '') + '　語速與停頓：' + (voice.paceNotes || '') + '\n' : '（尚未完成配音與字幕）\n') +
+        '畫面意圖：' + (scene.visualIntent || '') + '\n素材需求：' + (scene.materialNeeds || '');
+    }).join('\n\n');
+}
 
 let lastVideoFileName = '';
 function copyVideoFileName() { copyPlainText(lastVideoFileName, '已複製建議檔名'); }
@@ -2993,6 +3640,8 @@ function render() {
   if (id === 'screen-make-video') renderMakeVideo();
   if (id === 'screen-video-tools') renderVideoTools();
   if (id === 'screen-tool-companion') renderToolCompanion();
+  if (id === 'screen-video-handoff') renderVideoHandoff();
+  if (id === 'screen-scene-regenerate') renderSceneRegenerate();
   if (id === 'screen-save-video') renderSaveVideo();
   if (id === 'screen-video-complete') renderVideoComplete();
   if (id === 'screen-make-poster') renderMakePoster();
@@ -3050,7 +3699,7 @@ function renderProject() {
   const doing = works.filter(function (w) { return w.status === '進行中'; });
   const waiting = works.filter(function (w) { return w.status === '等待開始'; });
   const done = works.filter(function (w) { return w.status === '已完成'; });
-  const recentAsset = state.results.filter(function (r) { return r.projectId === project.id && !r.isBriefDraft; }).slice(-1)[0];
+  const recentAsset = state.results.filter(function (r) { return r.projectId === project.id && !r.isBriefDraft && !r.isMasterScriptDraft && !r.isVoiceoverDraft; }).slice(-1)[0];
 
   document.getElementById('proj-title').textContent = project.emoji + ' ' + project.name;
   document.getElementById('proj-summary').innerHTML =
@@ -4246,8 +4895,13 @@ function renderCreativePreferencesSection(work) {
 
   const resolved = resolveCreativePreferences(work);
   document.getElementById('wd-cp-product-language').textContent = buildCreativePreferenceProductLanguage(work);
-  document.getElementById('wd-cp-status').textContent =
-    isUsingCreativeDefaults(work) ? '✓ 使用系統推薦設定' : '✎ 已使用你的偏好';
+  // CEO 核准的第一項校準：腳本確認後才改的偏好，不能悄悄改變已確認的影片內容——這裡只是
+  // 提示使用者「新偏好還沒套用」，實際套用要等使用者重新產生或重新確認「腳本」，才會建立
+  // 新的 Style Anchor 快照（見 styleAnchorOutOfSync()／buildStyleAnchorSnapshot() 的設計說明）。
+  const outOfSync = work.flowId === 'video' && styleAnchorOutOfSync(work);
+  document.getElementById('wd-cp-status').textContent = outOfSync
+    ? '⚠️ 已調整偏好，但目前影片母稿還是舊設定，需要重新產生或重新確認「腳本」才會套用新偏好'
+    : (isUsingCreativeDefaults(work) ? '✓ 使用系統推薦設定' : '✎ 已使用你的偏好');
 
   document.getElementById('wd-cp-categories').innerHTML = categories.map(function (cat) {
     const pills = cat.options.map(function (opt) {

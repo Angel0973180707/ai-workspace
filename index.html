@@ -413,18 +413,27 @@
       <div class="title">製作影片・準備圖片</div>
     </div>
     <div style="padding-top:20px">
-      <div class="notice">現在開始準備圖片素材<br><br>AI 已經幫你完成：<br>✅ 腳本<br>✅ 圖片描述<br>✅ 風格建議<br><br>現在請：把圖片描述交給你習慣使用的圖片工具，做出你的圖片素材。</div>
+      <div class="notice">現在開始準備圖片素材<br><br>AI 已經幫你完成：<br>✅ 影片母稿（逐幕文案與畫面規劃）<br>✅ 逐幕圖片生成指令<br><br>現在請：把每一幕的圖片生成指令交給你習慣使用的圖片工具，逐幕做出你的圖片素材。</div>
 
-      <div class="section-label" style="margin-top:18px">【腳本】</div>
-      <div class="copy-box" id="mv-script-content" style="max-height:22vh;overflow-y:auto"></div>
-      <button class="btn gold" onclick="copyMakeVideoScript()">📋 複製腳本</button>
+      <!-- Video Workflow vNext：有 Master Script 時顯示逐幕卡片 -->
+      <div id="mv-scenes-block" style="display:none">
+        <div class="notice" id="mv-overview-summary" style="margin-top:14px"></div>
+        <div id="mv-scenes-list"></div>
+      </div>
 
-      <div class="section-label" style="margin-top:22px">【圖片描述建議】</div>
-      <div class="copy-box" id="mv-image-desc-content" style="max-height:20vh;overflow-y:auto"></div>
+      <!-- 舊影音工作相容：沒有 Master Script（Sprint 之前建立的工作）時，顯示舊版三段式扁平內容 -->
+      <div id="mv-legacy-block" style="display:none">
+        <div class="section-label" style="margin-top:18px">【腳本】</div>
+        <div class="copy-box" id="mv-script-content" style="max-height:22vh;overflow-y:auto"></div>
+        <button class="btn gold" onclick="copyMakeVideoScript()">📋 複製腳本</button>
 
-      <div class="section-label" style="margin-top:16px">【風格建議】</div>
-      <div class="copy-box" id="mv-style-content" style="max-height:12vh;overflow-y:auto"></div>
-      <button class="btn gold" onclick="copyMakeVideoImages()">📋 複製圖片描述與風格</button>
+        <div class="section-label" style="margin-top:22px">【圖片描述建議】</div>
+        <div class="copy-box" id="mv-image-desc-content" style="max-height:20vh;overflow-y:auto"></div>
+
+        <div class="section-label" style="margin-top:16px">【風格建議】</div>
+        <div class="copy-box" id="mv-style-content" style="max-height:12vh;overflow-y:auto"></div>
+        <button class="btn gold" onclick="copyMakeVideoImages()">📋 複製圖片描述與風格</button>
+      </div>
 
       <div class="section-label" style="margin-top:22px">影片形狀</div>
       <div id="mv-ratio-list"></div>
@@ -468,6 +477,12 @@
       <div id="vt-tool-guide" style="margin-top:16px"></div>
       <a class="btn outline" style="margin-top:10px;text-decoration:none;display:block;text-align:center" id="vt-open-tool-btn" href="#" target="_blank" rel="noopener">🎬 開啟 Kling</a>
 
+      <!-- Video Workflow vNext：有 Master Script 時，逐幕顯示影片生成指令 -->
+      <div id="vt-scenes-block" style="display:none">
+        <div class="section-label" style="margin-top:18px">逐幕影片生成指令</div>
+        <div id="vt-scenes-list"></div>
+      </div>
+
       <div class="card" id="vt-recommended-tools" style="margin-top:22px"></div>
 
       <div class="notice" style="margin-top:16px">完成後，回來這裡。</div>
@@ -498,6 +513,44 @@
       <button class="btn" onclick="videoConfirmDone()">🎉 完成了</button>
       <button class="btn outline" style="margin-top:10px" onclick="videoConfirmRegenerate()">🔁 我還要重新生成</button>
       <button class="btn outline" style="margin-top:10px" onclick="videoConfirmLater()">🕐 今天先到這裡</button>
+    </div>
+  </div>
+
+  <!-- 剪輯交接（Stage 5，Video Workflow vNext）：有母稿的工作在保存影片前，先看一份逐幕
+       完整資料（旁白／字幕／配音稿／畫面意圖／素材需求），可以直接複製整份給剪輯師或自己剪輯用。 -->
+  <div class="screen" id="screen-video-handoff">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-video-confirm')">←</button>
+      <div class="title">剪輯交接清單</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">這是每一幕的完整資料，交給剪輯師或自己剪輯時都可以直接對照使用。</div>
+      <div class="notice" id="vh-missing-warning" style="display:none;margin-top:10px"></div>
+      <div id="vh-scenes-list"></div>
+      <button class="btn outline" style="margin-top:16px" onclick="copyVideoHandoffChecklist()">📋 複製整份剪輯交接清單</button>
+      <button class="btn" style="margin-top:12px" onclick="videoHandoffContinue()">下一步：完成這支影片</button>
+    </div>
+  </div>
+
+  <!-- 單幕重做（Stage 4，Video Workflow vNext）：只重新生成指定這一幕的圖片／影片／配音字幕
+       指令，不影響其他幕，不需要重貼整份母稿。 -->
+  <div class="screen" id="screen-scene-regenerate">
+    <div class="topbar">
+      <button class="back" onclick="cancelSceneRegenerate()">←</button>
+      <div class="title" id="scene-regen-title">重新生成這一幕</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">把下面的指令交給你原本製作這支影片的那個 AI 對話，請它只針對這一幕<span id="scene-regen-scene-name"></span>重新生成，其他幕不會被改動。</div>
+      <div class="copy-box" id="scene-regen-instruction-box" style="max-height:30vh;overflow-y:auto;margin-top:12px"></div>
+      <button class="btn gold" style="margin-top:10px" onclick="copySceneRegenerateInstructionText()">📋 複製修改指令</button>
+
+      <div class="field" style="margin-top:20px">
+        <label>拿到新版本後，貼回這裡</label>
+        <textarea id="scene-regen-paste-input" rows="8" placeholder="貼上 AI 回覆的新內容"></textarea>
+      </div>
+      <div class="notice" id="scene-regen-warning" style="display:none"></div>
+      <button class="btn" onclick="submitSceneRegenerate()">完成，更新這一幕</button>
+      <button class="btn outline" style="margin-top:10px" onclick="cancelSceneRegenerate()">先不改了</button>
     </div>
   </div>
 
