@@ -4,12 +4,12 @@
 // 是另一份，兩者刻意分開維護）。原因：第一次部署的來源固定是已核准的 Factory commit
 // （目前是 61a3f33），但那個 commit 當時的 service-worker.js 還是舊版（cache-first、
 // 固定 ai-workspace-v0.12），如果直接照搬那個版本，就沒辦法滿足這個 Sprint 的
-// 「避免正式站長期卡在舊快取」要求。把正確版本放在這裡、由部署流程注入 9c792de，
+// 「避免正式站長期卡在舊快取」要求。把正確版本放在這裡、由部署流程注入 56859e6，
 // 不管之後核准哪一個 Factory commit 上線，快取正確性都不會因為忘記同步而跳過。
 //
-// 9c792de 由 .github/workflows/deploy-ai-workspace.yml 在部署時替換成當次的
+// 56859e6 由 .github/workflows/deploy-ai-workspace.yml 在部署時替換成當次的
 // Factory source commit short SHA，確保「每次部署使用唯一 cache identifier」。
-const CACHE_NAME = 'ai-workspace-9c792de';
+const CACHE_NAME = 'ai-workspace-56859e6';
 const ASSETS = [
   './index.html',
   './style.css',

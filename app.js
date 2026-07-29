@@ -40,10 +40,28 @@ let COLLAB_TEMPLATES = {};
 
 // 就算資料檔載入失敗（離線／檔案遺失），也要有最小可用的防呆內容，不能讓整個 App 掛掉
 const TOOLS_CATALOG_FALLBACK = [
-  { id: 'chatgpt', name: 'ChatGPT', category: 'AI', emoji: '🤖', specialty: '發想、整理、互動打磨與一步一步完成內容', suitableFor: '主題、文案、歌詞、腳本、規劃與初學者協作' },
-  { id: 'claude', name: 'Claude', category: 'AI', emoji: '🧠', specialty: '長文整理、深度分析與文件品質打磨', suitableFor: '教材、電子書、提案、報告與長篇內容' },
-  { id: 'gemini', name: 'Gemini', category: 'AI', emoji: '✨', specialty: '資訊查詢、資料整合與研究整理', suitableFor: '市場研究、資料蒐集、趨勢與需要外部資訊的工作' }
+  { id: 'chatgpt', name: 'ChatGPT', category: 'AI', emoji: '🤖', specialty: '發想、整理、互動打磨與一步一步完成內容', suitableFor: '主題、文案、歌詞、腳本、規劃與初學者協作', url: 'https://chatgpt.com' },
+  { id: 'claude', name: 'Claude', category: 'AI', emoji: '🧠', specialty: '長文整理、深度分析與文件品質打磨', suitableFor: '教材、電子書、提案、報告與長篇內容', url: 'https://claude.ai' },
+  { id: 'gemini', name: 'Gemini', category: 'AI', emoji: '✨', specialty: '資訊查詢、資料整合與研究整理', suitableFor: '市場研究、資料蒐集、趨勢與需要外部資訊的工作', url: 'https://gemini.google.com' }
 ];
+
+// Correction Proposal Stage D：外部工具的官方入口網址統一從這裡查（來源是 tools-catalog.json
+// 每個工具自己的 url 欄位，離線／載入失敗時退回 TOOLS_CATALOG_FALLBACK），不在各畫面各自寫死
+// 網址字串——這是 renderToolGuide()／renderToolRecommendationCard()／screen-tool-companion／
+// 逐幕「開啟推薦工具」按鈕共用的唯一查詢入口。找不到就回傳 null，呼叫端各自決定安全降級方式
+// （通常是不顯示開啟連結，不開啟空白頁或錯誤連結）。
+function getToolUrlById(toolId) {
+  const tool = TOOLS_CATALOG.find(function (t) { return t.id === toolId; });
+  return (tool && tool.url) || null;
+}
+
+// 統一的「開啟工具」連結產生器：沒有網址時回傳空字串（安全降級，不渲染任何連結），
+// 有網址時一律 target="_blank" rel="noopener"，不取代目前頁面、不會讓使用者迷路。
+function buildToolOpenLinkHtml(toolId, label, extraStyle) {
+  const url = getToolUrlById(toolId);
+  if (!url) return '';
+  return '<a class="btn outline" style="margin-top:6px;text-decoration:none;display:block;text-align:center' + (extraStyle || '') + '" href="' + escHtml(url) + '" target="_blank" rel="noopener">' + escHtml(label) + '</a>';
+}
 
 async function loadToolData() {
   try {
@@ -104,9 +122,20 @@ function getOfficialToolRecommendation(flowId, role, stepName, category) {
     const tool = getMyToolById(c.toolId);
     // validation／lastVerified（Phase 1B.1 資料模型收尾）：先把欄位帶過來，畫面目前還沒有地方顯示，
     // 之後要加「這筆建議驗證到什麼程度」的提示時，資料已經在，不用再回頭補一次管線。
+    // toolId（Correction Proposal Stage D）：讓 withOfficialRecommendation() 能把「實際被推薦的
+    // 是哪個工具 id」傳給 renderToolGuide()，開啟按鈕的網址才會永遠對應「畫面上顯示的那個名字」，
+    // 不會在未來調整推薦順位（Stage E）後，名字換了、連結卻還指向舊工具。
+    // Correction Proposal Stage E：擴充官方推薦資料結構，讓每個工具能完整說明「為什麼推薦、
+    // 適合什麼情境、手機操作、使用心得、費用提醒、注意事項」，不是只有一句 reason。這幾個欄位
+    // 目前只有 video／工程師／製作影片／category:video 這條鏈有填寫（本輪校準範圍），其餘 Flow
+    // 的既有資料沒有這些欄位也完全沒關係——都是可選欄位，畫面端只在有值時才顯示對應那一行。
     return {
+      toolId: c.toolId,
       name: tool ? tool.name : c.toolId, rating: c.rating || null, fitFor: c.fitFor || null, reason: c.reason || null, openUrl: c.openUrl || null,
-      validation: c.validation || null, lastVerified: c.lastVerified || null
+      validation: c.validation || null, lastVerified: c.lastVerified || null,
+      positioning: c.positioning || null, whyRecommended: c.whyRecommended || null, bestFor: c.bestFor || null,
+      mobileExperience: c.mobileExperience || null, experienceNote: c.experienceNote || null,
+      pricingNote: c.pricingNote || null, caution: c.caution || null
     };
   });
   return { hasRecommendation: true, primary: entries[0], alternatives: entries.slice(1) };
@@ -123,8 +152,14 @@ function withOfficialRecommendation(baseGuide, flowId, role, stepName, category)
   }
   return Object.assign({}, baseGuide, {
     toolName: rec.primary.name,
+    toolId: rec.primary.toolId,
     rating: rec.primary.rating,
     fitFor: rec.primary.fitFor,
+    positioning: rec.primary.positioning,
+    whyRecommended: rec.primary.whyRecommended,
+    mobileExperience: rec.primary.mobileExperience,
+    pricingNote: rec.primary.pricingNote,
+    caution: rec.primary.caution,
     altTools: rec.alternatives
   });
 }
@@ -711,14 +746,45 @@ function extractLabeledField(block, label) {
   return m ? m[1].trim() : '';
 }
 
-// 解析「腳本」步驟的正式輸出。要求格式：
+// 真人驗收校準（Correction Proposal Stage A）：逐幕旁白過去是各自獨立發想，容易斷裂/重複、
+// 看不出整體是否流暢。移除空白與常見標點後只比對「是否依序找得到對應片段」，允許 AI 為了
+// 分幕加上必要的輕微斷句調整，但不允許整段改寫或新增/刪除句子——這是完整性驗證，不是要求
+// 逐字機械相等。
+function normalizeForNarrationCheck(text) {
+  return (text || '').replace(/[\s，。！？、,.!?：:；;\n]/g, '');
+}
+
+// 依序檢查每一幕的旁白（正規化後）都能在完整文案（正規化後）裡依序找到對應片段——
+// 前一幕比對到的位置之後才能比對下一幕，確保幕與幕之間沒有被打亂順序或整段替換。
+function narrationConsistentWithFullScript(scenes, fullNarrationScript) {
+  const normFull = normalizeForNarrationCheck(fullNarrationScript);
+  if (!normFull) return false;
+  let cursor = 0;
+  for (let i = 0; i < scenes.length; i++) {
+    const normScene = normalizeForNarrationCheck(scenes[i].narration);
+    if (!normScene) return false;
+    const idx = normFull.indexOf(normScene, cursor);
+    if (idx === -1) return false;
+    cursor = idx + normScene.length;
+  }
+  return true;
+}
+
+// 解析「腳本」步驟的正式輸出。要求格式（Correction Proposal Stage A 起，完整文案為必要區塊，
+// 排在【總覽】之前）：
+// 【完整影片文案／旁白稿】\n（從第一句到最後一句的完整連貫文案）
 // 【總覽】\n目的：……\n觀眾：……\n長度：……\n主軸：……\n敘事調性：……\n主要人物設定：……\n音樂方向：……
 // 【第1幕｜幕名稱】\n旁白／文案：……\n字幕：……\n畫面意圖：……\n預估秒數：……\n情緒與語氣：……\n素材需求：……\n圖片 Prompt：……\n影片 Prompt：……
 // 【第2幕｜……】……
-// 缺少【總覽】、缺少目的／主軸、一幕都沒抓到、或任一幕缺旁白／畫面意圖，都視為格式不完整，
-// 回傳 valid:false，呼叫端必須保留舊版本、不得推進步驟（見 submitPasteBack() 的腳本分支）。
+// 缺少完整文案、缺少【總覽】、缺少目的／主軸、一幕都沒抓到、任一幕缺旁白／畫面意圖、或逐幕
+// 旁白串接後對不上完整文案，都視為格式不完整，回傳 valid:false，呼叫端必須保留舊版本、
+// 不得推進步驟（見 submitPasteBack() 的腳本分支）。
 function parseMasterScript(content) {
   if (!content) return { valid: false };
+  const fullScriptMatch = content.match(/【完整影片文案／旁白稿】([\s\S]*?)(?=【總覽】|$)/);
+  const fullNarrationScript = fullScriptMatch ? fullScriptMatch[1].trim() : '';
+  if (!fullNarrationScript) return { valid: false };
+
   const overviewMatch = content.match(/【總覽】([\s\S]*?)(?=【第\d+幕|$)/);
   if (!overviewMatch) return { valid: false };
   const overview = {};
@@ -737,9 +803,11 @@ function parseMasterScript(content) {
   if (scenes.length === 0) return { valid: false };
   const allScenesValid = scenes.every(function (s) { return s.narration && s.visualIntent; });
   if (!allScenesValid) return { valid: false };
+  if (!narrationConsistentWithFullScript(scenes, fullNarrationScript)) return { valid: false };
 
   return {
-    valid: true, purpose: overview.purpose, audience: overview.audience, lengthRange: overview.lengthRange,
+    valid: true, fullNarrationScript: fullNarrationScript,
+    purpose: overview.purpose, audience: overview.audience, lengthRange: overview.lengthRange,
     mainThread: overview.mainThread, narrativeTone: overview.narrativeTone, characterProfile: overview.characterProfile,
     musicDirection: overview.musicDirection, scenes: scenes
   };
@@ -816,6 +884,34 @@ function buildStyleAnchorText(snapshot) {
   return text.trim();
 }
 
+// Correction Proposal Stage C：Phase A／Phase B 畫面上的「Style Anchor 摘要」區塊，跟
+// buildStyleAnchorText() 同一份資料，只是這裡輸出給使用者看的 HTML（會 escHtml），不是給
+// AI 的純文字 Prompt 內容——兩者刻意分開，不要共用同一個字串，避免以後其中一邊要調整措辭時
+//互相牽動。
+function buildStyleAnchorSummaryHtml(snapshot) {
+  if (!snapshot) return '<div class="line">（尚未建立風格設定快照）</div>';
+  const typeInfo = VIDEO_TYPES.find(function (t) { return t.id === snapshot.videoType; });
+  const ratioInfo = VIDEO_RATIO_OPTIONS.find(function (r) { return r.id === snapshot.imageRatio; });
+  const categories = CREATIVE_PREFERENCE_CATEGORIES.video;
+  const prefLines = categories.map(function (cat) {
+    const chosenId = snapshot.creativePreferences && snapshot.creativePreferences[cat.key];
+    if (!chosenId) return null;
+    const opt = cat.options.find(function (o) { return o.id === chosenId; });
+    return opt ? '<div class="line">・' + escHtml(cat.label) + '：' + escHtml(opt.label) + '</div>' : null;
+  }).filter(Boolean).join('');
+
+  let html = '<div class="line">・呈現形式：' + escHtml(typeInfo ? typeInfo.label : '（未設定）') + '</div>';
+  html += '<div class="line">・畫面比例：' + escHtml(ratioInfo ? ratioInfo.label : '（未設定）') + '</div>';
+  html += prefLines;
+  if (snapshot.narrativeTone) html += '<div class="line">・敘事調性：' + escHtml(snapshot.narrativeTone) + '</div>';
+  if (snapshot.characterProfile) html += '<div class="line">・主要人物設定：' + escHtml(snapshot.characterProfile) + '</div>';
+  if (snapshot.musicDirection) html += '<div class="line">・音樂方向：' + escHtml(snapshot.musicDirection) + '</div>';
+  if (snapshot.creativePreferences && snapshot.creativePreferences.custom && snapshot.creativePreferences.custom.trim()) {
+    html += '<div class="line">・使用者自訂偏好：' + escHtml(snapshot.creativePreferences.custom.trim()) + '</div>';
+  }
+  return html;
+}
+
 // 唯一負責把「腳本」步驟的正式 Result 同步成結構化 work.masterScript 的地方。
 // 呼叫時機：submitPasteBack() 確認一筆新的合法內容時、以及 getMasterScript() 發現目前
 // 指向的正式 Result 跟 work.masterScript 記錄的來源對不上時（自我校正）。解析失敗時
@@ -828,6 +924,7 @@ function syncMasterScriptFromResult(work, result) {
   work.masterScript = {
     sourceResultId: result.id,
     sourceVersion: result.version,
+    fullNarrationScript: parsed.fullNarrationScript,
     purpose: parsed.purpose, audience: parsed.audience, lengthRange: parsed.lengthRange, mainThread: parsed.mainThread,
     narrativeTone: parsed.narrativeTone, characterProfile: parsed.characterProfile, musicDirection: parsed.musicDirection,
     scenes: parsed.scenes,
@@ -843,6 +940,15 @@ function syncMasterScriptFromResult(work, result) {
 // work.masterScript.sourceResultId 完全相同的成果，對不上就視為「這一版母稿還沒有
 // 對應的配音字幕」，不強行套用——這不是完整的連動追蹤系統，只是單一個版本標記比對，
 // 使用者重新確認腳本後，需要自己重新做一次配音與字幕（MVP 範圍明確排除自動連動）。
+// Correction Proposal Stage C 必要最小補充（非 Stage A／B 範圍內的既有函式修改）：Stage B
+// 的配音與字幕模板已經要求 AI 先輸出【完整配音稿】前導區塊，Stage C 需要把它單獨顯示＋複製，
+// 但 parseVoiceoverAndSubtitles() 的合法性判斷（幕數是否對應、每幕是否有 voiceoverScript）
+// 完全不需要也沒有修改——這裡只是額外多讀一個純展示用的區塊，不影響任何既有驗證規則或行為。
+function extractFullVoiceoverScript(content) {
+  const m = content.match(/【完整配音稿】([\s\S]*?)(?=【第\d+幕|$)/);
+  return m ? m[1].trim() : '';
+}
+
 function syncVoiceoverFromResult(work, result) {
   if (!work.masterScript) return false;
   if (result.masterScriptResultId !== work.masterScript.sourceResultId) return false;
@@ -854,6 +960,7 @@ function syncVoiceoverFromResult(work, result) {
   });
   work.masterScript.voiceoverSourceResultId = result.id;
   work.masterScript.voiceoverSourceVersion = result.version;
+  work.masterScript.fullVoiceoverScript = extractFullVoiceoverScript(result.content);
   return true;
 }
 
@@ -909,13 +1016,34 @@ function styleAnchorOutOfSync(work) {
 // 確保 state.results[].content 永遠是唯一正式來源，work.masterScript 只是它的衍生索引
 // （CEO 核准的「單一主資料」原則），不會出現母稿跟正式成果內容對不起來的狀況。
 function renderMasterScriptText(ms) {
-  let text = '【總覽】\n';
+  let text = '【完整影片文案／旁白稿】\n' + (ms.fullNarrationScript || '') + '\n\n';
+  text += '【總覽】\n';
   MASTER_SCRIPT_OVERVIEW_FIELDS.forEach(function (f) { text += f.label + '：' + (ms[f.key] || '') + '\n'; });
   ms.scenes.forEach(function (scene) {
     text += '\n【第' + scene.sceneNo + '幕｜' + (scene.sceneName || '') + '】\n';
     MASTER_SCRIPT_SCENE_FIELDS.forEach(function (f) { text += f.label + '：' + (scene[f.key] || '') + '\n'; });
   });
   return text.trim();
+}
+
+// 舊資料相容（Correction Proposal Stage A）：Stage 0-6 時期已確認的 work.masterScript 沒有
+// fullNarrationScript 欄位。畫面顯示完整文案時一律呼叫這個函式，不要直接讀
+// ms.fullNarrationScript——沒有的話用逐幕旁白依序組合顯示，並誠實標記
+// isFallbackAssembled，讓畫面加註「非原始完整文案」，不假裝是使用者當初產生的原生完整稿。
+function getDisplayFullNarrationScript(ms) {
+  if (ms.fullNarrationScript) return { text: ms.fullNarrationScript, isFallbackAssembled: false };
+  const assembled = (ms.scenes || []).map(function (s) { return s.narration || ''; }).filter(Boolean).join('\n');
+  return { text: assembled, isFallbackAssembled: true };
+}
+
+// 同樣的舊資料相容道理，用在完整配音稿：配音與字幕還沒確認過、或是 Stage C 之前確認的
+// 舊資料（沒有 fullVoiceoverScript）時，用逐幕配音稿依序組合顯示，一樣誠實標記
+// isFallbackAssembled。完全沒有任何一幕確認過配音時，text 會是空字串，畫面端應該直接
+// 隱藏這個區塊，不要顯示空白卡片。
+function getDisplayFullVoiceoverScript(ms) {
+  if (ms.fullVoiceoverScript) return { text: ms.fullVoiceoverScript, isFallbackAssembled: false };
+  const assembled = (ms.scenes || []).map(function (s) { return (s.voiceover && s.voiceover.voiceoverScript) || ''; }).filter(Boolean).join('\n');
+  return { text: assembled, isFallbackAssembled: true };
 }
 
 // 同樣道理，把 work.masterScript.scenes[].voiceover 重新組成「配音與字幕」步驟的正式格式文字。
@@ -993,6 +1121,18 @@ function renderToolCompanion() {
   document.getElementById('tc-steps').innerHTML = companion.steps.map(function (step, i) {
     return '<div class="card"><div class="section-label">Step ' + (i + 1) + '</div><div style="font-size:15px;color:var(--text)">現在請：' + escHtml(step) + '</div></div>';
   }).join('');
+  // Correction Proposal Stage D：TOOL_COMPANIONS 的 key（chatgpt／capcut）本身就是
+  // tools-catalog.json 的工具 id，直接查同一套共用機制即可，不需要在 TOOL_COMPANIONS 裡
+  // 另外重複寫一次網址；查不到就隱藏按鈕（安全降級，不留空白連結）。
+  const openBtn = document.getElementById('tc-open-tool-btn');
+  const url = getToolUrlById(activeToolCompanionId);
+  if (url) {
+    openBtn.style.display = '';
+    openBtn.href = url;
+    openBtn.textContent = '🔗 開啟 ' + companion.name;
+  } else {
+    openBtn.style.display = 'none';
+  }
 }
 
 // 共用的「這一步適合的工具」卡片渲染：只推薦一個 ⭐ 預設，其餘收在「查看更多工具」，
@@ -1011,9 +1151,12 @@ function renderToolRecommendationCard(elementId, toolChain, returnScreen, primar
     const tool = getMyToolById(item.toolId);
     const label = tool ? tool.name : item.toolId;
     const companion = TOOL_COMPANIONS[item.toolId];
+    // Correction Proposal Stage D：每個工具列都可以直接開啟（同一套 buildToolOpenLinkHtml()
+    // 共用機制），沒有網址時安全降級成不顯示連結，不會出現空白頁或死連結。
+    const openLink = buildToolOpenLinkHtml(item.toolId, '開啟 ' + label);
     const btn = companion ? '<button class="btn outline" style="margin-top:8px" onclick="openToolCompanion(\'' + item.toolId + '\', \'' + returnScreen + '\')">📖 查看使用步驟</button>' : '';
     const nameLine = isPrimary ? '⭐ ' + escHtml(label) + '（官方建議）' : escHtml(label);
-    return '<div class="tool-suggest-row"><b>' + nameLine + '</b>　<span class="reason">' + escHtml(item.reason || '') + '</span></div>' + btn;
+    return '<div class="tool-suggest-row"><b>' + nameLine + '</b>　<span class="reason">' + escHtml(item.reason || '') + '</span></div>' + openLink + btn;
   }
 
   // suppressPrimaryBadge：這個卡片本身就是「其他／替代工具」的次要清單時使用（例如影片依類型的
@@ -1220,32 +1363,56 @@ function buildDefaultPromptTemplates() {
   // 需要跟逐幕內容共用同一次生成的風格判斷，不需要另開一次對話重新餵一次風格設定。
   // 標記格式（【總覽】／【第N幕｜名稱】）由 parseMasterScript() 解析，解析失敗時
   // submitPasteBack() 會擋下、不推進步驟（見該函式與 CEO 核准的「單一主資料」原則）。
+  //
+  // Correction Proposal Stage B（CEO 核准，真人測試發現逐幕各自發想旁白會斷裂、看不出
+  // 整體故事是否流暢）：改成先寫一篇完整、連貫、可以直接朗讀的「完整影片文案／旁白稿」，
+  // 再依這篇文案切分逐幕，逐幕旁白只能是原文片段、不能重寫，跟 parseMasterScript() 在
+  // Stage A 就已經要求的【完整影片文案／旁白稿】必要區塊＋narrationConsistentWithFullScript()
+  // 一致性驗證完全對應——這裡是讓 AI 實際產出 Stage A 解析器已經要求的格式。影片 Prompt
+  // 額外要求固定加入「排除聲音」限制文字，避免圖生影片工具自行加上旁白/對嘴/配樂。
   list.push(tpl('flow_specific', '寫作師', 'video', '腳本', '影片製作／腳本統籌',
-    '你是影片製作流程中的腳本統籌。\n\n請根據已確定的文案方向與風格設定，直接完成一份完整、正式、可以直接使用的「影片母稿」——包含整體資訊與逐幕內容，不是草稿，也不需要使用者再分開準備旁白、字幕、畫面描述或圖片／影片指令，這一步要一次產出後續所有步驟都能直接引用的正式內容。\n\n' +
+    '你是影片製作流程中的腳本統籌。\n\n請根據已確定的文案方向與風格設定，先完成一篇從頭到尾完整連貫、可以直接朗讀的「完整影片文案／旁白稿」，再依這篇文案切分成逐幕內容——**逐幕旁白只能是這篇完整文案的對應片段，不能重新發想、改寫、新增或刪減內容**，圖片與影片指令則依逐幕旁白、畫面意圖與風格設定衍生，不是另外發想新故事。這一步要一次產出後續所有步驟都能直接引用的正式內容，不是草稿。\n\n' +
     '影片／工作名稱：{{work_name}}\n目前步驟：{{step_name}}\n影片目標：{{goal}}\n\n已有成果（含確定方向）：\n{{previous_results}}\n\n目前的風格設定（色調／光線／畫面節奏／配音性格／語速等，若使用者在創作偏好調整過，以下面設定為準）：\n{{creative_preferences}}\n\n' +
-    '請注意：這一步是延伸「已確定方向」的具體化，不是重新發想新的主軸或風格——如果前面已經有「確定方向」的內容，逐幕內容與風格必須沿著那個方向具體化，不能另闢新的主題或語氣。\n\n' +
-    '每個版本都務必依照以下格式輸出，保留【】標題文字，區塊之間空一行（這是為了讓使用者的工作台能自動解析逐幕內容，請勿省略或改變標題文字，也不要用 Markdown 的 ** 或 # 包住標題）：\n\n' +
+    '請注意：這一步是延伸「已確定方向」的具體化，不是重新發想新的主軸或風格——如果前面已經有「確定方向」的內容，完整文案與風格必須沿著那個方向具體化，不能另闢新的主題或語氣。\n\n' +
+    '請依序完成：\n\n' +
+    '1. 先寫一篇完整、連貫、從頭到尾可以直接朗讀的影片文案，包含開場鉤子、核心內容、情緒或故事推進、結尾收束，以及適合的行動邀請，不用分幕、不用標記幕次，就是一篇完整文案。\n\n' +
+    '2. 再把這篇完整文案依畫面轉換的地方切分成幾幕（通常 3-6 幕，不要為了長度硬湊幕數），每一幕的「旁白／文案」必須是完整文案裡對應的那一段原文，不可以重寫、精簡、擴寫或調整用字——如果切分後唸起來稍微不順，寧可調整幕的切法，也不要改動文字本身。\n\n' +
+    '3. 每一幕的圖片生成指令，必須依據這一幕的旁白內容、畫面意圖，以及上面的風格設定（色調、光線、人物設定等）產生，不能脫離完整文案另外發展新的畫面故事。\n\n' +
+    '4. 每一幕的影片生成指令，目的只是讓這一幕已經完成的圖片自然動起來（例如鏡頭推近／拉遠／平移、人物微動作、環境動態、轉場），**必須在指令裡完整加入以下限制文字，一字不漏**：「只生成無聲畫面。不要旁白。不要人物說話或對嘴。不要字幕。不要背景音樂。不要額外音效。聲音、旁白、字幕與配樂將在後製階段統一加入。」\n\n' +
+    '每個版本都務必依照以下格式輸出，保留【】標題文字，區塊之間空一行（這是為了讓使用者的工作台能自動解析內容，請勿省略或改變標題文字，也不要用 Markdown 的 ** 或 # 包住標題）：\n\n' +
+    '【完整影片文案／旁白稿】\n（從第一句到最後一句，完整連貫、可以直接朗讀的一篇文案，不要分幕、不要加入幕次標記）\n\n' +
     '【總覽】\n目的：（1句話）\n觀眾：（1句話）\n長度：（例如：30-60秒）\n主軸：（1-2句話，這支影片最核心想傳達的一句話）\n敘事調性：（1句話，例如：陪伴分享／故事敘事／直接介紹）\n主要人物設定：（若影片有主要人物或角色，1-2句話描述；沒有明確人物就寫「無特定人物」）\n音樂方向：（1句話，例如：溫暖木吉他伴奏／輕快節奏電子樂）\n\n' +
-    '【第1幕｜幕名稱】\n旁白／文案：（這一幕實際要唸出來或顯示的文字，完整句子，不是關鍵字）\n字幕：（跟旁白對應，適合螢幕呈現的簡短版本，如果跟旁白幾乎一樣可以直接寫「同旁白」）\n畫面意圖：（這一幕想呈現的畫面，具體到場景、主體、動作、氛圍）\n預估秒數：（例如：8秒）\n情緒與語氣：（1句話）\n素材需求：（例如：1張人物特寫圖）\n圖片 Prompt：（直接寫成一句完整的圖片生成請求，開頭就是「請直接生成一張……的圖片」這種明確要求動手生成的語氣，把畫面意圖、風格設定的色調／光線都寫進這句話裡，使用者要能整段複製直接貼給圖片工具）\n影片 Prompt：（直接寫成一句完整的圖生影片請求，說明這張圖要怎麼動起來，例如鏡頭運動、動態效果，把畫面節奏也寫進去，使用者要能整段複製直接貼給影片工具）\n\n' +
-    '【第2幕｜幕名稱】\n（格式跟第1幕完全一樣，繼續下一幕）\n\n……（依「長度」設定的合理幕數繼續，通常 3-6 幕，不要為了長度硬湊幕數）\n\n總覽與所有幕都完成後，才進入下面的版本選擇規則。\n\n' +
-    '請直接完成兩個完整、正式、可以直接使用的版本，不是草稿、不是方向、不是分析：\n\n## Version A\n（依上面完整格式輸出【總覽】＋所有幕）\n\n## Version B\n（格式跟 Version A 完全一樣，但敘事切角要有實際差異，不能只換幾個字；兩版的幕數可以不同）\n\n' +
+    '【第1幕｜幕名稱】\n旁白／文案：（必須是上面完整文案裡的對應原文片段，逐字引用，不能改寫、精簡或擴寫）\n字幕：（跟旁白對應，適合螢幕呈現的簡短版本，如果跟旁白幾乎一樣可以直接寫「同旁白」）\n畫面意圖：（這一幕想呈現的畫面，具體到場景、主體、動作、氛圍）\n預估秒數：（例如：8秒）\n情緒與語氣：（1句話）\n素材需求：（例如：1張人物特寫圖）\n圖片 Prompt：（直接寫成一句完整的圖片生成請求，開頭就是「請直接生成一張……的圖片」這種明確要求動手生成的語氣，把這一幕的旁白內容、畫面意圖、風格設定的色調／光線／人物設定都寫進這句話裡，使用者要能整段複製直接貼給圖片工具）\n影片 Prompt：（直接寫成一句完整的圖生影片請求，說明這張圖要怎麼動起來，把畫面節奏也寫進去，並且完整包含上面第 4 點規定的無聲限制文字，使用者要能整段複製直接貼給影片工具）\n\n' +
+    '【第2幕｜幕名稱】\n（格式跟第1幕完全一樣，繼續下一幕，旁白一樣必須是完整文案的對應片段）\n\n……（依「長度」設定的合理幕數繼續，通常 3-6 幕，不要為了長度硬湊幕數）\n\n完整文案、總覽與所有幕都完成後，才進入下面的版本選擇規則。\n\n' +
+    '請直接完成兩個完整、正式、可以直接使用的版本，不是草稿、不是方向、不是分析：\n\n## Version A\n（依上面完整格式輸出【完整影片文案／旁白稿】＋【總覽】＋所有幕）\n\n## Version B\n（格式跟 Version A 完全一樣，但敘事切角要有實際差異，不能只換幾個字；兩版的完整文案與幕數都可以不同）\n\n' +
     '兩個版本都完成後，最後只需要輸出：\n\n請選擇你最喜歡的版本：\n\n○ Version A\n\n○ Version B\n\n○ 都不喜歡（重新產生）\n\n不要再多問其他問題。\n\n' +
-    '接下來使用者只會回覆「A」「B」或「重新產生」：\n- 收到「A」或「B」：請直接重新輸出使用者選的那個版本的完整內容（只要【總覽】＋所有幕本身，不要包含「## Version A」這種版本標題，不要摘要、不要局部修改），輸出完畢後另起一行加上：「📋 請複製以上完整母稿，貼回 AI 工作台。」\n- 收到「重新產生」：請重新完成兩個新的 Version A／Version B，直到使用者選定為止。'));
+    '接下來使用者只會回覆「A」「B」或「重新產生」：\n- 收到「A」或「B」：請直接重新輸出使用者選的那個版本的完整內容（只要【完整影片文案／旁白稿】＋【總覽】＋所有幕本身，不要包含「## Version A」這種版本標題，不要摘要、不要局部修改），輸出完畢後另起一行加上：「📋 請複製以上完整母稿，貼回 AI 工作台。」\n- 收到「重新產生」：請重新完成兩個新的 Version A／Version B，直到使用者選定為止。'));
 
   // Video Workflow vNext（CEO 核准，本輪真人測試明確要求的必做項目）：「配音與字幕」
   // 逐幕產出正式配音稿／配音語氣／語速與停頓／字幕，內容必須直接引用上一步「影片母稿」
   // 裡每一幕的旁白／文案，不得重新創作或改寫內容本身——這是本輪跟「腳本」不一樣的地方：
   // 「腳本」是產出新內容，「配音與字幕」是把已經定案的文字轉換成適合口白／字幕的格式，
-  // 不是重新發展一套新的文案。標記格式（【第N幕】）由 parseVoiceoverAndSubtitles() 解析，
+  // 不是重新發展一套新的文案。標記格式（【第N幕...】）由 parseVoiceoverAndSubtitles() 解析，
   // 幕數必須完整對應 Master Script，解析失敗時 submitPasteBack() 會擋下、不推進步驟。
+  //
+  // Correction Proposal Stage B：跟腳本同樣道理，先產出完整配音稿（只加斷句/呼吸/停頓/
+  // 語速/情緒提示，不改寫內容），再對應回逐幕，避免文案被逐幕切碎後各自加油添醋。這裡沒有
+  // 改動 parseVoiceoverAndSubtitles() 的解析規則——該函式原本就是用 /【第(\d+)幕[^】]*】/
+  // 這種寬鬆比對抓幕次標記，「【第1幕配音對照】」一樣能正確比對到 sceneNo=1；【完整配音稿】
+  // 這個新區塊排在所有幕次標記之前，解析時會被當成前導文字略過，不影響逐幕解析，也不會被
+  // 誤判成某一幕的內容（已用 test_master_script_vnext.js 實際測試驗證，非僅推論）。
   list.push(tpl('flow_specific', '寫作師', 'video', '配音與字幕', '影片製作／配音與字幕指導',
-    '你是影片製作流程中的配音與字幕指導。\n\n請根據下面「影片母稿」裡每一幕已經定案的旁白／文案，直接完成一份完整、正式、可以直接使用的逐幕配音稿與字幕——**不得改寫或重新創作旁白內容本身**，只能把既有文字調整成適合口白唸出來的斷句與節奏，並補上配音語氣、語速與停頓標記、正式字幕。\n\n' +
-    '影片／工作名稱：{{work_name}}\n目前步驟：{{step_name}}\n\n已有成果（含影片母稿，逐幕旁白請直接引用，不要改寫內容）：\n{{previous_results}}\n\n目前的風格設定（配音性格／語速等）：\n{{creative_preferences}}\n\n' +
+    '你是影片製作流程中的配音與字幕指導。\n\n請根據下面「影片母稿」裡已經定案的完整影片文案／旁白稿，先完成一份【完整配音稿】——**只能加入斷句、呼吸、停頓、語速與情緒提示，絕對不能改寫、精簡、擴寫或調整完整文案的用字與內容**，再把這份完整配音稿對應回每一幕，方便使用者剪輯時定位使用。\n\n' +
+    '影片／工作名稱：{{work_name}}\n目前步驟：{{step_name}}\n\n已有成果（含影片母稿，完整文案與逐幕旁白請直接引用，不要改寫內容）：\n{{previous_results}}\n\n目前的風格設定（配音性格／語速等）：\n{{creative_preferences}}\n\n' +
+    '請依序完成：\n\n' +
+    '1. 先產出【完整配音稿】：把母稿裡的完整影片文案／旁白稿，加上斷句、呼吸、停頓標記、語速與情緒提示，內容必須跟原文完全一致，不能有任何一句被改寫、精簡、擴寫或新增。\n\n' +
+    '2. 再依照每一幕，把完整配音稿對應回去，產出逐幕配音對照，方便使用者跟每一幕的畫面／剪輯對照使用。\n\n' +
     '請針對母稿裡的**每一幕**（幕數要完全對應，不能少幕），依照以下格式輸出，保留【】標題文字，區塊之間空一行（這是為了讓使用者的工作台能自動解析，請勿省略或改變標題文字）：\n\n' +
-    '【第1幕】\n配音稿：（把該幕旁白調整成適合口白唸出來的斷句版本，內容意思必須跟原本旁白一致，只能調整標點、停頓與口語化語氣，不能改變原意或加入新內容）\n配音語氣：（1句話，例如：溫暖、稍微放慢，像在跟朋友分享）\n語速與停頓：（具體標註，例如：整體語速中等；在「……」這句之後停頓約 0.5 秒，加強情緒）\n字幕：（適合螢幕呈現的簡短版本，跟配音稿意思一致；如果字數需要拆成兩行請直接換行呈現）\n\n' +
-    '【第2幕】\n（格式相同，繼續下一幕，直到涵蓋母稿的所有幕）\n\n' +
+    '【完整配音稿】\n（完整文案加上斷句／呼吸／停頓／語速／情緒提示後的版本，內容必須跟原文完全一致，不是重寫）\n\n' +
+    '【第1幕配音對照】\n配音稿：（這一幕對應的配音稿片段，跟上面完整配音稿一致，只是對應這一幕的部分；內容意思必須跟原本旁白一致，只能調整標點、停頓與口語化語氣，不能改變原意或加入新內容）\n配音語氣：（1句話，例如：溫暖、稍微放慢，像在跟朋友分享）\n語速與停頓：（具體標註，例如：整體語速中等；在「……」這句之後停頓約 0.5 秒，加強情緒）\n字幕：（適合螢幕呈現的簡短版本，跟配音稿意思一致；如果字數需要拆成兩行請直接換行呈現）\n\n' +
+    '【第2幕配音對照】\n（格式相同，繼續下一幕，直到涵蓋母稿的所有幕）\n\n' +
     '全部幕都完成後，才進入下面的確認規則。\n\n' +
-    '完成後只需要輸出上面逐幕內容，最後加一行：「📋 請複製以上逐幕配音與字幕，貼回 AI 工作台。」不要多問其他問題，不要提供多個版本選擇（這一步是把已定案內容轉換格式，不需要 A／B 版本挑選）。'));
+    '完成後只需要輸出上面內容，最後加一行：「📋 請複製以上完整配音稿與逐幕配音對照，貼回 AI 工作台。」不要多問其他問題，不要提供多個版本選擇（這一步是把已定案內容轉換格式，不需要 A／B 版本挑選）。'));
 
   list.push(tpl('flow_specific', '寫作師', 'ebook', '撰寫', '電子書／內文作者',
     '你是電子書流程中的內文作者。\n\n請根據以下大綱與蒐集的資料，直接完成正式電子書內文，讓使用者可以直接使用，不是草稿。\n\n電子書／工作名稱：{{work_name}}\n目前步驟：{{step_name}}\n電子書目標：{{goal}}\n\n已有成果：\n{{previous_results}}\n\n每個版本都要包含完整章節內文，用詞要白話、避免術語堆疊，讓讀者不用查資料就看得懂。兩個版本請用不同的敘事語氣或切入角度，不要只是換幾個字。' +
@@ -2499,16 +2666,28 @@ function renderToolGuide(containerId, buttonId, config) {
     '<div class="card">' +
       '<div class="section-label">' + escHtml(config.toolSectionLabel || '🎵 建議工具') + '</div>' +
       '<h3 style="font-size:17px;margin-bottom:4px">⭐ ' + escHtml(config.toolName) + '（官方建議）' + (config.rating ? '　' + starString(config.rating) : '') + '</h3>' +
+      (config.positioning ? '<div class="line" style="color:var(--gold)">' + escHtml(config.positioning) + '</div>' : '') +
       (config.fitFor ? '<div class="line" style="color:var(--gold)">適合：' + escHtml(config.fitFor) + '</div>' : '') +
       '<div class="line">' + escHtml(config.toolIntro) + '</div>' +
       '<div class="line" style="margin-top:6px">特色：</div>' +
       config.toolFeatures.map(function (f) { return '<div class="line">・' + escHtml(f) + '</div>'; }).join('') +
+      // Correction Proposal Stage E：為什麼推薦／手機操作／費用提醒／注意事項，只在有值時才顯示
+      // （既有其他 Flow 的 TOOL_GUIDE 沒有填這些欄位時，畫面完全不受影響）。
+      (config.whyRecommended ? '<div class="line" style="margin-top:6px">為什麼推薦：' + escHtml(config.whyRecommended) + '</div>' : '') +
+      (config.mobileExperience ? '<div class="line">手機操作：' + escHtml(config.mobileExperience) + '</div>' : '') +
+      (config.pricingNote ? '<div class="line">費用提醒：' + escHtml(config.pricingNote) + '</div>' : '') +
+      (config.caution ? '<div class="line">注意：' + escHtml(config.caution) + '</div>' : '') +
       (config.altTools && config.altTools.length ?
         '<details class="ai-why" style="margin-top:14px"><summary>查看替代工具（不想用預設工具時可以參考）</summary><div class="ai-why-body">' +
           config.altTools.map(function (t) {
             return '<div class="line" style="margin-top:8px"><b>' + escHtml(t.name) + '</b>' + (t.rating ? '　' + starString(t.rating) : '') +
+              (t.positioning ? '<br><span style="color:var(--gold)">' + escHtml(t.positioning) + '</span>' : '') +
               (t.fitFor ? '<br><span style="color:var(--gold)">適合：' + escHtml(t.fitFor) + '</span>' : '') +
-              '<br>' + escHtml(t.reason) + '</div>';
+              '<br>' + escHtml(t.reason) +
+              (t.mobileExperience ? '<br>手機操作：' + escHtml(t.mobileExperience) : '') +
+              (t.pricingNote ? '<br>費用提醒：' + escHtml(t.pricingNote) : '') +
+              (t.caution ? '<br>注意：' + escHtml(t.caution) : '') +
+              '</div>';
           }).join('') +
         '</div></details>' : '') +
     '</div>' +
@@ -2529,7 +2708,12 @@ function renderToolGuide(containerId, buttonId, config) {
   const openBtn = document.getElementById(buttonId);
   openBtn.style.display = '';
   openBtn.textContent = config.openToolLabel;
-  openBtn.href = config.openToolUrl;
+  // Correction Proposal Stage D：網址優先查 tools-catalog.json（config.toolId 是
+  // withOfficialRecommendation() 帶進來的「實際被推薦工具的 id」），查不到才退回 config
+  // 本身寫的 openToolUrl——保留這個 fallback 是為了讓 renderToolGuide() 繼續能用任意自訂
+  // config 呼叫（例如既有測試直接傳一組完全沒有 toolId 的假資料），不因為這次改動而變得
+  // 只能被本專案的官方工具清單牽著走。
+  openBtn.href = (config.toolId && getToolUrlById(config.toolId)) || config.openToolUrl;
 }
 
 // ── 工具使用流程引導（Video Tool Guide MVP，Video Flow Sprint 2）─────
@@ -2539,33 +2723,40 @@ function renderToolGuide(containerId, buttonId, config) {
 // Runway／Pika／Luma 目前已在「其他影片工具」（VIDEO_IMAGE_TOOL_RECOMMENDATIONS／
 // getVideoTypeToolRecommendations）以不同 UI 呈現，這裡先不重複整併，避免這輪低風險收斂
 // 擴大成兩套機制的合併決策——留待 Phase 2 影片試點時一併評估是否收斂成同一套。
+// Correction Proposal Stage E：官方優先推薦依「AI Collaboration Workspace 使用經驗（持續校準）」
+// 改成 Gemini（Veo）——不是排行榜或市場聲量。Canva／Kling 隨 collaboration-templates.json
+// category:video 的官方推薦鏈一起調整，變成 withOfficialRecommendation() 動態帶入的
+// altTools（「查看替代工具」），這裡的固定教學步驟因此改寫成 Gemini 的操作流程；Kling 原本的
+// 步驟寫法留作範本沿用（登入→上傳→生成→下載→回工作台），沒有實際逐一核對 Gemini 目前畫面
+// 長相寫出來，跟 Suno／Kling 原本的寫法基準一致，工具介面日後改版要留意維護。
+// Runway／Pika 依然留在「其他影片工具」（VIDEO_TYPE_TOOL_RECOMMENDATIONS），沒有被這次校準動到。
 const VIDEO_TOOL_GUIDE = {
   toolSectionLabel: '🎬 建議工具',
-  toolName: 'Kling',
+  toolName: 'Gemini',
   rating: 5,
-  fitFor: '已經準備好圖片、第一次製作 3 分鐘內短影片',
+  fitFor: '第一次嘗試圖生影片、想反覆練習整個工作流程',
   toolIntro: '這類工具可以把你準備好的圖片變成有動態感的完整影片。',
-  toolFeatures: ['圖生影片，操作簡單', '適合已經準備好圖片的人', '適合第一次製作短影片', '適合 3 分鐘內的簡單作品'],
+  toolFeatures: ['圖生影片，操作步驟清楚', '適合第一次嘗試圖生影片的人', '適合反覆練習整個工作流程', '手機操作方便'],
   steps: [
     '先確認圖片已經下載或保存',
-    '開啟 Kling',
+    '開啟 Gemini',
     '上傳要製作成影片的圖片',
     '貼上腳本或畫面描述，當作影片內容的補充說明（非必填）',
     '產生影片並確認效果',
-    '滿意後，先在 Kling 下載影片或複製分享連結',
+    '滿意後，先在 Gemini 下載影片或複製分享連結',
     '回到工作台，按「下一步：確認影片進度」'
   ],
   completionReminder: {
     title: '完成後記得保存',
     items: [
-      '想保留在手機或電腦：在 Kling 下載影片檔案。',
+      '想保留在手機或電腦：在 Gemini 下載影片檔案。',
       '想傳給朋友或分享到社群：複製影片分享連結。',
       '完成後回到工作台，按「下一步：確認影片進度」。'
     ]
   },
   firstTimeReminder: '第一次使用不用擔心。先選一張圖片試做，照著步驟完成第一小段影片即可。',
-  openToolLabel: '🎬 開啟 Kling',
-  openToolUrl: 'https://klingai.com'
+  openToolLabel: '🎬 開啟 Gemini',
+  openToolUrl: 'https://gemini.google.com'
 };
 
 function renderMakeSong() {
@@ -2841,6 +3032,47 @@ function renderSceneRegenerate() {
   document.getElementById('scene-regen-warning').style.display = 'none';
 }
 
+// Correction Proposal Stage C：Phase A／Phase B 共用的畫面順序（影片總覽→完整影片文案／
+// 旁白稿→完整配音稿（若已確認）→Style Anchor 摘要→逐幕分鏡卡片）改成同一個函式產生，
+// 避免兩個畫面各自寫一份、之後容易長歪。prefix 是 'mv'（Phase A）或 'vt'（Phase B），
+// 對應 index.html 裡各自的 id（例如 mv-full-narration-box／vt-full-narration-box）。
+let lastFullNarrationText = '';
+let lastFullVoiceoverText = '';
+function copyFullNarrationScript() { copyPlainText(lastFullNarrationText, '已複製完整文案'); }
+function copyFullVoiceoverScript() { copyPlainText(lastFullVoiceoverText, '已複製完整配音稿'); }
+
+function renderMasterScriptHeader(ms, prefix) {
+  const narration = getDisplayFullNarrationScript(ms);
+  lastFullNarrationText = narration.text;
+  document.getElementById(prefix + '-full-narration-box').textContent = narration.text || '（尚未有內容）';
+  const narrationNote = document.getElementById(prefix + '-full-narration-fallback-note');
+  if (narration.isFallbackAssembled) {
+    narrationNote.style.display = 'block';
+    narrationNote.textContent = '（此為系統依逐幕內容組合顯示，非原始完整文案）';
+  } else {
+    narrationNote.style.display = 'none';
+  }
+
+  const voiceover = getDisplayFullVoiceoverScript(ms);
+  const voiceoverCard = document.getElementById(prefix + '-full-voiceover-card');
+  if (voiceover.text) {
+    voiceoverCard.style.display = 'block';
+    lastFullVoiceoverText = voiceover.text;
+    document.getElementById(prefix + '-full-voiceover-box').textContent = voiceover.text;
+    const voiceoverNote = document.getElementById(prefix + '-full-voiceover-fallback-note');
+    if (voiceover.isFallbackAssembled) {
+      voiceoverNote.style.display = 'block';
+      voiceoverNote.textContent = '（此為系統依逐幕配音組合顯示，非原始完整配音稿）';
+    } else {
+      voiceoverNote.style.display = 'none';
+    }
+  } else {
+    voiceoverCard.style.display = 'none';
+  }
+
+  document.getElementById(prefix + '-style-anchor-box').innerHTML = buildStyleAnchorSummaryHtml(ms.styleAnchorSnapshot);
+}
+
 // Video Workflow vNext：有 Master Script（新格式，逐幕）時，Phase A 改成逐幕卡片顯示，
 // 每一幕都能看到旁白／字幕／畫面意圖／秒數／情緒／素材需求，並各自複製自己的圖片 Prompt。
 // 舊影音工作（沒有 work.masterScript，例如這次 Sprint 之前就存在的工作）繼續用舊版
@@ -2883,9 +3115,16 @@ function renderMakeVideo() {
     scenesBlock.style.display = 'block';
     document.getElementById('mv-overview-summary').textContent =
       '主軸：' + (ms.mainThread || '（無）') + '　｜　長度：' + (ms.lengthRange || '（未設定）') + '　｜　共 ' + ms.scenes.length + ' 幕';
+    renderMasterScriptHeader(ms, 'mv');
     lastSceneImagePrompts = {};
+    // Correction Proposal Stage D（每一幕的操作順序：先複製這一幕指令，再開啟推薦工具）：
+    // 開啟連結指向這一步「官方推薦」的圖片工具（跟 mv-recommended-tools 卡片同一個推薦結果，
+    // 只是多一個更靠近逐幕內容的捷徑）；沒有網址時 buildToolOpenLinkHtml() 直接回傳空字串，
+    // 不會渲染出開啟按鈕，也不會有第一顆按鈕還沒按就先把使用者送出工作台的狀況。
+    const primaryImageTool = getRecommendedToolsChain('video', '工程師', '製作影片', 'image')[0];
     document.getElementById('mv-scenes-list').innerHTML = ms.scenes.map(function (scene) {
       lastSceneImagePrompts[scene.sceneNo] = scene.imagePrompt || '';
+      const openLink = primaryImageTool ? buildToolOpenLinkHtml(primaryImageTool.toolId, '開啟推薦圖片工具') : '';
       return '<div class="card" style="margin-top:14px">' +
         '<div class="section-label">第' + scene.sceneNo + '幕' + (scene.sceneName ? '｜' + escHtml(scene.sceneName) : '') + '</div>' +
         '<div class="line"><b>旁白／文案：</b>' + escHtml(scene.narration || '（無）') + '</div>' +
@@ -2895,6 +3134,7 @@ function renderMakeVideo() {
         '<div class="section-label" style="margin-top:10px;font-size:14px">圖片生成指令</div>' +
         '<div class="copy-box">' + escHtml(scene.imagePrompt || '（還沒有圖片生成指令）') + '</div>' +
         '<button class="btn outline" style="margin-top:6px" onclick="copySceneImagePrompt(' + scene.sceneNo + ')">📋 複製第' + scene.sceneNo + '幕圖片生成指令</button>' +
+        openLink +
         '<button class="btn outline" style="margin-top:6px" onclick="openSceneRegenerate(' + scene.sceneNo + ', \'image\', \'screen-make-video\')">🔁 只重新生成這一幕的圖片指令</button>' +
         '</div>';
     }).join('');
@@ -2971,13 +3211,21 @@ function renderVideoTools() {
   const scenesBlock = document.getElementById('vt-scenes-block');
   if (ms) {
     scenesBlock.style.display = 'block';
+    document.getElementById('vt-overview-summary').textContent =
+      '主軸：' + (ms.mainThread || '（無）') + '　｜　長度：' + (ms.lengthRange || '（未設定）') + '　｜　共 ' + ms.scenes.length + ' 幕';
+    renderMasterScriptHeader(ms, 'vt');
     lastSceneVideoPrompts = {};
+    // Correction Proposal Stage D：同樣先複製這一幕指令，再提供開啟推薦影片工具的捷徑
+    // （跟上面 vt-tool-guide 卡片的「開啟 Kling」是同一個官方推薦來源）。
+    const primaryVideoTool = getRecommendedToolsChain('video', '工程師', '製作影片', 'video')[0];
     document.getElementById('vt-scenes-list').innerHTML = ms.scenes.map(function (scene) {
       lastSceneVideoPrompts[scene.sceneNo] = scene.videoPrompt || '';
+      const openLink = primaryVideoTool ? buildToolOpenLinkHtml(primaryVideoTool.toolId, '開啟推薦影片工具') : '';
       return '<div class="card" style="margin-top:14px">' +
         '<div class="section-label">第' + scene.sceneNo + '幕' + (scene.sceneName ? '｜' + escHtml(scene.sceneName) : '') + '</div>' +
         '<div class="copy-box">' + escHtml(scene.videoPrompt || '（還沒有影片生成指令）') + '</div>' +
         '<button class="btn outline" style="margin-top:6px" onclick="copySceneVideoPrompt(' + scene.sceneNo + ')">📋 複製第' + scene.sceneNo + '幕影片生成指令</button>' +
+        openLink +
         '<button class="btn outline" style="margin-top:6px" onclick="openSceneRegenerate(' + scene.sceneNo + ', \'video\', \'screen-video-tools\')">🔁 只重新生成這一幕的影片指令</button>' +
         '</div>';
     }).join('');
@@ -3018,9 +3266,31 @@ function videoHandoffContinue() { showScreen('screen-save-video'); }
 let lastVideoHandoffText = '';
 function copyVideoHandoffChecklist() { copyPlainText(lastVideoHandoffText, '已複製剪輯交接清單'); }
 
+// Correction Proposal Stage C（要求八）：剪輯交接清單最前面要先看到完整文案與完整配音稿，
+// 使用者或剪輯師才能先掌握整體內容，再處理逐幕素材——沿用 renderMasterScriptHeader() 同一份
+// 資料與 fallback 規則（舊版沒有 fullNarrationScript／fullVoiceoverScript 時一樣誠實標記）。
+function renderVideoHandoffFullScriptSection(ms) {
+  const narration = getDisplayFullNarrationScript(ms);
+  const voiceover = getDisplayFullVoiceoverScript(ms);
+  let html = '<div class="card"><div class="section-label">完整影片文案／旁白稿</div>' +
+    (narration.isFallbackAssembled ? '<div class="notice" style="margin-top:6px">（此為系統依逐幕內容組合顯示，非原始完整文案）</div>' : '') +
+    '<div class="copy-box" style="margin-top:8px">' + escHtml(narration.text || '（尚未有內容）') + '</div>' +
+    '<button class="btn outline" style="margin-top:8px" onclick="copyFullNarrationScript()">📋 複製完整文案</button></div>';
+  if (voiceover.text) {
+    html += '<div class="card" style="margin-top:14px"><div class="section-label">完整配音稿</div>' +
+      (voiceover.isFallbackAssembled ? '<div class="notice" style="margin-top:6px">（此為系統依逐幕配音組合顯示，非原始完整配音稿）</div>' : '') +
+      '<div class="copy-box" style="margin-top:8px">' + escHtml(voiceover.text) + '</div>' +
+      '<button class="btn outline" style="margin-top:8px" onclick="copyFullVoiceoverScript()">📋 複製完整配音稿</button></div>';
+  }
+  return html;
+}
+
 function renderVideoHandoff() {
   const work = getActiveWork();
   const ms = getMasterScript(work);
+  document.getElementById('vh-full-script-section').innerHTML = renderVideoHandoffFullScriptSection(ms);
+  lastFullNarrationText = getDisplayFullNarrationScript(ms).text;
+  lastFullVoiceoverText = getDisplayFullVoiceoverScript(ms).text;
   const list = document.getElementById('vh-scenes-list');
   const missing = [];
   list.innerHTML = ms.scenes.map(function (scene) {
@@ -3053,7 +3323,11 @@ function renderVideoHandoff() {
     warnEl.style.display = 'none';
   }
 
+  const narrationForText = getDisplayFullNarrationScript(ms);
+  const voiceoverForText = getDisplayFullVoiceoverScript(ms);
   lastVideoHandoffText = '【剪輯交接清單】' + work.name + '\n主軸：' + (ms.mainThread || '') + '　長度：' + (ms.lengthRange || '') + '\n\n' +
+    '【完整影片文案／旁白稿】' + (narrationForText.isFallbackAssembled ? '（系統依逐幕內容組合）' : '') + '\n' + (narrationForText.text || '') + '\n\n' +
+    (voiceoverForText.text ? '【完整配音稿】' + (voiceoverForText.isFallbackAssembled ? '（系統依逐幕配音組合）' : '') + '\n' + voiceoverForText.text + '\n\n' : '') +
     ms.scenes.map(function (scene) {
       const voice = scene.voiceover;
       return '第' + scene.sceneNo + '幕' + (scene.sceneName ? '｜' + scene.sceneName : '') + '（約 ' + (scene.estimatedSeconds || '未設定') + '）\n' +

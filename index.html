@@ -415,10 +415,32 @@
     <div style="padding-top:20px">
       <div class="notice">現在開始準備圖片素材<br><br>AI 已經幫你完成：<br>✅ 影片母稿（逐幕文案與畫面規劃）<br>✅ 逐幕圖片生成指令<br><br>現在請：把每一幕的圖片生成指令交給你習慣使用的圖片工具，逐幕做出你的圖片素材。</div>
 
-      <!-- Video Workflow vNext：有 Master Script 時顯示逐幕卡片 -->
+      <!-- Video Workflow vNext：有 Master Script 時顯示逐幕卡片。
+           Stage C 固定順序：影片總覽 → 完整影片文案／旁白稿 → 完整配音稿（若已確認）→
+           Style Anchor 摘要 → 逐幕分鏡卡片。 -->
       <div id="mv-scenes-block" style="display:none">
         <div class="notice" id="mv-overview-summary" style="margin-top:14px"></div>
-        <div id="mv-scenes-list"></div>
+
+        <div class="card" style="margin-top:14px">
+          <div class="section-label">完整影片文案／旁白稿</div>
+          <div class="notice" id="mv-full-narration-fallback-note" style="display:none;margin-top:6px"></div>
+          <div class="copy-box" id="mv-full-narration-box" style="max-height:26vh;overflow-y:auto;margin-top:8px"></div>
+          <button class="btn outline" style="margin-top:8px" onclick="copyFullNarrationScript()">📋 複製完整文案</button>
+        </div>
+
+        <div class="card" id="mv-full-voiceover-card" style="margin-top:14px;display:none">
+          <div class="section-label">完整配音稿</div>
+          <div class="notice" id="mv-full-voiceover-fallback-note" style="display:none;margin-top:6px"></div>
+          <div class="copy-box" id="mv-full-voiceover-box" style="max-height:26vh;overflow-y:auto;margin-top:8px"></div>
+          <button class="btn outline" style="margin-top:8px" onclick="copyFullVoiceoverScript()">📋 複製完整配音稿</button>
+        </div>
+
+        <div class="card" style="margin-top:14px">
+          <div class="section-label">Style Anchor 摘要</div>
+          <div id="mv-style-anchor-box" style="margin-top:6px"></div>
+        </div>
+
+        <div id="mv-scenes-list" style="margin-top:14px"></div>
       </div>
 
       <!-- 舊影音工作相容：沒有 Master Script（Sprint 之前建立的工作）時，顯示舊版三段式扁平內容 -->
@@ -477,8 +499,31 @@
       <div id="vt-tool-guide" style="margin-top:16px"></div>
       <a class="btn outline" style="margin-top:10px;text-decoration:none;display:block;text-align:center" id="vt-open-tool-btn" href="#" target="_blank" rel="noopener">🎬 開啟 Kling</a>
 
-      <!-- Video Workflow vNext：有 Master Script 時，逐幕顯示影片生成指令 -->
+      <!-- Video Workflow vNext：有 Master Script 時，逐幕顯示影片生成指令。
+           Stage C 固定順序：影片總覽 → 完整影片文案／旁白稿 → 完整配音稿（若已確認）→
+           Style Anchor 摘要 → 逐幕分鏡卡片，跟 Phase A 一致。 -->
       <div id="vt-scenes-block" style="display:none">
+        <div class="notice" id="vt-overview-summary" style="margin-top:14px"></div>
+
+        <div class="card" style="margin-top:14px">
+          <div class="section-label">完整影片文案／旁白稿</div>
+          <div class="notice" id="vt-full-narration-fallback-note" style="display:none;margin-top:6px"></div>
+          <div class="copy-box" id="vt-full-narration-box" style="max-height:26vh;overflow-y:auto;margin-top:8px"></div>
+          <button class="btn outline" style="margin-top:8px" onclick="copyFullNarrationScript()">📋 複製完整文案</button>
+        </div>
+
+        <div class="card" id="vt-full-voiceover-card" style="margin-top:14px;display:none">
+          <div class="section-label">完整配音稿</div>
+          <div class="notice" id="vt-full-voiceover-fallback-note" style="display:none;margin-top:6px"></div>
+          <div class="copy-box" id="vt-full-voiceover-box" style="max-height:26vh;overflow-y:auto;margin-top:8px"></div>
+          <button class="btn outline" style="margin-top:8px" onclick="copyFullVoiceoverScript()">📋 複製完整配音稿</button>
+        </div>
+
+        <div class="card" style="margin-top:14px">
+          <div class="section-label">Style Anchor 摘要</div>
+          <div id="vt-style-anchor-box" style="margin-top:6px"></div>
+        </div>
+
         <div class="section-label" style="margin-top:18px">逐幕影片生成指令</div>
         <div id="vt-scenes-list"></div>
       </div>
@@ -498,6 +543,8 @@
     </div>
     <div style="padding-top:20px">
       <div id="tc-steps"></div>
+      <!-- Correction Proposal Stage D：查得到官方入口網址時才顯示，找不到就隱藏（安全降級）。 -->
+      <a class="btn outline" style="margin-top:10px;text-decoration:none;display:none;text-align:center" id="tc-open-tool-btn" href="#" target="_blank" rel="noopener"></a>
       <button class="btn" style="margin-top:20px" onclick="closeToolCompanion()">完成後，回來這裡</button>
     </div>
   </div>
@@ -525,6 +572,11 @@
     </div>
     <div style="padding-top:20px">
       <div class="notice">這是每一幕的完整資料，交給剪輯師或自己剪輯時都可以直接對照使用。</div>
+
+      <!-- Correction Proposal Stage C（要求八）：完整文案／完整配音稿放在逐幕素材之前，
+           先掌握整體內容再處理每一幕。 -->
+      <div id="vh-full-script-section"></div>
+
       <div class="notice" id="vh-missing-warning" style="display:none;margin-top:10px"></div>
       <div id="vh-scenes-list"></div>
       <button class="btn outline" style="margin-top:16px" onclick="copyVideoHandoffChecklist()">📋 複製整份剪輯交接清單</button>

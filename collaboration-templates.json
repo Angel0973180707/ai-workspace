@@ -66,7 +66,9 @@
           { "toolId": "gemini", "rating": 4, "fitFor": "手邊已經在用 Gemini，想直接延伸使用", "reason": "Gemini 也有圖片生成功能，手邊已經在用的話直接延伸使用很方便。", "validation": "Proposed" }
         ] },
         { "role": "工程師", "stepName": "製作影片", "category": "video", "recommendedTools": [
-          { "toolId": "kling", "rating": 5, "fitFor": "已經準備好圖片、第一次製作 3 分鐘內短影片", "reason": "圖生影片，操作簡單，適合第一次製作短影片。", "validation": "App Verified", "lastVerified": "2026-07" }
+          { "toolId": "gemini", "rating": 5, "positioning": "圖生影片首選", "fitFor": "第一次嘗試圖生影片、想反覆練習整個工作流程", "reason": "目前使用經驗中，適合初學者快速完成圖片轉影片，手機操作方便，品質表現良好，適合反覆練習整個工作流程。", "whyRecommended": "目前使用經驗中，適合初學者快速完成圖片轉影片，操作步驟清楚。", "bestFor": "初學者、想快速看到第一支動態成品的使用者", "mobileExperience": "手機操作方便", "experienceNote": "目前使用經驗中，品質表現良好，適合反覆練習整個工作流程。", "pricingNote": "目前提供免費體驗，實際額度與方案以官方最新資訊為準", "caution": "請使用工作台產生的無旁白、無配樂、不要對嘴影片指令", "validation": "Proposed", "lastVerified": "2026-07" },
+          { "toolId": "canva", "rating": 5, "positioning": "影片最後成片", "fitFor": "需要把素材整合成最終成片、統一品牌視覺的使用者", "reason": "目前使用經驗中，適合影片最後成片，品牌設計、簡報、社群與影片整合方便，符合工作台的品牌工作流程。", "whyRecommended": "目前使用經驗中，適合影片最後成片，品牌設計、簡報、社群與影片整合方便，符合工作台的品牌工作流程。", "bestFor": "已有素材，想快速整合成一支完整影片", "mobileExperience": "手機與電腦皆可操作，電腦操作較完整", "experienceNote": "目前使用經驗中，適合作為影片最後編輯與發布工具。", "pricingNote": "目前提供免費版本，進階功能與方案以官方最新資訊為準", "caution": "請使用工作台產生的無旁白、無配樂影片素材再進行整合", "validation": "Proposed", "lastVerified": "2026-07" },
+          { "toolId": "kling", "rating": 5, "positioning": "正式作品的另一種選擇", "fitFor": "已經準備好圖片、想製作正式感較強的短影片", "reason": "目前使用經驗中，畫面品質表現良好，適合正式作品，使用者可依需求自行選擇。", "whyRecommended": "目前使用經驗中，畫面品質表現良好，適合正式作品，使用者可依需求自行選擇。", "bestFor": "想要正式作品質感的使用者", "mobileExperience": "可使用手機操作", "experienceNote": "目前使用經驗中，畫面品質表現良好，適合作為正式作品的另一種選擇。", "pricingNote": "目前提供免費額度，實際額度與方案以官方最新資訊為準", "caution": "請使用工作台產生的無旁白、無配樂、不要對嘴影片指令", "validation": "App Verified", "lastVerified": "2026-07" }
         ] }
       ]
     },
