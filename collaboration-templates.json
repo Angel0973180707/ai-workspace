@@ -61,9 +61,9 @@
           { "toolId": "chatgpt", "reason": "整理發布文案跟標題，ChatGPT 很順手。" }
         ] },
         { "role": "工程師", "stepName": "製作影片", "category": "image", "recommendedTools": [
+          { "toolId": "gemini", "rating": 5, "fitFor": "已經準備好圖片生成指令、想快速看到成品", "reason": "目前使用經驗中，建議先從 Gemini 開始；實際額度與功能以官方最新資訊為準。", "validation": "Proposed", "lastVerified": "2026-07" },
           { "toolId": "chatgpt", "rating": 5, "fitFor": "已經準備好想法、想快速看到成品", "reason": "文字生成圖片，操作簡單，可以直接把文案內容寫進圖片裡，適合第一次製作素材。", "validation": "App Verified", "lastVerified": "2026-07" },
-          { "toolId": "canva", "rating": 4, "fitFor": "想要更精緻的排版跟版型", "reason": "如果想要更精緻的排版跟版型，Canva 也是常見的選擇。", "validation": "Proposed" },
-          { "toolId": "gemini", "rating": 4, "fitFor": "手邊已經在用 Gemini，想直接延伸使用", "reason": "Gemini 也有圖片生成功能，手邊已經在用的話直接延伸使用很方便。", "validation": "Proposed" }
+          { "toolId": "canva", "rating": 4, "fitFor": "想要更精緻的排版跟版型", "reason": "如果想要更精緻的排版跟版型，Canva 也是常見的選擇。", "validation": "Proposed" }
         ] },
         { "role": "工程師", "stepName": "製作影片", "category": "video", "recommendedTools": [
           { "toolId": "gemini", "rating": 5, "positioning": "圖生影片首選", "fitFor": "第一次嘗試圖生影片、想反覆練習整個工作流程", "reason": "目前使用經驗中，適合初學者快速完成圖片轉影片，手機操作方便，品質表現良好，適合反覆練習整個工作流程。", "whyRecommended": "目前使用經驗中，適合初學者快速完成圖片轉影片，操作步驟清楚。", "bestFor": "初學者、想快速看到第一支動態成品的使用者", "mobileExperience": "手機操作方便", "experienceNote": "目前使用經驗中，品質表現良好，適合反覆練習整個工作流程。", "pricingNote": "目前提供免費體驗，實際額度與方案以官方最新資訊為準", "caution": "請使用工作台產生的無旁白、無配樂、不要對嘴影片指令", "validation": "Proposed", "lastVerified": "2026-07" },

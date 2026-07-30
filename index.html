@@ -441,6 +441,19 @@
           <div id="mv-style-anchor-box" style="margin-top:6px"></div>
         </div>
 
+        <!-- CEO 真人驗收 Blocker #2：只有目前所有場景都沒有有效圖片生成指令時才顯示，
+             讓使用者選擇圖片張數，系統依旁白內容自動切成對應數量的分鏡並產生每一幕的
+             圖片生成指令。已有部分或全部有效內容時不顯示，避免誤觸整份重切。 -->
+        <div class="card" id="mv-image-recovery-block" style="margin-top:14px;display:none">
+          <div class="notice">這支影片的圖片生成指令還沒有產生。請選擇這支影片大概需要幾張主要畫面，系統會依照旁白內容自動切成對應的分鏡，並產生每一幕可以直接使用的圖片生成指令。</div>
+          <div class="section-label" style="margin-top:14px">選擇圖片張數</div>
+          <div id="mv-image-recovery-count-list" style="margin-top:6px"></div>
+          <div style="margin-top:10px;display:flex;gap:8px;align-items:center">
+            <input type="number" id="mv-image-recovery-custom-count" min="1" max="30" placeholder="自訂張數" style="flex:1" />
+            <button class="btn outline" onclick="submitCustomImageRecoveryCount()">使用這個張數</button>
+          </div>
+        </div>
+
         <div id="mv-scenes-list" style="margin-top:14px"></div>
       </div>
 

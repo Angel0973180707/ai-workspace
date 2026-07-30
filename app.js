@@ -458,6 +458,12 @@ const VIDEO_IMAGE_COUNT_OPTIONS = [
   { count: 6, label: '6 張' },
   { count: 12, label: '12 張（適合已經比較熟悉的人）' }
 ];
+// CEO 真人驗收 Blocker #2：跟上面 VIDEO_IMAGE_COUNT_OPTIONS 是兩件不同的事——那組只是
+// Phase A 畫面上「這支影片大概要準備幾張圖片」的提示選項，跟逐幕母稿完全無關；這組才是
+// 「目前所有場景都沒有有效 imagePrompt」時，用來決定要把乾淨旁白重新切成幾幕的補救入口
+// （見 generateImagePromptsForAllScenes()）。刻意不重用同一組選項或同一個 UI，避免使用者
+// 誤以為調整「圖片數量」提示也會影響已經產生好的逐幕內容。
+const IMAGE_RECOVERY_COUNT_OPTIONS = [3, 5, 8, 10];
 // 影片類型沒有明確理由需要橫式／方形時，一律用 Starter 預設「直式」，這是設計文件的判斷，不是每種類型都有強烈理由
 const VIDEO_TYPE_DEFAULTS = {
   song_mv: { ratio: 'portrait', count: 3 },
@@ -1142,10 +1148,23 @@ function styleAnchorOutOfSync(work) {
 // 再整份重新產生文字、存成「腳本」這一步的新版本、重新走一次 syncMasterScriptFromResult()，
 // 確保 state.results[].content 永遠是唯一正式來源，work.masterScript 只是它的衍生索引
 // （CEO 核准的「單一主資料」原則），不會出現母稿跟正式成果內容對不起來的狀況。
+//
+// CEO 真人驗收 Blocker #2 追查時發現的既有潛在問題（連帶修正，不是新增功能）：這份文字
+// 產生後會整份丟回 parseMasterScriptStrict() 重新驗證（見 syncMasterScriptFromResult()），
+// 但 parseMasterScriptStrict() 要求 purpose／mainThread 兩個欄位非空才算合法——寬鬆解析
+// （Bug #1 修正）建立的 work.masterScript 這兩個欄位本來就是空字串，導致任何從寬鬆解析
+// 而來的母稿，只要走一次這個「機器重新產生文字→重新解析」的迴圈（單幕重做、或本次新增的
+// 「產生圖片指令」），就會在還原驗證時靜默失敗、work.masterScript 悄悄跟正式成果內容脫鉤。
+// 這裡只在「機器自己重新組字」這個動作補一個不影響顯示的預設值，不改動
+// parseMasterScriptStrict() 本身的驗證規則，也不影響使用者主動貼回內容時的判斷標準。
 function renderMasterScriptText(ms) {
   let text = '【完整影片文案／旁白稿】\n' + (ms.fullNarrationScript || '') + '\n\n';
   text += '【總覽】\n';
-  MASTER_SCRIPT_OVERVIEW_FIELDS.forEach(function (f) { text += f.label + '：' + (ms[f.key] || '') + '\n'; });
+  MASTER_SCRIPT_OVERVIEW_FIELDS.forEach(function (f) {
+    let val = ms[f.key] || '';
+    if (!val && (f.key === 'purpose' || f.key === 'mainThread')) val = '（沿用原始腳本內容，未另行填寫）';
+    text += f.label + '：' + val + '\n';
+  });
   ms.scenes.forEach(function (scene) {
     text += '\n【第' + scene.sceneNo + '幕｜' + (scene.sceneName || '') + '】\n';
     MASTER_SCRIPT_SCENE_FIELDS.forEach(function (f) { text += f.label + '：' + (scene[f.key] || '') + '\n'; });
@@ -3037,7 +3056,127 @@ let lastSceneVideoPrompts = {};
 
 function copyMakeVideoScript() { copyPlainText(lastMakeVideoScript, '已複製腳本，帶去你的影片工具吧'); }
 function copyMakeVideoImages() { copyPlainText(lastMakeVideoImages, '已複製圖片描述與風格，帶去你的圖片工具吧'); }
-function copySceneImagePrompt(sceneNo) { copyPlainText(lastSceneImagePrompts[sceneNo] || '', '已複製第' + sceneNo + '幕的圖片生成指令，帶去你的圖片工具吧'); }
+// CEO 真人驗收 Blocker #2 空資料防呆（核准的修正標準第三點）：畫面已經改成 imagePrompt
+// 為空時按鈕直接 disabled（見 renderMakeVideo()），這裡多一層函式層級的防呆——就算按鈕
+// 因為任何原因還是被觸發，也絕不把空字串寫進剪貼簿、絕不顯示「已複製」的成功提示。
+function copySceneImagePrompt(sceneNo) {
+  const text = lastSceneImagePrompts[sceneNo] || '';
+  if (!text.trim()) { showToast('這一幕還沒有圖片生成指令，請先產生'); return; }
+  copyPlainText(text, '已複製第' + sceneNo + '幕的圖片生成指令，帶去你的圖片工具吧');
+}
+
+function hasValidImagePrompt(scene) { return !!(scene && scene.imagePrompt && scene.imagePrompt.trim()); }
+
+// CEO 真人驗收 Blocker #2（產品定位校準）：把乾淨旁白依句子邊界切成大致等長的 N 段，
+// 不是機械式等分字數，也不是隨機切——依標點斷句後，用「累積長度接近平均值就換下一段」
+// 的方式分組，避免把一句話從中間切斷。使用者要求的張數如果比實際句子數還多，最多只切到
+// 句子數量（不會為了湊數硬生出空白的幕）。
+function splitNarrationIntoSceneChunks(narrationText, count) {
+  const sentences = (narrationText || '').split(/(?<=[。！？!?])\s*/).map(function (s) { return s.trim(); }).filter(Boolean);
+  if (sentences.length === 0) return [];
+  const n = Math.max(1, Math.min(count, sentences.length));
+  const totalLen = sentences.reduce(function (sum, s) { return sum + s.length; }, 0);
+  const targetLen = totalLen / n;
+  const chunks = [];
+  let idx = 0;
+  for (let i = 0; i < n; i++) {
+    const remaining = n - i;
+    if (remaining === 1) { chunks.push(sentences.slice(idx).join('')); idx = sentences.length; break; }
+    let acc = '';
+    let accLen = 0;
+    while (idx < sentences.length && (accLen === 0 || accLen < targetLen) && (sentences.length - idx) > (remaining - 1)) {
+      acc += sentences[idx]; accLen += sentences[idx].length; idx++;
+    }
+    chunks.push(acc);
+  }
+  return chunks;
+}
+
+// CEO 真人驗收 Blocker #2（產品定位校準第二點）：圖片指令必須根據「這一幕實際的旁白內容」
+// 決定人物、場景、動作、情緒與構圖，不是套一句空泛模板——直接把這一幕的旁白原文整段放進
+// 指令裡，並明確要求「不要加入旁白沒有提到的重要情節」；再帶入 Style Anchor（風格、人物、
+// 敘事調性等）與畫面比例，維持全片人物／場景／風格一致性，最後提醒是第幾幕、共幾幕。
+function buildAutoImagePrompt(narration, styleAnchorText, ratioLabel, sceneNo, totalScenes) {
+  return '請生成一張圖片，畫面請根據下面這段旁白內容決定人物、場景、動作、情緒與構圖，不要加入旁白沒有提到的重要情節：\n\n' +
+    '「' + narration + '」\n\n' +
+    styleAnchorText + '\n\n' +
+    '這是全片第 ' + sceneNo + ' 幕（共 ' + totalScenes + ' 幕），請維持跟其他幕一致的人物外觀、場景與整體視覺風格，避免同一部影片裡人物或場景忽然變成不同樣貌。\n' +
+    '畫面比例：' + ratioLabel + '。\n' +
+    '請直接輸出這張圖片，不需要文字說明。';
+}
+
+// 把 ms.scenes 目前的內容重新寫回「腳本」步驟的正式成果，並重新走一次
+// syncMasterScriptFromResult()，維持「state.results 是唯一正式來源」這條既有原則
+// （跟 submitSceneRegenerate() 圖片／影片 Prompt 分支同一套寫回方式）。
+function persistMasterScriptScenesChange(work, ms) {
+  const project = getProject(work.projectId);
+  const flow = FLOWS.video;
+  const scriptIdx = flow.steps.findIndex(function (s) { return s.name === '腳本'; });
+  const r = makeResult(state, work, project, scriptIdx, renderMasterScriptText(ms), false, '很滿意');
+  work.stepResultIds[scriptIdx] = r.id;
+  syncMasterScriptFromResult(work, r);
+  saveState();
+}
+
+// CEO 真人驗收 Blocker #2（重新分鏡範圍採方案一）：只有在「目前所有場景都沒有有效的
+// imagePrompt」時才會顯示「選擇圖片張數」入口（見 renderMakeVideo()），這裡才會被呼叫——
+// 已經有部分或全部有效 imagePrompt 的既有內容，不會被這個函式覆蓋或整份清空重建。
+function generateImagePromptsForAllScenes(count) {
+  const work = getActiveWork();
+  const ms = getMasterScript(work);
+  if (!ms) return;
+  const narration = ms.fullNarrationScript || '';
+  const chunks = splitNarrationIntoSceneChunks(narration, count);
+  if (chunks.length === 0) { showToast('目前沒有可用的旁白內容，無法產生分鏡'); return; }
+  // 不直接用 ms.styleAnchorSnapshot——那是「腳本」步驟上一次確認時凍結的快照，這裡是機器
+  // 產生新內容的當下，改用「現在」的 work.imageRatio／videoType 現組一份，避免畫面比例
+  // 前後兩處（Style Anchor 摘要文字＋下面另外附加的畫面比例那一行）互相矛盾（一邊顯示
+  // 「未設定」、一邊顯示「直式」）。persistMasterScriptScenesChange() 之後也會用同一組現值
+  // 重新建立正式的 styleAnchorSnapshot，兩邊會保持一致。
+  const styleAnchorText = buildStyleAnchorText(buildStyleAnchorSnapshot(work, ms));
+  const ratioInfo = VIDEO_RATIO_OPTIONS.find(function (r) { return r.id === work.imageRatio; });
+  const ratioLabel = ratioInfo ? ratioInfo.label : '直式';
+  const totalScenes = chunks.length;
+  ms.scenes = chunks.map(function (text, i) {
+    const sceneNo = i + 1;
+    return {
+      sceneNo: sceneNo, sceneName: '', narration: text, subtitle: '',
+      visualIntent: '', estimatedSeconds: '', mood: '', materialNeeds: '',
+      imagePrompt: buildAutoImagePrompt(text, styleAnchorText, ratioLabel, sceneNo, totalScenes),
+      videoPrompt: ''
+    };
+  });
+  persistMasterScriptScenesChange(work, ms);
+  renderMakeVideo();
+}
+
+function chooseImageRecoveryCount(count) { generateImagePromptsForAllScenes(count); }
+
+function submitCustomImageRecoveryCount() {
+  const input = document.getElementById('mv-image-recovery-custom-count');
+  const count = parseInt(input.value, 10);
+  if (!count || count < 1) { showToast('請輸入 1 以上的張數'); return; }
+  generateImagePromptsForAllScenes(count);
+}
+
+// CEO 真人驗收 Blocker #2（重新分鏡範圍第三點）：只有部分場景缺少 imagePrompt 時，保留
+// 已完成的內容，只針對這一幕補救——不觸發整份重新分鏡，沿用這一幕既有的旁白（narration
+// 不變，只補上這一幕的圖片生成指令）。
+function generateImagePromptForScene(sceneNo) {
+  const work = getActiveWork();
+  const ms = getMasterScript(work);
+  if (!ms) return;
+  const scene = ms.scenes.find(function (s) { return s.sceneNo === sceneNo; });
+  if (!scene) return;
+  // 同 generateImagePromptsForAllScenes()：用現在的 work 現值重組，不用可能過期的
+  // ms.styleAnchorSnapshot，避免畫面比例前後矛盾。
+  const styleAnchorText = buildStyleAnchorText(buildStyleAnchorSnapshot(work, ms));
+  const ratioInfo = VIDEO_RATIO_OPTIONS.find(function (r) { return r.id === work.imageRatio; });
+  const ratioLabel = ratioInfo ? ratioInfo.label : '直式';
+  scene.imagePrompt = buildAutoImagePrompt(scene.narration || '', styleAnchorText, ratioLabel, sceneNo, ms.scenes.length);
+  persistMasterScriptScenesChange(work, ms);
+  renderMakeVideo();
+}
 function copySceneVideoPrompt(sceneNo) { copyPlainText(lastSceneVideoPrompts[sceneNo] || '', '已複製第' + sceneNo + '幕的影片生成指令，帶去你的影片工具吧'); }
 
 // 單幕重做（Video Workflow vNext MVP 邊界）：只改指定這一幕的圖片 Prompt／影片 Prompt／
@@ -3277,6 +3416,22 @@ function renderMakeVideo() {
       '主軸：' + (ms.mainThread || '（無）') + '　｜　長度：' + (ms.lengthRange || '（未設定）') + '　｜　共 ' + ms.scenes.length + ' 幕';
     renderMasterScriptHeader(ms, 'mv');
     lastSceneImagePrompts = {};
+
+    // CEO 真人驗收 Blocker #2（重新分鏡範圍採方案一）：只有「目前所有場景都沒有有效
+    // imagePrompt」時，才顯示「選擇圖片張數」的補救入口；只要有任何一幕已經有效，
+    // 就不顯示這個入口，避免使用者不小心把已完成的內容整份重切。
+    const allMissing = ms.scenes.every(function (s) { return !hasValidImagePrompt(s); });
+    const recoveryBlock = document.getElementById('mv-image-recovery-block');
+    if (allMissing) {
+      recoveryBlock.style.display = 'block';
+      document.getElementById('mv-image-recovery-count-list').innerHTML = IMAGE_RECOVERY_COUNT_OPTIONS.map(function (count) {
+        return '<div class="template-pick" onclick="chooseImageRecoveryCount(' + count + ')">' + count + ' 張</div>';
+      }).join('');
+      document.getElementById('mv-scenes-list').innerHTML = '';
+      return;
+    }
+    recoveryBlock.style.display = 'none';
+
     // Correction Proposal Stage D（每一幕的操作順序：先複製這一幕指令，再開啟推薦工具）：
     // 開啟連結指向這一步「官方推薦」的圖片工具（跟 mv-recommended-tools 卡片同一個推薦結果，
     // 只是多一個更靠近逐幕內容的捷徑）；沒有網址時 buildToolOpenLinkHtml() 直接回傳空字串，
@@ -3285,6 +3440,15 @@ function renderMakeVideo() {
     document.getElementById('mv-scenes-list').innerHTML = ms.scenes.map(function (scene) {
       lastSceneImagePrompts[scene.sceneNo] = scene.imagePrompt || '';
       const openLink = primaryImageTool ? buildToolOpenLinkHtml(primaryImageTool.toolId, '開啟推薦圖片工具') : '';
+      // CEO 真人驗收 Blocker #2（空資料防呆第三點）：這一幕缺少 imagePrompt 時，複製按鈕
+      // disabled、不得顯示可操作的複製按鈕誤導使用者，改成明確的「產生圖片指令」CTA；
+      // 只針對「這一幕」補救，不影響其他已經有效的幕（部分缺失時不整份重建）。
+      const missing = !hasValidImagePrompt(scene);
+      const copyBtnHtml = missing
+        ? '<button class="btn outline" style="margin-top:6px" disabled>📋 複製第' + scene.sceneNo + '幕圖片生成指令</button>' +
+          '<div class="notice" style="margin-top:6px">尚未產生這一幕的圖片生成指令。</div>' +
+          '<button class="btn" style="margin-top:6px" onclick="generateImagePromptForScene(' + scene.sceneNo + ')">✨ 產生圖片指令</button>'
+        : '<button class="btn outline" style="margin-top:6px" onclick="copySceneImagePrompt(' + scene.sceneNo + ')">📋 複製第' + scene.sceneNo + '幕圖片生成指令</button>';
       return '<div class="card" style="margin-top:14px">' +
         '<div class="section-label">第' + scene.sceneNo + '幕' + (scene.sceneName ? '｜' + escHtml(scene.sceneName) : '') + '</div>' +
         '<div class="line"><b>旁白／文案：</b>' + escHtml(scene.narration || '（無）') + '</div>' +
@@ -3293,7 +3457,7 @@ function renderMakeVideo() {
         '<div class="line"><b>素材需求：</b>' + escHtml(scene.materialNeeds || '（無）') + '</div>' +
         '<div class="section-label" style="margin-top:10px;font-size:14px">圖片生成指令</div>' +
         '<div class="copy-box">' + escHtml(scene.imagePrompt || '（還沒有圖片生成指令）') + '</div>' +
-        '<button class="btn outline" style="margin-top:6px" onclick="copySceneImagePrompt(' + scene.sceneNo + ')">📋 複製第' + scene.sceneNo + '幕圖片生成指令</button>' +
+        copyBtnHtml +
         openLink +
         '<button class="btn outline" style="margin-top:6px" onclick="openSceneRegenerate(' + scene.sceneNo + ', \'image\', \'screen-make-video\')">🔁 只重新生成這一幕的圖片指令</button>' +
         '</div>';
@@ -3329,7 +3493,21 @@ function chooseImageCount(count) {
 }
 
 // ── 圖片完成確認（Phase A → Phase B 的關卡）──
-function goImageConfirm() { showScreen('screen-image-confirm'); }
+// CEO 真人驗收 Blocker #2（下一步 Gate 校準）：判斷依據只看「資料是否備齊」——已建立至少
+// 一幕、每一幕都有可用的 imagePrompt，不看使用者有沒有點開任何外部工具連結、有沒有用官方
+// 推薦的 Gemini（工具推薦是 Recommendation，不是 Gate 條件，維持 Vendor Neutral）。
+// 沒有 Master Script 的舊工作（legacy fallback）完全不受這個 Gate 影響，維持原本可以
+// 直接繼續的行為，不破壞舊資料相容性。
+function goImageConfirm() {
+  const work = getActiveWork();
+  const ms = getMasterScript(work);
+  if (ms) {
+    if (ms.scenes.length === 0) { showToast('尚未建立任何場景，請先完成腳本這一步'); return; }
+    const missingCount = ms.scenes.filter(function (s) { return !hasValidImagePrompt(s); }).length;
+    if (missingCount > 0) { showToast('還有 ' + missingCount + ' 幕缺少圖片生成指令，完成後即可繼續。'); return; }
+  }
+  showScreen('screen-image-confirm');
+}
 // Phase A（圖片）局部修改：目標是「腳本」步驟裡的圖片描述/風格建議，跟 poster 的視覺設計是同一種情況
 // （單一步驟成果，可以直接沿用 buildRevisionInstruction() 的 r.stepIndex 推算邏輯，不用像歌曲另外處理）。
 function imageConfirmRegenerate() {
