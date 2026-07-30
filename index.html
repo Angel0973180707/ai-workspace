@@ -426,6 +426,7 @@
           <div class="notice" id="mv-full-narration-fallback-note" style="display:none;margin-top:6px"></div>
           <div class="copy-box" id="mv-full-narration-box" style="max-height:26vh;overflow-y:auto;margin-top:8px"></div>
           <button class="btn outline" style="margin-top:8px" onclick="copyFullNarrationScript()">📋 複製完整文案</button>
+          <button class="btn outline" style="margin-top:8px" onclick="copyCleanNarrationText()">📋 複製乾淨旁白稿</button>
         </div>
 
         <div class="card" id="mv-full-voiceover-card" style="margin-top:14px;display:none">
@@ -510,6 +511,9 @@
           <div class="notice" id="vt-full-narration-fallback-note" style="display:none;margin-top:6px"></div>
           <div class="copy-box" id="vt-full-narration-box" style="max-height:26vh;overflow-y:auto;margin-top:8px"></div>
           <button class="btn outline" style="margin-top:8px" onclick="copyFullNarrationScript()">📋 複製完整文案</button>
+          <button class="btn outline" style="margin-top:8px" onclick="copyCleanNarrationText()">📋 複製乾淨旁白稿</button>
+          <div class="notice" id="vt-kaipai-hint" style="margin-top:8px"></div>
+          <div id="vt-kaipai-open-link"></div>
         </div>
 
         <div class="card" id="vt-full-voiceover-card" style="margin-top:14px;display:none">
@@ -529,6 +533,12 @@
       </div>
 
       <div class="card" id="vt-recommended-tools" style="margin-top:22px"></div>
+
+      <!-- 依任務分工找工具（CEO 核准的最小整合）：不是總排行榜，跟上面兩張卡片分開，互不取代 -->
+      <div class="card" style="margin-top:22px">
+        <div class="section-label">依任務找工具</div>
+        <div id="vt-task-tools-box" style="margin-top:6px"></div>
+      </div>
 
       <div class="notice" style="margin-top:16px">完成後，回來這裡。</div>
       <button class="btn" style="margin-top:20px" onclick="goVideoConfirm()">下一步：確認影片進度</button>

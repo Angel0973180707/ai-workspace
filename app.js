@@ -770,17 +770,36 @@ function narrationConsistentWithFullScript(scenes, fullNarrationScript) {
   return true;
 }
 
-// 解析「腳本」步驟的正式輸出。要求格式（Correction Proposal Stage A 起，完整文案為必要區塊，
+// 解析「腳本」步驟的正式輸出。理想格式（Correction Proposal Stage A 起，完整文案為必要區塊，
 // 排在【總覽】之前）：
 // 【完整影片文案／旁白稿】\n（從第一句到最後一句的完整連貫文案）
 // 【總覽】\n目的：……\n觀眾：……\n長度：……\n主軸：……\n敘事調性：……\n主要人物設定：……\n音樂方向：……
 // 【第1幕｜幕名稱】\n旁白／文案：……\n字幕：……\n畫面意圖：……\n預估秒數：……\n情緒與語氣：……\n素材需求：……\n圖片 Prompt：……\n影片 Prompt：……
 // 【第2幕｜……】……
-// 缺少完整文案、缺少【總覽】、缺少目的／主軸、一幕都沒抓到、任一幕缺旁白／畫面意圖、或逐幕
-// 旁白串接後對不上完整文案，都視為格式不完整，回傳 valid:false，呼叫端必須保留舊版本、
-// 不得推進步驟（見 submitPasteBack() 的腳本分支）。
-function parseMasterScript(content) {
+//
+// CEO 真人驗收 Bug #1（真實貼回內容用的是舊版【腳本】/[開場][中段][結尾]/【圖片描述建議】/
+// 【風格建議】這種較自由的寫法，外部 AI 沒有完全照著上面的嚴格格式輸出）：先嘗試嚴格格式
+// （parseMasterScriptStrict），拿得到完整結構時保留全部逐幕細節；嚴格格式解析不到時，改用
+// 較寬鬆的方式（parseMasterScriptLenient）辨認常見標題／換行／括號／補充區塊，只要抓得到
+// 可用的旁白內容就成功、讓使用者能繼續下一步，不用自己重新排版格式——這是「Parser 過度嚴格」
+// 的修正，不是放寬「解析失敗不可取代合法版本」這條原則本身：兩種解析都失敗時，一樣回傳
+// valid:false，不動 work.masterScript。
+//
+// CEO 產品決策（寬鬆解析生效範圍採方案 B）：寬鬆解析只能在使用者「主動重新貼回內容」時
+// 生效（submitPasteBack() 明確傳入 allowLenient=true），不得在被動讀取舊資料時觸發
+// （getMasterScript() 的自我校正、單幕重做後的腳本版本對齊，一律省略此參數＝一律嚴格
+// 解析）。allowLenient 預設為 false（安全預設值：不傳就是嚴格），避免任何呼叫端不小心
+// 漏傳而誤觸寬鬆解析，導致舊版影片工作被動打開／重新整理時被靜默升級成新版 Master
+// Script 介面。
+function parseMasterScript(content, allowLenient) {
   if (!content) return { valid: false };
+  const strict = parseMasterScriptStrict(content);
+  if (strict.valid) return strict;
+  if (!allowLenient) return { valid: false };
+  return parseMasterScriptLenient(content);
+}
+
+function parseMasterScriptStrict(content) {
   const fullScriptMatch = content.match(/【完整影片文案／旁白稿】([\s\S]*?)(?=【總覽】|$)/);
   const fullNarrationScript = fullScriptMatch ? fullScriptMatch[1].trim() : '';
   if (!fullNarrationScript) return { valid: false };
@@ -810,6 +829,103 @@ function parseMasterScript(content) {
     purpose: overview.purpose, audience: overview.audience, lengthRange: overview.lengthRange,
     mainThread: overview.mainThread, narrativeTone: overview.narrativeTone, characterProfile: overview.characterProfile,
     musicDirection: overview.musicDirection, scenes: scenes
+  };
+}
+
+// 【圖片描述建議】／【風格建議】／最後的複製提醒，一律視為腳本本文之後的附加內容——只要抓到
+// 第一個這類標記，就整段截斷，不管標記本身或它後面接的任何內容，都不該混進旁白稿，也不該讓
+// 解析失敗（CEO 核准的修正標準第 3、4 點）。
+function stripTrailingMetaSections(content) {
+  const idx = content.search(/【圖片描述建議】|【風格建議】|📋|請複製/);
+  return idx === -1 ? content : content.slice(0, idx);
+}
+
+// 拿掉明確不是旁白本身的標籤行（字幕／字卡／秒數／情緒／素材需求／畫面意圖／圖片與影片
+// Prompt／配音語氣／語速與停頓——這些是給機器或剪輯用的附加資訊，連同內容整行拿掉）；
+// 旁白／文案／配音稿這幾種標籤則只拿掉標籤本身、保留後面的文字。共用在「乾淨旁白稿」跟
+// 寬鬆解析的逐幕文字清理，避免兩處各寫一份清理規則、以後改一邊漏改另一邊。
+function stripNonNarrationLabels(text) {
+  // CEO 核准的驗收條件第 3 點明確列出：不得包含畫面、字卡、時間碼、幕次標題、操作說明——
+  // 這裡逐一對應：畫面（畫面意圖／畫面描述／畫面）、字卡（字卡重點／字卡／字幕）、時間碼
+  // （預估秒數／秒數／時間碼／時間軸），逐行整行拿掉，不只留標籤空殼。
+  const dropLabels = [
+    '字幕', '字卡重點', '字卡',
+    '預估秒數', '秒數', '時間碼', '時間軸',
+    '情緒與語氣', '素材需求',
+    '畫面意圖', '畫面描述', '畫面',
+    '圖片 Prompt', '影片 Prompt', '配音語氣', '語速與停頓'
+  ];
+  let out = text.replace(new RegExp('^(' + dropLabels.join('|') + ')[：:].*$', 'gm'), '');
+  const keepLabels = ['旁白／文案', '旁白', '文案', '配音稿'];
+  out = out.replace(new RegExp('^(' + keepLabels.join('|') + ')[：:]', 'gm'), '');
+  return out;
+}
+
+// 拿掉 Markdown 符號、收斂多餘空行，前後留白也一併清掉。
+function normalizeCleanedWhitespace(text) {
+  return text.replace(/\*\*/g, '').replace(/^#+\s*/gm, '').replace(/^[-*]\s+/gm, '')
+    .split('\n').map(function (l) { return l.trim(); }).join('\n')
+    .replace(/\n{3,}/g, '\n\n').trim();
+}
+
+// 「複製乾淨旁白稿」與寬鬆解析共用的核心清理函式：從任何一段貼回內容（不管有沒有照嚴格格式），
+// 抓出只給配音用的乾淨旁白文字——拿掉所有全形括號區塊標題、[開場][中段][結尾] 這類場次標記、
+// 上面定義的非旁白標籤行，以及 Markdown 符號。
+function extractCleanNarrationText(rawContent) {
+  if (!rawContent) return '';
+  let text = stripTrailingMetaSections(rawContent);
+  text = text.replace(/【[^】]*】/g, '');
+  text = text.replace(/[\[［(（]\s*(開場|中段|結尾|過渡|轉場)\s*[\]］)）]/g, '');
+  text = stripNonNarrationLabels(text);
+  return normalizeCleanedWhitespace(text);
+}
+
+// 寬鬆解析（CEO 真人驗收 Bug #1 的修正核心）：嚴格格式解析不到時使用。辨認常見的
+// [開場]/[中段]/[結尾] 場次括號標記來切成多幕；完全沒有這類標記時，整段視為單一幕，
+// 不強迫使用者重新排版。overview 各欄位（目的／主軸等）在這個路徑下不強制要求要有值——
+// 舊版輸出本來就不會有這些標籤，畫面顯示端本來就有「（無）」「（未設定）」的預設文字。
+function parseMasterScriptLenient(content) {
+  const scriptOnly = stripTrailingMetaSections(content).replace(/【[^】]*】/g, '');
+  const markerRegex = /[\[［(（]\s*(開場|中段|結尾|過渡|轉場)\s*[\]］)）]/g;
+  const marks = [];
+  let mm;
+  while ((mm = markerRegex.exec(scriptOnly)) !== null) {
+    marks.push({ name: mm[1], start: mm.index, contentStart: mm.index + mm[0].length });
+  }
+
+  // 舊格式常見的「字卡重點：……」通常是整段共用的一句重點，不是逐幕分開標記——抓出來後
+  // 廣播給每一幕的 subtitle 欄位，確保這份資訊「保留」下來供後續畫面使用（剪輯交接／逐幕
+  // 卡片都會讀 scene.subtitle），不會因為寬鬆解析就直接消失（CEO 核准的驗收條件第 3 點）。
+  const cardLabels = ['字卡重點', '字卡', '字幕'];
+  const cardMatch = scriptOnly.match(new RegExp('^(?:' + cardLabels.join('|') + ')[：:]\\s*(.+)$', 'm'));
+  const sharedSubtitle = cardMatch ? cardMatch[1].trim() : '';
+
+  const scenes = [];
+  if (marks.length > 0) {
+    for (let i = 0; i < marks.length; i++) {
+      const end = i + 1 < marks.length ? marks[i + 1].start : scriptOnly.length;
+      const narration = normalizeCleanedWhitespace(stripNonNarrationLabels(scriptOnly.slice(marks[i].contentStart, end)));
+      if (narration) scenes.push({ sceneNo: scenes.length + 1, sceneName: marks[i].name, narration: narration, subtitle: sharedSubtitle, visualIntent: '', estimatedSeconds: '', mood: '', materialNeeds: '', imagePrompt: '', videoPrompt: '' });
+    }
+  }
+  // 完全沒有 [開場][中段][結尾] 這類場次標記時，只有在內容本身至少帶有可辨識的腳本區塊
+  // 標題（例如舊版慣用的【腳本】）才視為單一幕接受——避免使用者貼回完全沒有照任何格式輸出的
+  // 內容（例如純聊天訊息、答非所問）時，被寬鬆解析誤判成「有效」，這樣仍會保留 Stage A
+  // 「完全沒有格式的內容必須判定為無效」這條既有防呆規則，寬鬆解析只放寬「格式不是嚴格新版
+  // 但看得出來是腳本」的情況，不是完全不驗證。
+  if (scenes.length === 0 && /【(腳本|完整影片文案|旁白稿)/.test(content)) {
+    const narration = normalizeCleanedWhitespace(stripNonNarrationLabels(scriptOnly));
+    if (narration) scenes.push({ sceneNo: 1, sceneName: '', narration: narration, subtitle: sharedSubtitle, visualIntent: '', estimatedSeconds: '', mood: '', materialNeeds: '', imagePrompt: '', videoPrompt: '' });
+  }
+  if (scenes.length === 0) return { valid: false };
+
+  const fullNarrationScript = extractCleanNarrationText(content);
+  if (!narrationConsistentWithFullScript(scenes, fullNarrationScript)) return { valid: false };
+
+  return {
+    valid: true, fullNarrationScript: fullNarrationScript,
+    purpose: '', audience: '', lengthRange: '', mainThread: '', narrativeTone: '', characterProfile: '', musicDirection: '',
+    scenes: scenes
   };
 }
 
@@ -917,8 +1033,12 @@ function buildStyleAnchorSummaryHtml(snapshot) {
 // 指向的正式 Result 跟 work.masterScript 記錄的來源對不上時（自我校正）。解析失敗時
 // 完全不動 work.masterScript（保留上一個合法版本，或維持 null）——這個函式本身只負責
 // 「同步」，不負責「擋流程」，擋流程的判斷交給呼叫端（submitPasteBack）。
-function syncMasterScriptFromResult(work, result) {
-  const parsed = parseMasterScript(result.content);
+//
+// allowLenient 只能由「使用者主動重新貼回」的呼叫端（submitPasteBack()）明確傳入 true；
+// getMasterScript() 的被動自我校正、單幕重做後的版本對齊，都省略此參數（等同 false／
+// 嚴格解析），確保被動讀取舊資料的路徑永遠不會觸發寬鬆解析、不會把舊格式資料靜默升級。
+function syncMasterScriptFromResult(work, result, allowLenient) {
+  const parsed = parseMasterScript(result.content, allowLenient);
   if (!parsed.valid) return false;
   const snapshot = buildStyleAnchorSnapshot(work, parsed);
   work.masterScript = {
@@ -968,6 +1088,13 @@ function syncVoiceoverFromResult(work, result) {
 // Master Script，不直接讀 work.masterScript——這裡會先確認目前指向的正式 Result
 // 有沒有變動，變動就自我校正重新同步一次，保證讀到的永遠是「腳本」步驟目前確認的
 // 最新版本，不會有下游讀到舊版本的風險（比照還原交易的 fingerprint 比對精神）。
+//
+// CEO 產品決策（寬鬆解析生效範圍採方案 B）：這裡是「被動」讀取路徑——使用者可能只是
+// 打開既有影片工作、重新整理頁面、或切換畫面回來，並沒有主動重新貼回任何內容。刻意
+// 省略 syncMasterScriptFromResult() 的 allowLenient 參數（等同 false），只用嚴格解析
+// 自我校正；舊格式資料嚴格解析不到時，work.masterScript 維持 null，畫面照舊走原本的
+// 三段式 legacy fallback 顯示，不會被靜默升級成新版 Master Script 介面，也不會改寫、
+// 搬移或改變任何舊工作內容。
 function getMasterScript(work) {
   if (!work || work.flowId !== 'video') return null;
   const scriptIdx = FLOWS.video.steps.findIndex(function (s) { return s.name === '腳本'; });
@@ -2473,7 +2600,9 @@ function submitPasteBack() {
   // 不允許下游用無效版本繼續——這是 CEO 明確要求「不得發生正式 Result 指向新無效內容，
   // 但 work.masterScript 仍指向上一個合法版本」的直接落實。
   if (work.flowId === 'video' && step.name === '腳本') {
-    const parsed = parseMasterScript(content);
+    // allowLenient=true：這裡是使用者「主動重新貼回」的當下，是唯一允許寬鬆解析生效的
+    // 時機（CEO 產品決策，寬鬆解析生效範圍採方案 B）。
+    const parsed = parseMasterScript(content, true);
     if (!parsed.valid) {
       saveUnconfirmedVideoDraft(work, project, step, content, 'isMasterScriptDraft');
       showPasteBackWarning(escHtml('內容已保留，但尚未成功建立逐幕影片母稿。請確認格式並重新貼回，完成後才能進入下一步。'));
@@ -2495,7 +2624,7 @@ function submitPasteBack() {
   const r = makeResult(state, work, project, work.currentStepIndex, content, false);
   work.stepResultIds[work.currentStepIndex] = r.id;
   if (parsedSongTitle) work.songTitle = parsedSongTitle;
-  if (work.flowId === 'video' && step.name === '腳本') syncMasterScriptFromResult(work, r);
+  if (work.flowId === 'video' && step.name === '腳本') syncMasterScriptFromResult(work, r, true);
   if (work.flowId === 'video' && step.name === '配音與字幕' && work.masterScript) {
     r.masterScriptResultId = work.masterScript.sourceResultId;
     syncVoiceoverFromResult(work, r);
@@ -3040,11 +3169,42 @@ let lastFullNarrationText = '';
 let lastFullVoiceoverText = '';
 function copyFullNarrationScript() { copyPlainText(lastFullNarrationText, '已複製完整文案'); }
 function copyFullVoiceoverScript() { copyPlainText(lastFullVoiceoverText, '已複製完整配音稿'); }
+// CEO 真人驗收 Bug #1 附帶需求：純配音用的乾淨旁白稿，跟「完整文案」共用同一份內容，
+// 只是額外再跑一次 extractCleanNarrationText()——理想格式（Stage A/B 嚴格解析）下這段本來就
+// 已經很乾淨，重跑一次是無害的；寬鬆解析（舊格式貼回）下 fullNarrationScript 本身就是
+// extractCleanNarrationText() 的結果，這裡等於再確保一次不殘留任何標籤或 Markdown 符號。
+//
+// CEO 產品決策（2026-07-30 產品收斂）：Toast 文字依「目前在哪個畫面」而不同——Phase B
+// 才提示可貼到開拍，Phase A 維持原本工具中立、不得出現「開拍」字樣。Toast 元件本身是
+// 單行圓角膠囊樣式（.toast，border-radius:99px），不適合塞兩行文字，這裡把 CEO 提供的
+// 兩行文案（✅ 已複製乾淨旁白稿／可貼到開拍快速產生口播影片）合併成一行顯示，語意不變。
+let lastCleanNarrationText = '';
+function copyCleanNarrationText() {
+  const onPhaseB = document.getElementById('screen-video-tools').classList.contains('active');
+  const message = onPhaseB ? '已複製乾淨旁白稿，可貼到開拍快速產生口播影片' : '已複製乾淨旁白稿';
+  copyPlainText(lastCleanNarrationText, message);
+}
+
+// CEO 核准的下一步引導（僅簡短提示文字＋一個開啟連結，不自動跳轉）：使用者複製完乾淨旁白稿後，
+// 讓他知道「這份東西還可以拿去做什麼」，但不強制、不改變任何 Flow 步驟——這一步做完，
+// 使用者原本要走的四步流程（主題→腳本→配音與字幕→製作影片）完全不受影響。
+//
+// CEO 產品決策（開拍提示位置採方案 A）：只在 Phase B（製作影片工具頁，prefix==='vt'）
+// 顯示，Phase A（畫面準備頁，prefix==='mv'）維持原本的工具中立原則，不提前點名任何
+// 影片輸出工具名稱（含「開拍」）。index.html 的 Phase A 區塊也已移除對應的提示文字容器。
+const KAIPAI_NEXT_STEP_HINT = '已完成旁白，可貼到開拍一鍵成片，快速產生口播或短影音。';
 
 function renderMasterScriptHeader(ms, prefix) {
   const narration = getDisplayFullNarrationScript(ms);
   lastFullNarrationText = narration.text;
+  lastCleanNarrationText = extractCleanNarrationText(narration.text);
   document.getElementById(prefix + '-full-narration-box').textContent = narration.text || '（尚未有內容）';
+  if (prefix === 'vt') {
+    document.getElementById(prefix + '-kaipai-hint').textContent = KAIPAI_NEXT_STEP_HINT;
+    // 「開啟開拍」一鍵入口：沿用 Stage D 共用的 buildToolOpenLinkHtml()／tools-catalog.json，
+    // 沒有寫任何新的開啟邏輯；不自動跳轉，使用者要自己點才會開新分頁。
+    document.getElementById(prefix + '-kaipai-open-link').innerHTML = buildToolOpenLinkHtml('kaipai', '🎙️ 開啟開拍');
+  }
   const narrationNote = document.getElementById(prefix + '-full-narration-fallback-note');
   if (narration.isFallbackAssembled) {
     narrationNote.style.display = 'block';
@@ -3195,6 +3355,38 @@ function imageConfirmDone() {
   showScreen('screen-video-tools');
 }
 
+// 開拍任務分工卡片（CEO 核准的最小整合，2026-07-30 產品收斂：改用初學者思考順序分組，
+// 不再依工具類型分組）：三組依「使用者此刻手上有什麼、想完成什麼」排列——①已經有圖片、
+// 想做影片（Gemini／Kling／Runway／Pika）②已經有旁白、想快速完成影片（開拍）③要剪輯、
+// 字幕與完成影片（Canva／CapCut）。開拍跟「圖片轉影片」刻意分開列，避免被誤會成圖生影片
+// 工具。跟既有 vt-tool-guide（Gemini 官方推薦）／vt-recommended-tools（依 videoType 的其他
+// 影片工具）完全分開、互不取代，只是額外提供一份「依任務找工具」的參考，開啟連結沿用
+// Stage D 共用的 buildToolOpenLinkHtml()，沒有另建開啟機制。
+//
+// CEO 產品收斂（一個功能、一個主要入口）：開拍的「開啟」按鈕已經在「複製乾淨旁白稿」
+// 下方（renderMasterScriptHeader() 的 vt-kaipai-open-link），是使用者完成旁白後真正
+// 會用到的下一步操作位置；這裡的開拍只負責「介紹」（名稱＋官方推薦＋一句說明），
+// 不再重複放第二顆「開啟」按鈕，避免同一個功能出現兩個入口。其餘工具（Gemini／Kling／
+// Runway／Pika／Canva／CapCut）在這裡是唯一的開啟入口，維持原本各自的開啟連結。
+function buildTaskGroupedToolsHtml() {
+  function toolLine(toolId, name, note) {
+    const openLink = buildToolOpenLinkHtml(toolId, '開啟 ' + name);
+    return '<div class="line" style="margin-top:6px"><b>' + escHtml(name) + '</b>' + (note ? '　' + escHtml(note) : '') + '</div>' + openLink;
+  }
+  let html = '<div class="line" style="margin-top:8px">我已經有圖片，想做影片</div>';
+  html += toolLine('gemini', 'Gemini', '官方推薦');
+  html += toolLine('kling', 'Kling', '替代工具');
+  html += toolLine('runway', 'Runway', '進階工具');
+  html += toolLine('pika', 'Pika', '進階工具');
+  html += '<div class="line" style="margin-top:12px">我已經有旁白，想快速完成影片</div>';
+  html += '<div class="line" style="margin-top:6px"><b>開拍</b>　官方推薦</div>';
+  html += '<div class="line" style="margin-top:4px;font-size:12px;color:var(--text-dim)">已完成旁白，可貼到開拍快速產生口播或短影音。</div>';
+  html += '<div class="line" style="margin-top:12px">我要剪輯、字幕與完成影片</div>';
+  html += toolLine('canva', 'Canva', '');
+  html += toolLine('capcut', 'CapCut', '');
+  return html;
+}
+
 // Video Flow Sprint 2：Kling 的完整引導改由 renderToolGuide()／VIDEO_TOOL_GUIDE 直接顯示在畫面上
 // （工具介紹＋7 步流程＋完成提醒＋開啟工具按鈕），不用再多點一次「查看使用步驟」；
 // 依影片類型的其他工具（Runway/Pika/Canva/CapCut）保留在「其他影片工具」，是額外的替代選項。
@@ -3204,6 +3396,7 @@ function renderVideoTools() {
   // suppressPrimaryBadge=true：Kling 的官方建議已經在上面 vt-tool-guide 卡片顯示過，這裡是依影片
   // 類型的「其他」工具清單，不要讓清單第一項也被標成「⭐官方建議」，避免同畫面出現兩個官方建議。
   renderToolRecommendationCard('vt-recommended-tools', getVideoTypeToolRecommendations(work.videoType), 'screen-video-tools', '其他影片工具', true);
+  document.getElementById('vt-task-tools-box').innerHTML = buildTaskGroupedToolsHtml();
 
   // Video Workflow vNext：有 Master Script 時，逐幕顯示影片 Prompt；舊工作沒有時整段隱藏
   // （Phase B 原本就沒有舊格式的「影片素材指令」顯示，這是全新的逐幕內容，不是取代誰）。

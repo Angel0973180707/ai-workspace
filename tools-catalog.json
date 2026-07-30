@@ -18,6 +18,7 @@
     { "id": "runway", "name": "Runway", "category": "影片", "emoji": "🎥", "url": "https://runwayml.com" },
     { "id": "pika", "name": "Pika", "category": "影片", "emoji": "📹", "url": "https://pika.art" },
     { "id": "kling", "name": "Kling", "category": "影片", "emoji": "🌀", "url": "https://klingai.com" },
+    { "id": "kaipai", "name": "開拍", "category": "短影音", "emoji": "🎙️", "specialty": "AI 口播、腳本讀稿、自動字幕、快速剪輯、一鍵製片", "suitableFor": "已完成旁白，希望快速做成口播或短影音", "url": "https://www.kaipai.com/" },
     { "id": "google_slides", "name": "PPT／Google Slides", "category": "簡報", "emoji": "📊", "url": "https://slides.google.com" }
   ]
 }
