@@ -110,7 +110,10 @@ body { background: var(--green-dark); color: var(--cream); font-family: var(--fo
 
 /* ── 一般按鈕 ── */
 .btn {
+  display: block;
   width: 100%;
+  box-sizing: border-box;
+  text-align: center;
   background: var(--green-soft);
   color: var(--white);
   border: none;
@@ -126,6 +129,22 @@ body { background: var(--green-dark); color: var(--cream); font-family: var(--fo
 .btn:disabled { background: var(--text-dim); cursor: not-allowed; }
 .btn.outline { background: var(--white); color: var(--green-dark); border: 1.5px solid var(--green-dark); }
 .btn.gold { background: var(--gold); }
+
+/* Samsung Internet Blocker 第三次修正：<label for="..."> 取代「隱藏 input + JS 模擬點擊」，
+   label 本身需要保留在版面中才能接收點擊，所以不能用 display:none 藏起來，改用「視覺隱藏」
+   （仍在文件流外、不佔版面、但不是 display:none），這是跨瀏覽器最穩定能讓 label 正確觸發
+   檔案選擇器的做法。 */
+.visually-hidden-file-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
 
 /* ── 快速選項（新增工作用）── */
 .pick-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 6px; }
@@ -285,6 +304,11 @@ body { background: var(--green-dark); color: var(--cream); font-family: var(--fo
 
 .section-label { font-size: 13px; font-weight: 700; color: var(--cream); opacity: 0.75; margin-bottom: 10px; }
 .card .section-label { color: var(--text-mid); opacity: 1; }
+
+/* Brand Center v1.0 UI 實作（總策長／CEO 核准，2026-08-05）：通用次要說明文字，
+   用於表單分區引導語、欄位常駐說明、品牌版本等低視覺權重資訊——刻意跟 .tool-suggest-note
+   同樣的字級／顏色處理，只是給一個語意更通用的名稱，不限定「工具建議」情境。 */
+.secondary-note { font-size: 12px; color: var(--text-dim); margin-top: 8px; line-height: 1.6; }
 
 /* ── 建議工具（歌曲創作等 Flow 的排名工具建議）── */
 .tool-suggest-row { font-size: 13.5px; color: var(--text); line-height: 1.9; }

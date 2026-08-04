@@ -110,9 +110,23 @@
     </div>
     <div style="padding-top:20px">
       <div class="card summary-box" id="proj-summary"></div>
+      <div class="section-label" style="margin-top:18px">品牌</div>
+      <div class="card" style="cursor:pointer" onclick="openProjectBrandPicker()" id="proj-brand-row"></div>
       <div class="section-label" style="margin-top:18px">這個專案的工作</div>
       <div id="proj-work-list"></div>
       <button class="btn" onclick="openAddWork()">＋ 新增工作</button>
+    </div>
+  </div>
+
+  <!-- Project 預設品牌設定（Brand Center Sprint #1，規格三-6） -->
+  <div class="screen" id="screen-project-brand-picker">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-project')">←</button>
+      <div class="title">設定預設品牌</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">改變預設品牌只會影響「之後新建立」的工作，這個專案裡已經建立的工作不會受影響。</div>
+      <div id="pbp-list"></div>
     </div>
   </div>
 
@@ -155,6 +169,18 @@
         <div class="line" style="font-size:12.5px;color:var(--text-mid);margin-bottom:8px">想到什麼都可以先記下來——一句話、一段故事、幾個關鍵字、一個畫面、一句歌詞、一段回憶、一種感受，都可以。</div>
         <textarea id="new-work-song-idea-input" maxlength="500" placeholder="例如：留快樂給自己　風吹過那年的夏天　想寫給爸爸　一句沒說出口的話　陪伴　重逢　童年　回家" style="min-height:90px"></textarea>
       </div>
+
+      <!-- #20 商品行銷中心｜自由設計模式（總策長核准，2026-08-02）：只在建立海報工作時顯示 -->
+      <div class="field" id="new-work-brand-choice-field" style="display:none">
+        <label>品牌設定</label>
+        <label style="display:flex;align-items:center;gap:8px;margin:6px 0;cursor:pointer;color:var(--text-mid);font-size:14px;font-weight:400">
+          <input type="radio" name="nw-brand-choice" id="nw-brand-choice-brand" onclick="setWorkBrandChoice('brand')"> 套用目前品牌（推薦）
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;margin:6px 0;cursor:pointer;color:var(--text-mid);font-size:14px;font-weight:400">
+          <input type="radio" name="nw-brand-choice" id="nw-brand-choice-free" onclick="setWorkBrandChoice('free')"> 自由設計（不套用品牌）
+        </label>
+      </div>
+
       <button class="btn" onclick="confirmNewWork()">建立工作</button>
     </div>
   </div>
@@ -217,11 +243,41 @@
           <div class="ai-why-body"><div class="line" id="wd-brief-content" style="white-space:pre-wrap"></div></div>
         </details>
       </div>
+      <div class="line" style="font-size:13.5px;margin-bottom:10px" id="wd-brand-box"></div>
+      <!-- #20 真人驗收 Bug 修正（總策長核准，2026-08-02）：海報工作品牌模式可逆切換，只在海報 Flow 顯示 -->
+      <div class="card" id="wd-poster-brand-setting" style="display:none;margin-bottom:14px">
+        <div class="section-label">品牌設定</div>
+        <div id="wd-poster-brand-setting-body" style="margin-top:8px"></div>
+        <div class="notice" id="wd-poster-brand-recovery" style="display:none;background:var(--gold-pale);margin-top:10px">
+          <div class="line">目前沒有可套用的預設品牌，請先到品牌中心設定。</div>
+          <div style="display:flex;gap:8px;margin-top:8px">
+            <button class="btn outline" style="width:auto;flex:1;padding:9px;font-size:12.5px;margin-top:0" onclick="goToBrandCenterFromWorkDetail()">前往品牌中心</button>
+            <button class="btn outline" style="width:auto;flex:1;padding:9px;font-size:12.5px;margin-top:0" onclick="dismissPosterBrandRecovery()">繼續自由設計</button>
+          </div>
+        </div>
+      </div>
+      <!-- Phase 4｜Brand Summary Card（總策長／CEO 核准，2026-08-05）：Official Brand Selector
+           下方的品牌摘要，讓使用者不用離開目前工作流程就能確認品牌內容 -->
+      <div class="card" id="wd-brand-summary-card" style="display:none;margin-bottom:14px"></div>
+      <!-- Phase 5｜Smart Card Output Card（總策長／CEO 核准，2026-08-05）：跟 Brand Summary
+           Card 定位不同——Summary 負責「查看品牌」，這裡負責「可直接使用」的四塊輸出內容 -->
+      <div class="card" id="wd-smart-card-output" style="display:none;margin-bottom:14px"></div>
+      <div class="notice" id="wd-brand-update-notice" style="display:none;background:var(--gold-pale);margin-bottom:14px"></div>
       <div class="progress-track" id="wd-progress"></div>
       <div class="card">
         <div style="font-size:12px;color:var(--text-dim);margin-bottom:8px">目前步驟</div>
         <h3 style="font-size:22px;margin-bottom:12px" id="wd-step-name"></h3>
         <div class="line" style="font-size:16px" id="wd-role"></div>
+      </div>
+      <!-- #18.1 BUG-002（總策長核准）：海報用途／尺寸選擇，只在「視覺設計」這一步顯示 -->
+      <div class="card" id="wd-poster-ratio" style="display:none">
+        <div class="section-label">這張海報要用在哪裡？</div>
+        <div id="wd-poster-ratio-pills" style="margin-top:8px"></div>
+        <div class="line" style="margin-top:8px;font-size:12.5px;color:var(--text-dim)" id="wd-poster-ratio-desc"></div>
+        <div class="field" id="wd-poster-ratio-custom-field" style="display:none;margin-top:10px">
+          <label>請簡單描述你想要的尺寸或用途</label>
+          <input type="text" id="wd-poster-ratio-custom-input" maxlength="100" onchange="setPosterRatioCustomText(this.value)" placeholder="例如：1200×800，適合官網橫幅">
+        </div>
       </div>
       <div class="ai-partner-section-label">🤝 建議合作夥伴</div>
       <div id="wd-ai-recommend-card"></div>
@@ -285,6 +341,8 @@
           <button class="btn gold" style="width:auto;flex:1;padding:11px;font-size:13px;margin-top:0" onclick="pasteBackGoChooseVersion()">返回 AI 選擇版本</button>
           <button class="btn outline" style="width:auto;flex:1;padding:11px;font-size:13px;margin-top:0" onclick="pasteBackDismissAbWarning()">繼續修改貼回內容</button>
         </div>
+        <!-- #18.1 Blocker 修正：Gate＋Recovery Flow 第三個選項，只在有對應指令時才顯示 -->
+        <button class="btn outline" id="pb-warning-regenerate-btn" style="display:none;margin-top:8px;font-size:13px" onclick="copyPasteBackRegenerateInstruction()">📋 複製重新輸出完整版本指令</button>
       </div>
       <button class="btn" onclick="submitPasteBack()">保存這個版本</button>
     </div>
@@ -386,6 +444,8 @@
       <div class="notice">很好！🎉《<span id="sn-song-title" style="font-weight:700;color:var(--gold)"></span>》完成了。<br><br>接下來，我陪你：</div>
       <button class="btn" onclick="songNextVideo()">🎬 製作影片</button>
       <button class="btn outline" style="margin-top:10px" onclick="songNextLater()">🕐 今天先休息</button>
+
+      <div class="card" id="sn-brand-calibration-box" style="margin-top:18px;display:none"></div>
 
       <div class="card" style="margin-top:18px">
         <div class="section-label">📁 保存與備份，別讓作品只留在對話紀錄裡</div>
@@ -676,6 +736,7 @@
         <div class="copy-box" id="vc-filename"></div>
         <button class="btn outline" style="margin-top:8px" onclick="copyVideoFileName()">📋 複製建議檔名</button>
       </div>
+      <div class="card" id="vc-brand-calibration-box" style="display:none"></div>
       <div class="section-label" style="margin-top:18px;font-size:18px;color:var(--cream);opacity:1">接下來可以：</div>
       <button class="btn" onclick="openResult(lastCompletedResultId)">📺 查看作品</button>
       <button class="btn outline" style="margin-top:10px" onclick="showScreen('screen-project')">🏠 返回專案</button>
@@ -691,10 +752,18 @@
       <div class="title">完成海報</div>
     </div>
     <div style="padding-top:20px">
-      <div class="notice">現在開始完成海報<br><br>AI 已經幫你完成：<br>✅ 海報文案<br>✅ 視覺設計<br><br>現在請：把圖片生成請求交給你習慣使用的圖片工具，做出真正的海報成品。</div>
+      <!-- #18.1 Blocker 修正（總策長核准）：最後一步的完整交接說明放在最上面，不能藏在頁面底部 -->
+      <div class="notice" style="background:var(--gold-pale);border:1px solid var(--gold)">
+        <b>最後一步：生成正式海報</b><br><br>
+        請複製下方完整的【圖片生成請求】，並將 QR Code、Logo 圖片、工作台截圖或其他參考圖片，另外上傳至支援圖片生成的 AI。<br><br>
+        文字複製不會自動帶走圖片，請確認圖片與指令都有交給繪圖 AI。<br>
+        📱 若海報含 QR Code，匯出或印刷前請用手機實際掃描確認可讀。
+      </div>
 
       <div id="mp-tool-guide" style="margin-top:16px"></div>
-      <a class="btn outline" style="margin-top:10px;text-decoration:none;display:block;text-align:center" id="mp-open-tool-btn" href="#" target="_blank" rel="noopener">🖼️ 開啟 ChatGPT</a>
+      <a class="btn outline" style="margin-top:10px;text-decoration:none;display:block;text-align:center" id="mp-open-tool-btn" href="#" target="_blank" rel="noopener">🖼️ 開啟推薦繪圖 AI</a>
+      <!-- #18.1 BUG-005（總策長核准，僅改善說明文字，不斷言特定平台行為）-->
+      <div class="tool-suggest-note" style="margin-top:8px">💡 外部繪圖工具的下載方式可能因網頁版、App 或手機瀏覽器而不同。若無法直接存入相簿，可先使用該工具的「分享」或「下載」功能，並確認圖片已保存到自己的手機。</div>
 
       <div class="section-label" style="margin-top:22px">【海報文案】</div>
       <div class="copy-box" id="mp-copy-content" style="max-height:20vh;overflow-y:auto"></div>
@@ -707,10 +776,32 @@
       <div class="section-label" style="margin-top:16px">【風格建議】</div>
       <div class="copy-box" id="mp-style-content" style="max-height:12vh;overflow-y:auto"></div>
       <div id="mp-visual-versions" style="margin-top:6px"></div>
-      <button class="btn gold" onclick="copyMakePosterVisual()">📋 複製圖片生成請求與風格</button>
+
+      <!-- #18.1 BUG-004（總策長核准，提醒式，非阻擋Gate）：這次要一起交給繪圖AI的素材 -->
+      <div class="card" style="margin-top:14px">
+        <div class="section-label">這次要一起交給繪圖 AI 的素材</div>
+        <div id="mp-material-checklist" style="margin-top:8px"></div>
+        <div class="notice" id="mp-material-reminder" style="display:none;margin-top:8px"></div>
+      </div>
+
+      <div class="notice" id="mp-material-unselected-notice" style="display:none;background:var(--gold-pale);border:1px solid var(--gold);margin-top:10px">
+        <div>尚未選擇是否附加圖片素材。你仍可複製指令，或先確認這次要附哪些圖片。</div>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button class="btn gold" style="width:auto;flex:1;padding:11px;font-size:13px;margin-top:0" onclick="confirmCopyMakePosterVisualAnyway()">繼續複製</button>
+          <button class="btn outline" style="width:auto;flex:1;padding:11px;font-size:13px;margin-top:0" onclick="dismissCopyMakePosterVisualNotice()">返回確認素材</button>
+        </div>
+      </div>
+
+      <button class="btn gold" style="margin-top:10px" onclick="copyMakePosterVisualWithReminder()">📋 複製完整圖片生成請求</button>
+
+      <!-- #18.1 Blocker 修正：品牌配色／Logo建議／關聯素材，摺疊呈現，對應按鈕③「查看品牌與參考資料」 -->
+      <details class="ai-why" style="margin-top:22px">
+        <summary>📎 查看品牌與參考資料</summary>
+        <div class="ai-why-body" id="mp-brand-assets"></div>
+      </details>
 
       <div class="notice" style="margin-top:16px">完成後，回來這裡。</div>
-      <button class="btn" style="margin-top:20px" onclick="goPosterConfirm()">下一步：確認海報進度</button>
+      <button class="btn" style="margin-top:20px" onclick="goPosterConfirm()">✅ 我已完成海報製作</button>
     </div>
   </div>
 
@@ -736,6 +827,10 @@
     </div>
     <div style="padding-top:20px">
       <div class="notice">把完成的海報留下來。網址跟備註都可以先不填，之後隨時可以補。</div>
+      <!-- #18.1 Blocker 修正（總策長核准）：誠實說明「保存」實際保存的是什麼，不宣稱已保存海報圖片 -->
+      <div class="notice" style="background:var(--gold-pale);border:1px solid var(--gold)">
+        目前工作台會保存本次製作指令與紀錄（海報文案／圖片生成請求／風格建議／品牌背景／製作狀態）；正式海報圖片請先保存到手機。圖片成果上傳與管理將另行開發。
+      </div>
       <div class="field">
         <label>海報名稱</label>
         <input type="text" id="save-poster-name-input" maxlength="30">
@@ -753,7 +848,7 @@
         <div class="copy-box" id="save-poster-filename"></div>
         <button class="btn outline" style="margin-top:8px" onclick="copyPosterFileName()">📋 複製建議檔名</button>
       </div>
-      <button class="btn" onclick="confirmSavePoster()">保存這張海報</button>
+      <button class="btn" onclick="confirmSavePoster()">保存製作紀錄到成果庫</button>
     </div>
   </div>
 
@@ -774,6 +869,7 @@
         <div class="copy-box" id="pc-filename"></div>
         <button class="btn outline" style="margin-top:8px" onclick="copyPosterFileName()">📋 複製建議檔名</button>
       </div>
+      <div class="card" id="pc-brand-calibration-box" style="display:none"></div>
       <div class="section-label" style="margin-top:18px;font-size:18px;color:var(--cream);opacity:1">接下來可以：</div>
       <button class="btn" onclick="openResult(lastCompletedResultId)">🖼️ 查看作品</button>
       <button class="btn outline" style="margin-top:10px" onclick="showScreen('screen-project')">🏠 返回專案</button>
@@ -928,12 +1024,23 @@
 
       <div class="section-label" style="margin-top:18px">📄 本機備份（JSON）</div>
       <button class="btn" style="margin-top:10px" onclick="exportData()">⬇️ 立即備份</button>
-      <button class="btn outline" style="margin-top:10px" onclick="document.getElementById('dsc-restore-file-input').click()">⬆️ 還原資料</button>
-      <input type="file" id="dsc-restore-file-input" accept="application/json" style="display:none" onchange="importDataFile(this)">
-      <button class="btn outline" style="margin-top:10px" onclick="document.getElementById('dsc-test-file-input').click()">🧪 測試我的備份檔</button>
-      <input type="file" id="dsc-test-file-input" accept="application/json" style="display:none" onchange="testBackupFile(this)">
+      <!-- Samsung Internet Blocker 第三次修正：改用 <label for="..."> 直接關聯到 input，
+           不再用 JS 模擬點擊隱藏 input——Android 部分瀏覽器對「合成點擊」觸發的檔案選擇器
+           會限縮成只給媒體來源，label 原生觸發的才會給完整的系統檔案選擇器。input 本身用
+           「視覺隱藏」而非 display:none（display:none 在極少數舊版引擎上會讓 label 觸發失效），
+           畫面上看起來還是原本的按鈕樣式，沒有改變操作方式。 -->
+      <label class="btn outline" for="dsc-restore-file-input" onclick="showFileInputDebugInfo('dsc-restore-file-input')" style="margin-top:10px">⬆️ 還原資料</label>
+      <input type="file" id="dsc-restore-file-input" accept="*/*" class="visually-hidden-file-input" onchange="importDataFile(this)">
+      <label class="btn outline" for="dsc-test-file-input" onclick="showFileInputDebugInfo('dsc-test-file-input')" style="margin-top:10px">🧪 測試我的備份檔</label>
+      <input type="file" id="dsc-test-file-input" accept="*/*" class="visually-hidden-file-input" onchange="testBackupFile(this)">
+
+      <!-- Samsung Internet Blocker：點下上面兩個按鈕的當下，立刻顯示實際被觸發的 input
+           id／type／accept／capture，在系統選擇器彈出「之前」就先畫出來，讓手機截圖可以
+           直接證明網頁本身送出去的是什麼設定，排除「猜測」，改用看得到的證據。 -->
+      <div id="dsc-file-input-debug" style="display:none;margin-top:8px;padding:10px 12px;background:var(--text);color:var(--white);border-radius:10px;font-size:12px;font-family:monospace;word-break:break-all"></div>
 
       <div id="dsc-recovery-test-result" style="margin-top:14px"></div>
+      <div class="tool-suggest-note" style="margin-top:10px" id="dsc-build-tag"></div>
 
       <div class="notice" style="margin-top:14px">備份檔會下載成一個 .json 檔，建議另外存到雲端硬碟或信箱，多一層保護。<br><br>
         ⚠️ 備份檔包含你的全部專案、工作、成果與作品內容，請妥善保存，不要隨意傳給他人。<br><br>
@@ -1037,8 +1144,8 @@
   <div class="screen" id="screen-data-safety-onboarding">
     <div style="padding:40px 24px">
       <div class="notice">
-        <h3 style="color:var(--gold);margin-bottom:10px">🛡️ 你的作品保存在這台裝置</h3>
-        <p style="font-size:14px;line-height:1.8;color:var(--cream)">
+        <h3 style="color:var(--green-dark);font-size:17px;line-height:1.5;margin-bottom:10px">🛡️ 你的作品保存在<br>這台裝置</h3>
+        <p style="font-size:14px;line-height:1.8;color:var(--green-dark)">
           目前所有內容只存在這個瀏覽器裡，沒有自動雲端備份。<br><br>
           建議現在花 10 秒，先做第一次備份。
         </p>
@@ -1071,6 +1178,9 @@
           <span class="value" id="settings-count"></span>
         </div>
       </div>
+
+      <div class="section-label" style="margin-top:18px">品牌</div>
+      <button class="btn outline" onclick="openBrandCenter()">🏷️ 品牌中心</button>
 
       <div class="section-label" style="margin-top:18px">AI 協作</div>
       <button class="btn outline" onclick="showScreen('screen-my-ai')">⭐ 我的 AI 夥伴</button>
@@ -1165,6 +1275,324 @@
         </select>
       </div>
       <button class="btn" onclick="confirmAddCustomTool()">新增</button>
+    </div>
+  </div>
+
+  <!-- ══════ 品牌中心（Brand Center Sprint #1）══════ -->
+
+  <!-- 品牌列表 -->
+  <div class="screen" id="screen-brand-center">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-settings')">←</button>
+      <div class="title">品牌中心</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice" id="bc-draft-banner" style="display:none;background:var(--gold-pale)">
+        <span class="txt">你有一個尚未完成的品牌草稿</span>
+        <div style="display:flex;gap:8px;margin-top:10px">
+          <button class="btn gold" style="width:auto;flex:1;padding:9px;font-size:12.5px;margin-top:0" onclick="resumeBrandDraft()">繼續完成</button>
+          <button class="btn outline" style="width:auto;flex:1;padding:9px;font-size:12.5px;margin-top:0" onclick="discardBrandDraft()">放棄草稿</button>
+        </div>
+      </div>
+      <div id="bc-brand-list"></div>
+      <button class="btn" onclick="openBrandCreateChoice()">＋ 建立新品牌</button>
+    </div>
+  </div>
+
+  <!-- 建立品牌：兩種入口 -->
+  <div class="screen" id="screen-brand-create-choice">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-brand-center')">←</button>
+      <div class="title">建立新品牌</div>
+    </div>
+    <div style="padding-top:20px">
+      <button class="btn" onclick="openBrandDiscussCreate()">💬 和 AI 一起建立</button>
+      <div class="tool-suggest-note" style="margin-top:6px">不知道怎麼寫沒關係，說說你正在做的事，AI 會陪你整理。</div>
+      <button class="btn outline" style="margin-top:18px" onclick="openBrandFormCreate()">✏️ 直接自己填寫</button>
+    </div>
+  </div>
+
+  <!-- AI 協作討論（建立 / 調整既有品牌 共用） -->
+  <div class="screen" id="screen-brand-discuss-input">
+    <div class="topbar">
+      <button class="back" onclick="backFromBrandDiscuss()">←</button>
+      <div class="title" id="bd-title">和 AI 一起建立品牌</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice" id="bd-hint"></div>
+      <div id="bd-quick-chips" style="margin:10px 0"></div>
+      <div class="field">
+        <textarea id="bd-free-input" maxlength="800" placeholder="想到什麼都可以先寫，不用想得太完整。" style="min-height:140px"></textarea>
+      </div>
+      <button class="btn" id="bd-submit-btn" onclick="submitBrandDiscussInput()">整理成品牌內容</button>
+    </div>
+  </div>
+
+  <!-- 交給 AI（品牌用途共用：建立／調整／校準建議） -->
+  <div class="screen" id="screen-brand-copy-to-ai">
+    <div class="topbar">
+      <button class="back" onclick="backFromBrandCopyToAi()">←</button>
+      <div class="title" id="bc2ai-title">交給 AI</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">請按「複製」，再貼到你習慣使用的 AI。</div>
+      <div class="notice" id="bc2ai-color-reminder" style="display:none;background:var(--gold-pale)">可以先查看 AI 產生的情境示意圖，但正式依據是文字的配色與字體資料，選擇滿意方案後，把配色與字體建議貼回來。</div>
+      <div class="copy-box" id="bc2ai-text-box"></div>
+      <button class="btn gold" id="bc2ai-copy-btn" onclick="copyBrandTextToClipboard()">📋 複製</button>
+      <button class="btn outline" id="bc2ai-goto-pasteback-btn" style="margin-top:16px" onclick="goBrandPasteBack()">拿到回答了 → 貼回來</button>
+    </div>
+  </div>
+
+  <!-- 品牌配色視覺色票卡（補充指令一：AI 無法產圖時的 Recovery Flow，工作台自己畫色票） -->
+  <div class="screen" id="screen-brand-color-preview">
+    <div class="topbar">
+      <button class="back" onclick="cancelColorPalettePreview()">←</button>
+      <div class="title">選擇配色方案</div>
+    </div>
+    <div style="padding-top:20px">
+      <!-- 真人驗收 UX Blocker 修正（總策長／CEO 核准，2026-08-06）：區塊一情境參考（圖片，
+           幫助「感受」）／區塊二結構化方案（文字，「帶得走」），兩者定位不同不互相取代 -->
+      <div class="card" id="bcpv-visual-reference" style="margin-bottom:16px"></div>
+      <div class="section-label">📋 結構化方案</div>
+      <div class="notice" style="margin-top:8px">工作台把三組配色畫成實際色票卡，方便直接比較。</div>
+      <div id="bcpv-palette-list"></div>
+      <button class="btn outline" onclick="mixColorPalette()">🎨 想混合兩個方案</button>
+      <button class="btn outline" style="margin-top:10px" onclick="regenerateColorPalette()">🔁 都不喜歡，重新產生</button>
+      <!-- Blocker 修正（總策長／CEO 核准，2026-08-06）：指定只調整某一部分，不用整個流程重來 -->
+      <div class="section-label" style="margin-top:16px">✏️ 只想調整某一部分</div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+        <button class="btn outline" style="width:auto;flex:1;padding:9px;font-size:12.5px;margin-top:0" onclick="requestBrandVisualPartialAdjust('colors')">只改配色</button>
+        <button class="btn outline" style="width:auto;flex:1;padding:9px;font-size:12.5px;margin-top:0" onclick="requestBrandVisualPartialAdjust('typography')">只改字體</button>
+      </div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">
+        <button class="btn outline" style="width:auto;flex:1;padding:9px;font-size:12.5px;margin-top:0" onclick="requestBrandVisualPartialAdjust('visualStyle')">只改視覺風格</button>
+        <button class="btn outline" style="width:auto;flex:1;padding:9px;font-size:12.5px;margin-top:0" onclick="requestBrandVisualPartialAdjust('visualMotifs')">只改圖案方向</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Step 5C（總策長／CEO 核准，2026-08-06）：配色與字體確認畫面，確認後才建立新版 Brand Snapshot -->
+  <div class="screen" id="screen-brand-visual-confirm">
+    <div class="topbar">
+      <button class="back" onclick="cancelBrandVisualDraft()">←</button>
+      <div class="title">已選定品牌配色與字體</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="card" id="bvc-content"></div>
+      <!-- Recovery Flow Level 4（總策長／CEO 核准，2026-08-06）：三種選擇，不是只有
+           「確認」跟「重來」——資料不完整時也能先繼續，或只補缺的部分。
+           bvc-fix-missing-btn 的顯示／隱藏由 renderBrandVisualConfirm() 依完成度決定。 -->
+      <button class="btn" style="margin-top:14px" onclick="confirmBrandVisualDraft()">✅ 繼續使用目前成果並建立</button>
+      <button class="btn outline" style="margin-top:10px;display:none" id="bvc-fix-missing-btn" onclick="requestBrandVisualFixMissingFields()">✏️ 只補缺少欄位</button>
+      <button class="btn outline" style="margin-top:10px" onclick="regenerateBrandVisualFromScratch()">🔄 全部重新產生</button>
+    </div>
+  </div>
+
+  <!-- 真人驗收 Flow Blocker 修正（總策長／CEO 核准，2026-08-06）：配色完成 ≠ 直接 Logo，
+       中間一定要有明確的「已確認並儲存」畫面，使用者自己按下一步才會進入 Logo 共創。 -->
+  <div class="screen" id="screen-brand-visual-saved">
+    <div class="topbar">
+      <button class="back" onclick="showScreen('screen-brand-detail')">←</button>
+      <div class="title">品牌配色已儲存</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="card">
+        <div class="section-label">✅ 品牌配色與字體已確認並儲存</div>
+        <div class="line" style="margin-top:8px" id="bvs-summary"></div>
+        <div class="secondary-note" style="margin-top:8px">已經正式存進 Brand Snapshot，現在離開也不會遺失。</div>
+        <!-- 真人驗收 UX 修正（總策長／CEO 核准，2026-08-06）：品牌共創進度，讓使用者知道
+             目前做到哪裡，不是只知道下一步是 Logo -->
+        <div id="bvs-progress"></div>
+      </div>
+      <button class="btn" style="margin-top:14px" onclick="goToLogoDiscussFromVisualSaved()">下一步：開始 Logo 共創 →</button>
+      <button class="btn outline" style="margin-top:10px" onclick="showScreen('screen-brand-detail')">回到品牌詳情頁</button>
+    </div>
+  </div>
+
+  <!-- Step 6（總策長／CEO 核准，2026-08-06）：Logo 方向卡片，AI 先整理方向，不直接生圖 -->
+  <div class="screen" id="screen-brand-logo-direction-preview">
+    <div class="topbar">
+      <button class="back" onclick="cancelLogoDirectionPreview()">←</button>
+      <div class="title">選擇 Logo 方向</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">這一輪 AI 還沒畫圖，先用文字整理 Logo 方向，選定方向後才會產生正式的生圖指令。</div>
+      <div id="bldp-list"></div>
+    </div>
+  </div>
+
+  <!-- Step 7（總策長／CEO 核准，2026-08-06）：Logo Prompt 確認，確認後才存進 Brand Snapshot -->
+  <div class="screen" id="screen-brand-logo-prompt-confirm">
+    <div class="topbar">
+      <button class="back" onclick="showScreen('screen-brand-detail')">←</button>
+      <div class="title">確認 Logo Prompt</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="card" id="blpc-content"></div>
+      <button class="btn outline" style="margin-top:14px" onclick="editLogoPromptDraft()">✏️ 修改</button>
+      <button class="btn outline" style="margin-top:10px" onclick="regenerateLogoPrompt()">🔄 重新整理</button>
+      <button class="btn" style="margin-top:10px" onclick="confirmLogoPromptDraft()">✅ 確認此 Logo Prompt</button>
+    </div>
+  </div>
+
+  <!-- Logo 成品畫面（Logo 流程優化 Round 2，總策長／CEO 核准，2026-08-04）：確認 Logo Prompt
+       後的直接下一站。主線是純文字引導（複製指令→外部 AI 生圖→保存提醒→採用／微調／重新產生），
+       不要求貼圖片網址；原本的圖片網址貼上／預覽／管理（Step 8 Brand Assets，限定 type: logo）
+       完整保留，但降級為預設收合的「進階選用」，不阻擋主線完成。 -->
+  <div class="screen" id="screen-brand-logo-asset">
+    <div class="topbar">
+      <button class="back" onclick="showScreen('screen-brand-detail')">←</button>
+      <div class="title">Logo 成品</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="card" id="bla-main-flow"></div>
+      <details class="ai-why" style="margin-top:16px">
+        <summary>進階選用｜將 Logo 圖片加入品牌資料</summary>
+        <div class="ai-why-body">
+          <div id="bla-asset-list" style="margin-top:8px"></div>
+          <button class="btn outline" style="margin-top:8px" onclick="addBrandAssetPrompt(activeBrandDetailId)">➕ 貼上 Logo 圖片網址</button>
+        </div>
+      </details>
+      <button class="btn" style="margin-top:14px" onclick="showScreen('screen-brand-detail')">完成，回到品牌詳情頁</button>
+    </div>
+  </div>
+
+  <!-- 貼回（品牌用途共用） -->
+  <div class="screen" id="screen-brand-paste-back">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-brand-copy-to-ai')">←</button>
+      <div class="title" id="bpb-title">把 AI 回答貼回來</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="field">
+        <textarea id="brand-paste-back-textarea" placeholder="把 AI 的回答貼在這裡..." style="min-height:200px"></textarea>
+      </div>
+      <!-- 選色 Gate 沒通過（修正指令一）：不能誤存、也不能只顯示阻擋訊息，
+           這裡直接提供可複製的重新整理指令，形成 Gate＋Recovery Flow -->
+      <div class="notice" id="bpb-color-incomplete-warning" style="display:none;background:var(--gold-pale);border:1px solid var(--gold)">
+        <div><b>三組配色資料不完整，請回到 AI 重新整理後再貼回。</b></div>
+        <div style="margin-top:8px;font-size:12.5px" id="bpb-color-incomplete-reason"></div>
+        <button class="btn gold" style="margin-top:10px" onclick="copyBrandColorFixInstruction()">📋 複製重新整理指令</button>
+      </div>
+      <button class="btn" id="bpb-submit-btn" onclick="submitBrandPasteBack()">整理成品牌內容</button>
+    </div>
+  </div>
+
+  <!-- 品牌內容確認畫面（兩種建立方式收斂到這裡） -->
+  <div class="screen" id="screen-brand-confirm">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-brand-center')">←</button>
+      <div class="title">確認品牌內容</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">請逐項確認 AI 整理的內容，需要的話可以直接修改，或請 AI 重新整理。</div>
+      <div id="bcf-field-list"></div>
+      <button class="btn" onclick="confirmCreateBrandFromDraft()">確認並建立品牌</button>
+      <button class="btn outline" style="margin-top:10px" onclick="brandConfirmRequestReorganize()">🔁 繼續和 AI 調整</button>
+      <button class="btn outline" style="margin-top:10px" onclick="brandConfirmBackToForm()">✏️ 返回修改</button>
+      <button class="btn outline" style="margin-top:10px" onclick="brandConfirmSaveDraft()">🕐 儲存草稿，稍後繼續</button>
+    </div>
+  </div>
+
+  <!-- 直接自己填寫（同時用於：手動建立 ／ 編輯既有品牌） -->
+  <div class="screen" id="screen-brand-form">
+    <div class="topbar">
+      <button class="back" onclick="backFromBrandForm()">←</button>
+      <div class="title" id="bf-title">直接自己填寫</div>
+    </div>
+    <div style="padding-top:20px">
+      <div id="bf-fields"></div>
+      <button class="btn" id="bf-submit-btn" onclick="submitBrandForm()">建立並使用這個品牌</button>
+    </div>
+  </div>
+
+  <!-- 品牌首頁／詳情 -->
+  <div class="screen" id="screen-brand-detail">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-brand-center')">←</button>
+      <div class="title" id="bdt-name">品牌</div>
+    </div>
+    <div style="padding-top:20px">
+      <!-- Brand Center v1.0 UI 實作（總策長／CEO 核准，2026-08-05）：四大分區，
+           第一區「品牌是誰」沿用既有卡片位置（品牌名稱已是頁面標題，這裡放一句話定位＋
+           主要服務對象），第二～四區在 bdt-fields 卡片內依序渲染，欄位與順序跟表單一致。 -->
+      <div class="card" id="bdt-section-1"></div>
+      <div class="card" style="margin-top:12px" id="bdt-fields"></div>
+
+      <div class="section-label" style="margin-top:18px">關聯成果</div>
+      <div id="bdt-assets"></div>
+      <button class="btn outline" onclick="openBrandAssetLink()">＋ 關聯成果庫項目</button>
+
+      <div class="section-label" style="margin-top:18px">品牌建議</div>
+      <div class="card" style="cursor:pointer" id="bdt-suggestions-summary" onclick="openBrandSuggestions()"></div>
+
+      <div class="section-label" style="margin-top:18px">使用情形</div>
+      <div class="line" id="bdt-usage"></div>
+
+      <div class="section-label" style="margin-top:18px">管理</div>
+      <!-- 品牌版本／最後更新：刻意用次要文字樣式、不做卡片、不加圖示、不提供互動，
+           跟品牌欄位本身的視覺權重明確不同 -->
+      <div class="secondary-note" id="bdt-version-info" style="margin-bottom:10px"></div>
+      <button class="btn" onclick="openBrandEdit(activeBrandDetailId)">✏️ 編輯品牌</button>
+      <button class="btn outline" style="margin-top:10px" onclick="openBrandAdjust()">💬 和 AI 一起調整</button>
+      <!-- Brand Gate（總策長／CEO 核准，2026-08-05）：按鈕一律顯示，未達門檻時點下去
+           由 openBrandColorDesign() 顯示明確提示，不是把整個功能藏起來。 -->
+      <button class="btn outline" style="margin-top:10px" onclick="openBrandColorDesign(activeBrandDetailId)">🎨 品牌配色與字體參考</button>
+      <div class="secondary-note" id="bdt-color-gate-hint" style="display:none">品牌語氣與品牌故事確認後，才能開始品牌配色與字體參考。</div>
+      <!-- Blocker 修正（總策長／CEO 核准，2026-08-06）：Logo 共創獨立成第三個階段，
+           門檻是配色與字體已確認（見 renderBrandDetail() 的 bdt-logo-gate-hint）。 -->
+      <button class="btn outline" style="margin-top:10px" onclick="openBrandLogoDiscuss(activeBrandDetailId)">✨ 開始 Logo 共創</button>
+      <div class="secondary-note" id="bdt-logo-gate-hint" style="display:none">品牌配色與字體確認後，才能開始 Logo 共創。</div>
+      <div id="bdt-brand-assets-section"></div>
+      <button class="btn outline" style="margin-top:10px" onclick="copyActiveBrand()">📄 複製這個品牌</button>
+      <button class="btn outline" style="margin-top:10px" id="bdt-archive-btn" onclick="toggleArchiveBrand()">封存</button>
+    </div>
+  </div>
+
+  <!-- 關聯成果庫項目 -->
+  <div class="screen" id="screen-brand-asset-link">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-brand-detail')">←</button>
+      <div class="title">關聯成果庫項目</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">這裡只會關聯既有成果庫裡的項目，不會複製檔案本體；解除關聯不會刪除原本的成果。</div>
+      <div id="bal-result-list"></div>
+    </div>
+  </div>
+
+  <!-- 品牌建議清單（校準建議 ＋ AI 協作調整 共用同一套確認機制） -->
+  <div class="screen" id="screen-brand-suggestions">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-brand-detail')">←</button>
+      <div class="title">品牌建議</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">AI 只會提出建議，不會直接修改品牌內容。逐項勾選要採用的建議，未勾選的欄位維持原狀，最後按「確認更新」才會正式套用。</div>
+      <div id="bsg-list"></div>
+      <button class="btn" onclick="applyCheckedBrandSuggestions()">確認更新</button>
+    </div>
+  </div>
+
+  <!-- Work 切換品牌 -->
+  <div class="screen" id="screen-brand-switch">
+    <div class="topbar">
+      <button class="back" onclick="cancelBrandSwitch()">←</button>
+      <div class="title">更換品牌</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">更換品牌只會影響接下來的新產出，已完成內容不會自動修改。</div>
+      <div id="bsw-list"></div>
+    </div>
+  </div>
+
+  <!-- 完成工作後的品牌校準提示（非阻擋式） -->
+  <div class="screen" id="screen-brand-calibration-prompt">
+    <div class="topbar"><div class="title">要保存成品牌規則嗎？</div></div>
+    <div style="padding-top:20px">
+      <div class="notice">「<span id="bcp-work-name"></span>」這次工作是否有值得保存成品牌規則的新發現？</div>
+      <button class="btn" onclick="requestBrandCalibration()">提出品牌建議</button>
+      <button class="btn outline" style="margin-top:10px" onclick="declineBrandCalibration()">暫時不要</button>
     </div>
   </div>
 

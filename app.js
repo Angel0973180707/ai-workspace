@@ -452,6 +452,56 @@ const VIDEO_RATIO_OPTIONS = [
   { id: 'landscape', emoji: '🖥️', label: '橫式', uses: 'YouTube／教學／品牌影片' },
   { id: 'square', emoji: '🟦', label: '方形', uses: '社群／商品展示' }
 ];
+
+// #18.1 BUG-002（總策長核准，2026-08-02）：海報「用途／尺寸」選擇，比照 VIDEO_RATIO_OPTIONS
+// 既有模式。刻意不用「9:16」「2:3」這種數字當使用者看到的主要文字，用「這張海報要用在哪裡？」
+// 的情境選項——promptText 才是實際送進「圖片生成請求」的內容，用途說明放在使用者看得懂的
+// 地方，數字/比例放在指令細節裡，初學者不需要先理解長寬比是什麼。
+const POSTER_RATIO_OPTIONS = [
+  { id: 'a4', label: '列印海報', desc: 'A4 直式，適合列印與一般文宣', promptText: '請生成 A4 直式海報，版面比例約為 1:1.414，適合列印。', isDefault: true },
+  { id: 'ratio_2_3', label: '一般直式海報', desc: '2:3，適合海報與多數社群展示', promptText: '請生成 2:3 直式海報，適合海報與多數社群展示。' },
+  { id: 'ratio_4_5', label: '社群貼文', desc: '4:5，適合 Instagram／Facebook 貼文', promptText: '請生成 4:5 直式社群海報，建議尺寸 1080×1350。' },
+  { id: 'ratio_9_16', label: '限時動態／短影音', desc: '9:16，適合限時動態、Reels、Shorts', promptText: '請生成 9:16 直式短影音用海報，適合限時動態、Reels、Shorts。' },
+  { id: 'ratio_1_1', label: '方形貼文', desc: '1:1，適合社群方形貼文', promptText: '請生成 1:1 方形海報，適合社群方形貼文。' },
+  { id: 'ratio_16_9', label: '橫式展示', desc: '16:9，適合簡報、YouTube 或橫幅', promptText: '請生成 16:9 橫式海報，適合簡報、YouTube 或橫幅展示。' },
+  { id: 'custom', label: '其他', desc: '自訂尺寸，自己輸入需求', promptText: null }
+];
+function getPosterRatioOption(id) { return POSTER_RATIO_OPTIONS.find(function (o) { return o.id === id; }) || POSTER_RATIO_OPTIONS.find(function (o) { return o.isDefault; }); }
+
+// #18.1 BUG-004（總策長核准，修改後版本，2026-08-02）：生圖前素材複選清單——這是「這次準備附
+// 哪些素材」的提醒式確認，不是系統驗證檔案存在的 Gate。「這次沒有要附圖片素材」跟其他項目
+// 互斥（選了它就不該又選 Logo/QR Code，邏輯上矛盾）。
+// #18.1 BUG-001（總策長修改後核准，2026-08-02）：不做跨 Flow 的破壞性全域 Sanitizer——
+// 原始貼回內容一律完整保留在 result.content，這個函式只在「成果庫顯示」時，另外算出一份
+// 給人看的乾淨版本，不回寫、不覆蓋原始內容。本輪只處理海報常見的顯示雜訊：
+// 外層 Version A/B 標頭、純排版用的 **、選擇提示行、沒有實際填值的 Placeholder。
+// 明確保留【圖片生成請求】【風格建議】等工作台仍需要的結構標記（正則只比對「請填入」開頭
+// 的方括號，不會誤傷這兩個正式結構標記）。
+function formatPosterResultForDisplay(text) {
+  if (!text) return text;
+  let cleaned = text;
+  cleaned = cleaned.replace(/^#{1,6}\s*Version\s*[AB]\s*$/gim, '');
+  cleaned = cleaned.replace(/\*\*(.*?)\*\*/g, '$1');
+  cleaned = cleaned.replace(/__(.*?)__/g, '$1');
+  cleaned = cleaned.replace(/^○.*$/gim, '');
+  cleaned = cleaned.replace(/^請選擇你最喜歡的版本[:：]?\s*$/gim, '');
+  // Placeholder 不直接刪除，改成清楚的提醒（總策長明確要求：比完全消失更能提醒使用者）
+  cleaned = cleaned.replace(/【請填入[:：]?\s*([^】]*)】/g, function (m, inner) {
+    return (inner ? inner.trim() : '相關資訊') + '：請製作時另外附上';
+  });
+  cleaned = cleaned.replace(/\n{3,}/g, '\n\n').trim();
+  return cleaned;
+}
+
+const POSTER_MATERIAL_ITEMS = [
+  { id: 'logo', label: 'Logo 圖片' },
+  { id: 'qrcode', label: 'QR Code' },
+  { id: 'screenshot', label: '工作台截圖' },
+  { id: 'product_photo', label: '商品／活動照片' },
+  { id: 'brand_photo', label: '品牌或人物照片' },
+  { id: 'other', label: '其他參考圖片' },
+  { id: 'none', label: '這次沒有要附圖片素材' }
+];
 const VIDEO_IMAGE_COUNT_OPTIONS = [
   { count: 1, label: '1 張（最快）' },
   { count: 3, label: '3 張（建議，好上手）' },
@@ -475,6 +525,564 @@ const VIDEO_TYPE_DEFAULTS = {
   custom: { ratio: 'portrait', count: 3 }
 };
 function videoTypeDefaults(videoType) { return VIDEO_TYPE_DEFAULTS[videoType] || VIDEO_TYPE_DEFAULTS.custom; }
+
+// ═════════════════════════════════════════════════════════════
+// #19 Platform Size Registry POC（技術長審查後核准，2026-08-03）
+// 這是工作台內部的「規格資料 + 共用查詢函式」，本輪刻意不接到任何畫面／流程——
+// 沒有任何既有函式呼叫這裡的東西，海報／影片／#20/#21 的既有行為完全不受影響。
+// 「API」一律理解為「工作台內部共用查詢函式」，不是外部平台串接；本專案不接 Facebook／
+// Instagram／LINE 等任何外部服務的即時資料，這裡的數字是人工整理的靜態參考資料。
+// ═════════════════════════════════════════════════════════════
+
+const PLATFORM_SIZE_REGISTRY = {
+  schemaVersion: 1,
+  registryVersion: 1,
+  updatedAt: '2026-08-03',
+  // specsById 是唯一的真實資料來源；index 只是查詢用的衍生索引，開機時自動重建，
+  // 不是另一份需要手動同步的資料（避免兩邊漂移）。
+  specsById: {
+    // ═══════════════════════════════════════════════════════════
+    // CEO 收斂指令（2026-08-04）：本輪 POC 目的是驗證 Data Contract，不是擴充產品能力。
+    // Registry 資料只保留「可以直接對應到來源欄位」的事實性資料（規格數字、比例、官方
+    // 限制、官方範例），不放 Prompt 句子、not 欄位、AI 指令文字或任何解釋性說明——這些
+    // 屬於「怎麼把資料講給人／AI 聽」，是下一階段 Adapter／Presenter 的責任，Registry
+    // 本身只負責「資料是什麼」。所以這裡看不到 promptText／note 這類欄位；
+    // buildPlatformSizePromptFromSnapshot() 目前會回傳空字串，這是本輪刻意的行為，不是
+    // bug——Prompt 組成邏輯要等下一階段 Adapter／Presenter 才會實作。
+    // ═══════════════════════════════════════════════════════════
+
+    // ── print／general：既有海報 7 選項裡「有固定規格」的 6 個，一比一對應 POSTER_RATIO_OPTIONS
+    // 的比例數字（label／ratio）。POSTER_RATIO_OPTIONS 本身的 promptText 完全不受影響，
+    // 仍是海報正式流程唯一使用的資料來源；這裡只是 Registry 資料層的事實映射，不重複收錄文案。
+    // 刻意不含 custom（自訂尺寸本來就不是一筆固定規格）。
+    print_general_a4: {
+      specId: 'print_general_a4', category: 'print', platformId: 'general', useCaseId: 'a4',
+      label: '列印海報', orientation: 'portrait',
+      recommendedPreset: { ratio: { width: 1000, height: 1414, label: '1:1.414', value: 1000 / 1414 } },
+      requirements: null,
+      specType: 'workspace_default', sourceType: 'workspace_internal', sources: ['既有 POSTER_RATIO_OPTIONS，CEO 真人驗收通過（2026-08-02）'],
+      status: 'verified', verifiedAt: '2026-08-02', reviewAfter: null,
+      specVersion: 1, deprecatedAt: null, replacedBy: null
+    },
+    print_general_ratio_2_3: {
+      specId: 'print_general_ratio_2_3', category: 'print', platformId: 'general', useCaseId: 'ratio_2_3',
+      label: '一般直式海報', orientation: 'portrait',
+      recommendedPreset: { ratio: { width: 2, height: 3, label: '2:3', value: 2 / 3 } },
+      requirements: null,
+      specType: 'workspace_default', sourceType: 'workspace_internal', sources: ['既有 POSTER_RATIO_OPTIONS，CEO 真人驗收通過（2026-08-02）'],
+      status: 'verified', verifiedAt: '2026-08-02', reviewAfter: null,
+      specVersion: 1, deprecatedAt: null, replacedBy: null
+    },
+    print_general_ratio_4_5: {
+      specId: 'print_general_ratio_4_5', category: 'print', platformId: 'general', useCaseId: 'ratio_4_5',
+      label: '社群貼文', orientation: 'portrait',
+      recommendedPreset: { ratio: { width: 4, height: 5, label: '4:5', value: 4 / 5 }, width: 1080, height: 1350 },
+      requirements: null,
+      specType: 'workspace_default', sourceType: 'workspace_internal', sources: ['既有 POSTER_RATIO_OPTIONS，CEO 真人驗收通過（2026-08-02）'],
+      status: 'verified', verifiedAt: '2026-08-02', reviewAfter: null,
+      specVersion: 1, deprecatedAt: null, replacedBy: null
+    },
+    print_general_ratio_9_16: {
+      specId: 'print_general_ratio_9_16', category: 'print', platformId: 'general', useCaseId: 'ratio_9_16',
+      label: '限時動態／短影音', orientation: 'portrait',
+      recommendedPreset: { ratio: { width: 9, height: 16, label: '9:16', value: 9 / 16 } },
+      requirements: null,
+      specType: 'workspace_default', sourceType: 'workspace_internal', sources: ['既有 POSTER_RATIO_OPTIONS，CEO 真人驗收通過（2026-08-02）'],
+      status: 'verified', verifiedAt: '2026-08-02', reviewAfter: null,
+      specVersion: 1, deprecatedAt: null, replacedBy: null
+    },
+    print_general_ratio_1_1: {
+      specId: 'print_general_ratio_1_1', category: 'print', platformId: 'general', useCaseId: 'ratio_1_1',
+      label: '方形貼文', orientation: 'square',
+      recommendedPreset: { ratio: { width: 1, height: 1, label: '1:1', value: 1 } },
+      requirements: null,
+      specType: 'workspace_default', sourceType: 'workspace_internal', sources: ['既有 POSTER_RATIO_OPTIONS，CEO 真人驗收通過（2026-08-02）'],
+      status: 'verified', verifiedAt: '2026-08-02', reviewAfter: null,
+      specVersion: 1, deprecatedAt: null, replacedBy: null
+    },
+    print_general_ratio_16_9: {
+      specId: 'print_general_ratio_16_9', category: 'print', platformId: 'general', useCaseId: 'ratio_16_9',
+      label: '橫式展示', orientation: 'landscape',
+      recommendedPreset: { ratio: { width: 16, height: 9, label: '16:9', value: 16 / 9 } },
+      requirements: null,
+      specType: 'workspace_default', sourceType: 'workspace_internal', sources: ['既有 POSTER_RATIO_OPTIONS，CEO 真人驗收通過（2026-08-02）'],
+      status: 'verified', verifiedAt: '2026-08-02', reviewAfter: null,
+      specVersion: 1, deprecatedAt: null, replacedBy: null
+    },
+
+    // ═══════════════════════════════════════════════════════════
+    // social／*：《Platform Size Registry Mapping Sheet》一比一映射（唯一資料契約）。
+    // 研究執行：情報長（Gemini）／統籌：總策長／決策者：CEO 李秀芳／查證日期：2026-08-03。
+    //
+    // 收斂後的欄位設計（CEO 2026-08-04 指令）：
+    //  - requirements：對應 Official Requirement 欄，raw 逐字保留官方規定原文，其餘子欄位
+    //    是同一段文字的可查詢版本，不是推論出的新資訊。
+    //  - officialExample：對應 Official Example 欄，沒有官方範例時填 '—'（不寫 'None'）。
+    //    本輪把「無官方範例」原則同時套用在 LINE Image Message 與 Threads——Threads 官方
+    //    文件本來就寫「No Fixed Pixel Size」，跟 LINE Image Message 是同一種情況；如果
+    //    總策長／CEO 認為這個套用範圍不對，請告訴我再調整。
+    //  - recommendedPreset：對應 Workspace Recommendation 欄，只保留 ratio／width／height／
+    //    raw（raw 是該欄位的逐字原文，例如 Facebook 封面的「820×360px（高清可採
+    //    1640×720px，主視覺居中）」——這段文字是 Mapping Sheet 本身就有的內容，不是我
+    //    另外寫的說明，所以仍保留在 raw 裡；但不再有 promptText／note 這種組裝過的句子）。
+    //  - 拿掉的東西：promptText（AI 指令文字）、note（我自己寫的補充說明）——這些是「怎麼
+    //    講給人／AI 聽」的表達層，本輪不放進 Registry Data，留給下一階段 Adapter／Presenter。
+    //  - 沒有清楚對應到一個「有名字的比例」時（例如 Facebook 封面 820×360），ratio 直接用
+    //    像素本身當分子分母，不虛構一個 Mapping Sheet 沒寫的比例名稱。
+    // Gap Report：本輪 11 筆全部可以完整映射，沒有需要另外確認的缺口。
+    // ═══════════════════════════════════════════════════════════
+    social_instagram_portrait_post: {
+      specId: 'social_instagram_portrait_post', category: 'social', platformId: 'instagram', useCaseId: 'portrait_post',
+      label: 'Instagram 直式貼文', orientation: 'portrait',
+      requirements: { raw: 'Aspect Ratio: 1.91:1 ~ 4:5\nMax Width: 1080 px', aspectRatioRange: { from: { width: 191, height: 100, label: '1.91:1' }, to: { width: 4, height: 5, label: '4:5' } }, maxWidth: 1080 },
+      officialExample: [{ width: 1080, height: 1350, ratio: { width: 4, height: 5, label: '4:5' } }],
+      recommendedPreset: { ratio: { width: 4, height: 5, label: '4:5', value: 4 / 5 }, width: 1080, height: 1350, raw: '1080 × 1350 px (4:5)' },
+      specType: 'platform_recommended', sourceType: 'external_research_verified', sources: ['Platform Size Registry Mapping Sheet — 研究執行：情報長（Gemini），統籌：總策長，查證日期 2026-08-03'],
+      status: 'verified', verifiedAt: '2026-08-03', reviewAfter: '2027-02-03',
+      specVersion: 1, deprecatedAt: null, replacedBy: null
+    },
+    social_instagram_square_post: {
+      specId: 'social_instagram_square_post', category: 'social', platformId: 'instagram', useCaseId: 'square_post',
+      label: 'Instagram 方形貼文', orientation: 'square',
+      requirements: { raw: 'Aspect Ratio: 1:1\nMax Width: 1080 px', aspectRatio: { width: 1, height: 1, label: '1:1' }, maxWidth: 1080 },
+      officialExample: [{ width: 1080, height: 1080, ratio: { width: 1, height: 1, label: '1:1' } }],
+      recommendedPreset: { ratio: { width: 1, height: 1, label: '1:1', value: 1 }, width: 1080, height: 1080, raw: '1080 × 1080 px (1:1)' },
+      specType: 'platform_recommended', sourceType: 'external_research_verified', sources: ['Platform Size Registry Mapping Sheet — 研究執行：情報長（Gemini），統籌：總策長，查證日期 2026-08-03'],
+      status: 'verified', verifiedAt: '2026-08-03', reviewAfter: '2027-02-03',
+      specVersion: 1, deprecatedAt: null, replacedBy: null
+    },
+    social_instagram_stories: {
+      specId: 'social_instagram_stories', category: 'social', platformId: 'instagram', useCaseId: 'stories',
+      label: 'Instagram 限時動態（Stories）', orientation: 'portrait',
+      requirements: { raw: 'Aspect Ratio: 9:16\nSafe Zone: Top/Bottom 約 14%（250px）', aspectRatio: { width: 9, height: 16, label: '9:16' }, safeZoneNote: 'Top/Bottom 約 14%（250px）' },
+      officialExample: [{ width: 1080, height: 1920, ratio: { width: 9, height: 16, label: '9:16' } }],
+      recommendedPreset: { ratio: { width: 9, height: 16, label: '9:16', value: 9 / 16 }, width: 1080, height: 1920, raw: '1080 × 1920 px (9:16)' },
+      specType: 'platform_recommended', sourceType: 'external_research_verified', sources: ['Platform Size Registry Mapping Sheet — 研究執行：情報長（Gemini），統籌：總策長，查證日期 2026-08-03'],
+      status: 'verified', verifiedAt: '2026-08-03', reviewAfter: '2027-02-03',
+      specVersion: 1, deprecatedAt: null, replacedBy: null
+    },
+
+    social_facebook_cover: {
+      specId: 'social_facebook_cover', category: 'social', platformId: 'facebook', useCaseId: 'cover',
+      label: 'Facebook 專頁封面', orientation: 'landscape',
+      requirements: { raw: 'Min Upload: 400 × 150 px\nFile Size: <100 KB（Recommended）', minUpload: { width: 400, height: 150 }, fileSizeRecommendedKB: 100 },
+      officialExample: [{ width: 820, height: 312, label: 'Desktop' }, { width: 640, height: 360, label: 'Mobile' }],
+      recommendedPreset: { ratio: { width: 820, height: 360, label: '820:360', value: 820 / 360 }, width: 820, height: 360, raw: '820 × 360 px（高清可採 1640 × 720 px，主視覺居中）' },
+      specType: 'platform_recommended', sourceType: 'external_research_verified', sources: ['Platform Size Registry Mapping Sheet — 研究執行：情報長（Gemini），統籌：總策長，查證日期 2026-08-03'],
+      status: 'verified', verifiedAt: '2026-08-03', reviewAfter: '2027-02-03',
+      specVersion: 1, deprecatedAt: null, replacedBy: null
+    },
+    social_facebook_organic_post: {
+      specId: 'social_facebook_organic_post', category: 'social', platformId: 'facebook', useCaseId: 'organic_post',
+      label: 'Facebook 自然貼文', orientation: 'square',
+      requirements: { raw: 'Aspect Ratio: 1.91:1 ~ 4:5\nMin Width: 500 px', aspectRatioRange: { from: { width: 191, height: 100, label: '1.91:1' }, to: { width: 4, height: 5, label: '4:5' } }, minWidth: 500 },
+      officialExample: [{ width: 1080, height: 1080, ratio: { width: 1, height: 1, label: '1:1' } }, { width: 1200, height: 630, ratio: { width: 191, height: 100, label: '1.91:1' } }],
+      recommendedPreset: { ratio: { width: 1, height: 1, label: '1:1', value: 1 }, width: 1080, height: 1080, raw: '1080 × 1080 px (1:1)' },
+      specType: 'platform_recommended', sourceType: 'external_research_verified', sources: ['Platform Size Registry Mapping Sheet — 研究執行：情報長（Gemini），統籌：總策長，查證日期 2026-08-03'],
+      status: 'verified', verifiedAt: '2026-08-03', reviewAfter: '2027-02-03',
+      specVersion: 1, deprecatedAt: null, replacedBy: null
+    },
+    social_facebook_stories: {
+      specId: 'social_facebook_stories', category: 'social', platformId: 'facebook', useCaseId: 'stories',
+      label: 'Facebook 限時動態（Stories）', orientation: 'portrait',
+      requirements: { raw: 'Aspect Ratio: 9:16\nMin Width: 500 px', aspectRatio: { width: 9, height: 16, label: '9:16' }, minWidth: 500 },
+      // 總策長審議修正（三項微調之一）：官方範例統一標示為 1080×1920（9:16）。
+      officialExample: [{ width: 1080, height: 1920, ratio: { width: 9, height: 16, label: '9:16' } }],
+      recommendedPreset: { ratio: { width: 9, height: 16, label: '9:16', value: 9 / 16 }, width: 1080, height: 1920, raw: '1080 × 1920 px (9:16)' },
+      specType: 'platform_recommended', sourceType: 'external_research_verified', sources: ['Platform Size Registry Mapping Sheet — 研究執行：情報長（Gemini），統籌：總策長，查證日期 2026-08-03'],
+      status: 'verified', verifiedAt: '2026-08-03', reviewAfter: '2027-02-03',
+      specVersion: 1, deprecatedAt: null, replacedBy: null
+    },
+
+    social_line_rich_message: {
+      specId: 'social_line_rich_message', category: 'social', platformId: 'line', useCaseId: 'rich_message',
+      label: 'LINE OA 圖文訊息（Rich Message）', orientation: 'square',
+      requirements: { raw: 'JPG / PNG\nMax Size：10 MB\nWidth：1040 px\n支援高度：1040、750、500、1386、2080', fileFormats: ['JPG', 'PNG'], maxFileSizeMB: 10, fixedWidth: 1040, supportedHeights: [1040, 750, 500, 1386, 2080] },
+      officialExample: [{ width: 1040, height: 1040 }],
+      recommendedPreset: { ratio: { width: 1, height: 1, label: '1:1', value: 1 }, width: 1040, height: 1040, raw: '1040 × 1040 px' },
+      specType: 'platform_recommended', sourceType: 'external_research_verified', sources: ['Platform Size Registry Mapping Sheet — 研究執行：情報長（Gemini），統籌：總策長，查證日期 2026-08-03'],
+      status: 'verified', verifiedAt: '2026-08-03', reviewAfter: '2027-02-03',
+      specVersion: 1, deprecatedAt: null, replacedBy: null
+    },
+    social_line_richmenu_large: {
+      specId: 'social_line_richmenu_large', category: 'social', platformId: 'line', useCaseId: 'richmenu_large',
+      label: 'LINE 圖文選單－大版型（Rich Menu Large）', orientation: 'landscape',
+      requirements: { raw: 'JPG / PNG\nMax Size：1 MB\n2500 × 1686 px', fileFormats: ['JPG', 'PNG'], maxFileSizeMB: 1, fixedPixelSize: { width: 2500, height: 1686 } },
+      officialExample: [{ width: 2500, height: 1686 }],
+      recommendedPreset: { ratio: { width: 2500, height: 1686, label: '2500:1686', value: 2500 / 1686 }, width: 2500, height: 1686, raw: '2500 × 1686 px' },
+      specType: 'platform_recommended', sourceType: 'external_research_verified', sources: ['Platform Size Registry Mapping Sheet — 研究執行：情報長（Gemini），統籌：總策長，查證日期 2026-08-03'],
+      status: 'verified', verifiedAt: '2026-08-03', reviewAfter: '2027-02-03',
+      specVersion: 1, deprecatedAt: null, replacedBy: null
+    },
+    social_line_richmenu_small: {
+      specId: 'social_line_richmenu_small', category: 'social', platformId: 'line', useCaseId: 'richmenu_small',
+      label: 'LINE 圖文選單－小版型（Rich Menu Small）', orientation: 'landscape',
+      requirements: { raw: 'JPG / PNG\nMax Size：1 MB\n2500 × 843 px', fileFormats: ['JPG', 'PNG'], maxFileSizeMB: 1, fixedPixelSize: { width: 2500, height: 843 } },
+      officialExample: [{ width: 2500, height: 843 }],
+      recommendedPreset: { ratio: { width: 2500, height: 843, label: '2500:843', value: 2500 / 843 }, width: 2500, height: 843, raw: '2500 × 843 px' },
+      specType: 'platform_recommended', sourceType: 'external_research_verified', sources: ['Platform Size Registry Mapping Sheet — 研究執行：情報長（Gemini），統籌：總策長，查證日期 2026-08-03'],
+      status: 'verified', verifiedAt: '2026-08-03', reviewAfter: '2027-02-03',
+      specVersion: 1, deprecatedAt: null, replacedBy: null
+    },
+    social_line_image_message: {
+      specId: 'social_line_image_message', category: 'social', platformId: 'line', useCaseId: 'image_message',
+      label: 'LINE OA 圖片訊息（Image Message）', orientation: 'square',
+      requirements: { raw: 'JPG / PNG\nMax Size：10 MB\nLongest Side：4096 px', fileFormats: ['JPG', 'PNG'], maxFileSizeMB: 10, longestSideMax: 4096 },
+      // 總策長審議修正（三項微調之一）：官方無固定範例，標示為「—」，不用 'None'。
+      officialExample: '—',
+      recommendedPreset: { ratio: { width: 1, height: 1, label: '1:1', value: 1 }, width: 1080, height: 1080, raw: '1080 × 1080 px' },
+      specType: 'workspace_recommendation_only', sourceType: 'external_research_verified', sources: ['Platform Size Registry Mapping Sheet — 研究執行：情報長（Gemini），統籌：總策長，查證日期 2026-08-03'],
+      status: 'verified', verifiedAt: '2026-08-03', reviewAfter: '2027-02-03',
+      specVersion: 1, deprecatedAt: null, replacedBy: null
+    },
+
+    social_threads_organic_post: {
+      specId: 'social_threads_organic_post', category: 'social', platformId: 'threads', useCaseId: 'organic_post',
+      label: 'Threads 貼文', orientation: 'portrait',
+      requirements: { raw: 'Max Carousel：10\nNo Fixed Pixel Size', maxCarousel: 10, noFixedPixelSize: true },
+      // 同 LINE Image Message 的處理原則：官方明確表示沒有固定像素規格，標示為「—」。
+      officialExample: '—',
+      // specType 標示這筆不是平台官方規格，是純工作台建議（避免下一階段 Adapter／Presenter
+      // 需要另外判斷時漏看，直接用結構化欄位標記，不是靠一句文字說明）。
+      recommendedPreset: { ratio: { width: 4, height: 5, label: '4:5', value: 4 / 5 }, width: 1080, height: 1350, raw: '1080 × 1350 px (4:5)' },
+      specType: 'workspace_recommendation_only', sourceType: 'external_research_verified', sources: ['Platform Size Registry Mapping Sheet — 研究執行：情報長（Gemini），統籌：總策長，查證日期 2026-08-03'],
+      status: 'verified', verifiedAt: '2026-08-03', reviewAfter: '2027-02-03',
+      specVersion: 1, deprecatedAt: null, replacedBy: null
+    }
+  },
+  index: {} // category -> platformId -> useCaseId -> specId，由 _rebuildPlatformSizeRegistryIndex() 開機時建立
+};
+
+function _rebuildPlatformSizeRegistryIndex() {
+  const index = {};
+  Object.keys(PLATFORM_SIZE_REGISTRY.specsById).forEach(function (specId) {
+    const spec = PLATFORM_SIZE_REGISTRY.specsById[specId];
+    if (!spec || !spec.category || !spec.platformId || !spec.useCaseId) return;
+    if (!index[spec.category]) index[spec.category] = {};
+    if (!index[spec.category][spec.platformId]) index[spec.category][spec.platformId] = {};
+    index[spec.category][spec.platformId][spec.useCaseId] = spec.specId;
+  });
+  PLATFORM_SIZE_REGISTRY.index = index;
+}
+_rebuildPlatformSizeRegistryIndex();
+
+function _psrDeepClone(obj) { return obj === null || obj === undefined ? obj : JSON.parse(JSON.stringify(obj)); }
+function _psrDeepFreeze(obj) {
+  if (!obj || typeof obj !== 'object' || Object.isFrozen(obj)) return obj;
+  Object.getOwnPropertyNames(obj).forEach(function (key) { _psrDeepFreeze(obj[key]); });
+  return Object.freeze(obj);
+}
+// 輕量雜湊，只用來偵測「這筆規格的實質內容」在快照之後有沒有被改過，不是安全用途的雜湊。
+function _psrHashSpecContent(spec) {
+  const basis = JSON.stringify({
+    specId: spec.specId, specVersion: spec.specVersion, label: spec.label, orientation: spec.orientation,
+    recommendedPreset: spec.recommendedPreset, requirements: spec.requirements, promptText: spec.promptText
+  });
+  let hash = 5381;
+  for (let i = 0; i < basis.length; i++) { hash = ((hash << 5) + hash) + basis.charCodeAt(i); hash |= 0; }
+  return 'h' + Math.abs(hash).toString(36);
+}
+function _psrSpecVisible(spec, options) {
+  if (!spec) return false;
+  if (spec.status === 'pending' && !(options && options.includePending)) return false;
+  if (spec.status === 'deprecated' && !(options && options.includeDeprecated)) return false;
+  return true;
+}
+
+// 正式消費端只能透過以下 7 個函式讀取 Registry，不得直接寫
+// PLATFORM_SIZE_REGISTRY.specsById.xxx 或 .index.xxx.xxx.xxx 這種內部路徑。
+// 預設只回傳 status==='verified'；pending／deprecated 只有測試或明確傳 includePending／
+// includeDeprecated 才查得到——這是結構性防呆，不是靠呼叫端自律。
+function listPlatformSizeSpecs(options) {
+  options = options || {};
+  let list = Object.keys(PLATFORM_SIZE_REGISTRY.specsById).map(function (id) { return PLATFORM_SIZE_REGISTRY.specsById[id]; });
+  if (options.category) list = list.filter(function (s) { return s.category === options.category; });
+  if (options.platformId) list = list.filter(function (s) { return s.platformId === options.platformId; });
+  list = list.filter(function (s) { return _psrSpecVisible(s, options); });
+  return _psrDeepClone(list);
+}
+function getPlatformSizeSpecById(specId, options) {
+  const spec = PLATFORM_SIZE_REGISTRY.specsById[specId];
+  if (!_psrSpecVisible(spec, options)) return null;
+  return _psrDeepClone(spec);
+}
+function resolvePlatformSizeSpec(category, platformId, useCaseId, options) {
+  const specId = ((PLATFORM_SIZE_REGISTRY.index[category] || {})[platformId] || {})[useCaseId];
+  if (!specId) return null;
+  return getPlatformSizeSpecById(specId, options);
+}
+// 建立工作快照的唯一合法入口：內部一律以「只允許 verified」查規格，呼叫端無法透過
+// 傳參數繞過這道限制去把 pending／deprecated 資料存進正式工作——這是結構保證，
+// 不是「呼叫端記得要傳對參數」這種靠自律的防呆。
+function createPlatformSizeSnapshot(specId) {
+  const spec = getPlatformSizeSpecById(specId, { includePending: false, includeDeprecated: false });
+  if (!spec) return null;
+  return {
+    specId: spec.specId, category: spec.category, platformId: spec.platformId, useCaseId: spec.useCaseId,
+    registryVersion: PLATFORM_SIZE_REGISTRY.registryVersion,
+    specVersion: spec.specVersion,
+    specHash: _psrHashSpecContent(spec),
+    selectedAt: new Date().toISOString(),
+    snapshot: _psrDeepFreeze({
+      label: spec.label,
+      orientation: spec.orientation,
+      recommendedPreset: _psrDeepClone(spec.recommendedPreset),
+      requirements: _psrDeepClone(spec.requirements),
+      officialExample: _psrDeepClone(spec.officialExample),
+      specType: spec.specType,
+      sourceType: spec.sourceType,
+      statusAtSelection: spec.status,
+      verifiedAt: spec.verifiedAt
+    })
+  };
+}
+
+// ═══════════════════════════════════════════════════════════
+// #19 Platform Size Registry Phase 2｜最小重構（總策長／思維長／CEO 核准，2026-08-04）
+// 四層責任邊界，各層只做自己的事，不越界：
+//
+//   PlatformSizeRegistry → PlatformSizeAdapter → PlatformSizePromptBuilder
+//                                ↓
+//                          Display Model → 各自 UI
+//
+// 【Registry】（上面 PLATFORM_SIZE_REGISTRY＋查詢函式）
+//   輸入：無　輸出：純規格資料　不負責：Prompt、UI 文案、語氣、AI 工具差異
+//
+// 【Adapter】（PlatformSizeAdapter）
+//   輸入：spec／snapshot　輸出：DisplayModel／InstructionModel／PreviewModel（介面保留）
+//   不負責：組句、UI 文案、AI 工具差異——不回傳完整中文句子
+//
+// 【Prompt Builder】（PlatformSizePromptBuilder，新模組）
+//   輸入：InstructionModel（只讀 Adapter 給的結構化資料，不直接碰 Registry）
+//   輸出：可插入 Prompt Template 的文字區塊
+//   不負責：讀 Registry、改 Registry、控制 UI
+//
+// 【UI】（尚未接，#19／#20／#21 畫面之後才會消費）
+//   輸入：DisplayModel　輸出：各畫面自己的呈現　不負責：向 Adapter 要完整顯示句子
+// ═══════════════════════════════════════════════════════════
+const PSR_ORIENTATION_LABEL = { portrait: '直式', landscape: '橫式', square: '方形' };
+// 統一輸入來源：呼叫端可能傳「即時查詢的 spec」，也可能傳「已保存的 work.platformSizeSelection
+// 快照」，兩者形狀不同（snapshot 多包一層 .snapshot）。攤平時把外層 snapshot wrapper 的
+// specId 一併帶進來（inner snapshot 本身不含 specId，只有 wrapper 才有），避免 buildInstructionModel
+// 對快照輸入時漏掉 specId。
+function _psrAdapterInput(specOrSnapshot) {
+  if (!specOrSnapshot) return null;
+  if (specOrSnapshot.snapshot) return Object.assign({ specId: specOrSnapshot.specId }, specOrSnapshot.snapshot);
+  return specOrSnapshot;
+}
+// Official Requirement 裡的安全區文字是自由格式（例如 'Top/Bottom 約 14%（250px）'），
+// InstructionModel 要的是結構化數字，這裡做最小、針對性的文字轉數字，不是通用的自然語言解析器。
+function _psrParseSafeZone(safeZoneNote) {
+  if (!safeZoneNote) return null;
+  const percentMatch = safeZoneNote.match(/(\d+)\s*%/);
+  const pxMatch = safeZoneNote.match(/(\d+)\s*px/);
+  return { topBottomPercent: percentMatch ? Number(percentMatch[1]) : null, pixels: pxMatch ? Number(pxMatch[1]) : null };
+}
+// 這筆推薦尺寸的性質：有官方範例背書、純工作台固定預設（海報既有選項），還是「平台根本沒有
+// 固定規格，這只是工作台自己的建議」——後者一定要讓下游知道，不能被誤認為官方規格。
+function _psrDeriveRecommendationType(data) {
+  if (data.specType === 'workspace_recommendation_only') return 'workspace_recommendation_only';
+  if (data.specType === 'workspace_default') return 'workspace_default';
+  if (data.officialExample && data.officialExample !== '—') return 'official_example';
+  return 'workspace_recommendation_only';
+}
+
+const PlatformSizeAdapter = {
+  // UI 顯示模型：用途優先、像素次要，呼應 #19 產品要求（前台不以像素數字為主要選擇內容）。
+  buildDisplayModel: function (specOrSnapshot) {
+    const data = _psrAdapterInput(specOrSnapshot);
+    if (!data) return null;
+    const preset = data.recommendedPreset || {};
+    return {
+      label: data.label || '',
+      orientationLabel: PSR_ORIENTATION_LABEL[data.orientation] || '',
+      ratioLabel: (preset.ratio && preset.ratio.label) || '',
+      pixelDetail: (preset.width && preset.height) ? (preset.width + '×' + preset.height) : ''
+    };
+  },
+  // 結構化「這一筆規格該怎麼用」的資料，給 Prompt Builder 消費——只有數字／結構化欄位，
+  // 沒有組好的中文句子，不含任何 AI 工具（ChatGPT／Claude／Gemini…）偏好判斷。
+  buildInstructionModel: function (specOrSnapshot) {
+    const data = _psrAdapterInput(specOrSnapshot);
+    if (!data) return null;
+    const preset = data.recommendedPreset || {};
+    const req = data.requirements || {};
+    const requirementsModel = {};
+    if (req.safeZoneNote) requirementsModel.safeZone = _psrParseSafeZone(req.safeZoneNote);
+    if (req.aspectRatioRange) requirementsModel.aspectRatioRange = req.aspectRatioRange;
+    if (req.aspectRatio) requirementsModel.aspectRatio = req.aspectRatio;
+    if (req.maxWidth) requirementsModel.maxWidth = req.maxWidth;
+    if (req.minWidth) requirementsModel.minWidth = req.minWidth;
+    if (req.minUpload) requirementsModel.minUpload = req.minUpload;
+    if (req.fileFormats) requirementsModel.fileFormats = req.fileFormats;
+    if (req.maxFileSizeMB) requirementsModel.maxFileSizeMB = req.maxFileSizeMB;
+    if (req.fileSizeRecommendedKB) requirementsModel.fileSizeRecommendedKB = req.fileSizeRecommendedKB;
+    if (req.fixedWidth) requirementsModel.fixedWidth = req.fixedWidth;
+    if (req.supportedHeights) requirementsModel.supportedHeights = req.supportedHeights;
+    if (req.fixedPixelSize) requirementsModel.fixedPixelSize = req.fixedPixelSize;
+    if (req.longestSideMax) requirementsModel.longestSideMax = req.longestSideMax;
+    if (req.maxCarousel) requirementsModel.maxCarousel = req.maxCarousel;
+    if (req.noFixedPixelSize) requirementsModel.noFixedPixelSize = req.noFixedPixelSize;
+    return {
+      specId: data.specId || null,
+      label: data.label || '',
+      orientation: data.orientation || null,
+      recommendedSize: { width: preset.width || null, height: preset.height || null, ratio: preset.ratio || null },
+      requirements: requirementsModel,
+      recommendationType: _psrDeriveRecommendationType(data),
+      sourceType: data.sourceType || null,
+      isWorkspaceRecommendationOnly: data.specType === 'workspace_recommendation_only'
+    };
+  },
+  // 介面保留、本輪不實作（總策長／CEO 明確禁止本輪做 Preview UI）：之後真正要做「查看品牌
+  // 預覽」一類的畫面時，才決定 Preview Model 要包含哪些內容，這裡先讓呼叫這個方法不會出錯。
+  buildPreviewModel: function (specOrSnapshot) {
+    return null;
+  }
+};
+// 目前生效的 Adapter；消費端／相容 wrapper 都透過這個變數呼叫，不直接引用 PlatformSizeAdapter
+// 常數本身——之後要整個替換實作，只要把這個變數指到新物件即可，不用一一修改呼叫端或 Registry。
+let activePlatformSizeAdapter = PlatformSizeAdapter;
+
+// ═══════════════════════════════════════════════════════════
+// PlatformSizePromptBuilder：獨立於 Adapter 的第三層。只接收 InstructionModel（結構化資料），
+// 不直接讀 Registry、不接收 spec／snapshot、不知道 PLATFORM_SIZE_REGISTRY 這個變數存在。
+// 本輪最小版本：固定中文語氣、不分 Flow／AI 工具／語言，未來要支援這些差異時，只需要在
+// 這一層擴充，不影響 Registry 或 Adapter。
+// ═══════════════════════════════════════════════════════════
+const PlatformSizePromptBuilder = {
+  buildPromptText: function (instructionModel) {
+    if (!instructionModel) return '';
+    const size = instructionModel.recommendedSize || {};
+    const sizeText = (size.width && size.height) ? (size.width + '×' + size.height) : '';
+    const ratioText = (size.ratio && size.ratio.label) ? '（' + size.ratio.label + '）' : '';
+    let sentence = '請製作適合' + (instructionModel.label || '此用途') + '的圖片';
+    if (sizeText) sentence += '，建議尺寸 ' + sizeText + ratioText;
+    sentence += '。';
+    return sentence;
+  },
+  buildAiInstructionBlock: function (instructionModel) {
+    if (!instructionModel) return '';
+    const lines = [this.buildPromptText(instructionModel)];
+    const safeZone = instructionModel.requirements && instructionModel.requirements.safeZone;
+    if (safeZone && (safeZone.topBottomPercent || safeZone.pixels)) {
+      const percentText = safeZone.topBottomPercent != null ? safeZone.topBottomPercent + '%' : '';
+      const pixelText = safeZone.pixels != null ? '（' + safeZone.pixels + 'px）' : '';
+      lines.push('請注意安全區：上下約 ' + percentText + pixelText + '，避免重要內容被裁切或遮擋。');
+    }
+    if (instructionModel.isWorkspaceRecommendationOnly) {
+      lines.push('提醒：這是工作台建議尺寸，此平台官方沒有固定像素規格，不是硬性規定。');
+    }
+    return lines.filter(Boolean).join('');
+  }
+};
+
+// 相容 wrapper：維持既有函式名稱，避免一次破壞所有測試與呼叫端。
+// buildPlatformSizePromptFromSnapshot 內部流程改為 snapshot → Adapter.buildInstructionModel()
+// → PromptBuilder.buildPromptText()，不再由 Adapter 自己組句子。
+function buildPlatformSizePromptFromSnapshot(snapshot) {
+  const instructionModel = activePlatformSizeAdapter.buildInstructionModel(snapshot);
+  return PlatformSizePromptBuilder.buildPromptText(instructionModel);
+}
+function getPlatformSizeDisplayModel(specOrSnapshot) {
+  return activePlatformSizeAdapter.buildDisplayModel(specOrSnapshot);
+}
+// @deprecated（Phase 2 最小重構，2026-08-04）：UI Summary 文字不再是 Adapter 的職責，已從
+// PlatformSizeAdapter 移除。真正的 UI 呈現邏輯要等接 #19／#21 畫面時才設計；這裡只保留一個
+// 明確標記為 deprecated 的相容 wrapper，避免舊測試／呼叫端直接壞掉，新程式碼不應該再呼叫它。
+function buildPlatformSizeUiSummaryTextDeprecated(specOrSnapshot) {
+  const model = activePlatformSizeAdapter.buildDisplayModel(specOrSnapshot);
+  if (!model) return '';
+  const parts = [model.label];
+  if (model.orientationLabel) parts.push('（' + model.orientationLabel + '）');
+  return parts.join('');
+}
+
+// 驗證整份 Registry 的資料完整性；接受 registryOverride 只是為了讓測試可以丟一份刻意
+// 損壞的假資料進來驗證「驗證邏輯本身抓不抓得到問題」，不影響正式 PLATFORM_SIZE_REGISTRY。
+function validatePlatformSizeRegistry(registryOverride) {
+  const registry = registryOverride || PLATFORM_SIZE_REGISTRY;
+  const errors = [];
+  const seenSpecIds = {};
+  const requiredFields = ['specId', 'category', 'platformId', 'useCaseId', 'label', 'orientation', 'status', 'specVersion'];
+  Object.keys(registry.specsById || {}).forEach(function (key) {
+    const spec = registry.specsById[key];
+    requiredFields.forEach(function (f) {
+      if (spec[f] === undefined || spec[f] === null || spec[f] === '') errors.push(key + ' 缺少必要欄位：' + f);
+    });
+    if (spec.specId) {
+      if (seenSpecIds[spec.specId]) errors.push('重複 specId：' + spec.specId);
+      seenSpecIds[spec.specId] = true;
+    }
+    const preset = spec.recommendedPreset;
+    if (preset && preset.ratio && preset.width && preset.height) {
+      const expected = preset.ratio.width / preset.ratio.height;
+      const actual = preset.width / preset.height;
+      if (Math.abs(expected - actual) > 0.02) errors.push(key + ' 推薦尺寸（' + preset.width + '×' + preset.height + '）與 ratio（' + preset.ratio.label + '）不一致');
+    }
+  });
+  return { valid: errors.length === 0, errors: errors };
+}
+
+// ═══════════════════════════════════════════════════════════
+// #19 Platform Size Registry｜Developer Debug Panel（總策長／CEO 核准，2026-08-05）
+// 純開發者除錯工具，只驗證 Registry → Adapter → Instruction Model → Prompt Builder →
+// Prompt Block 這條資料鏈本身，不是正式產品畫面：
+//   - 不使用 showScreen()／不是 screen-* 的一員，不算進 App 的畫面路由。
+//   - 不寫 index.html，整個面板由 JS 直接組 DOM、掛在 document.body，跟既有畫面結構完全無關。
+//   - 沒有任何按鈕／選單／連結會呼叫這個函式——唯一觸發方式是在瀏覽器開發者工具 Console
+//     手動輸入 openPlatformSizeRegistryDebugPanel()，一般使用者不可能不小心碰到。
+//   - 不建立 Snapshot（createPlatformSizeSnapshot 完全沒被呼叫）、不寫 work／project、
+//     不呼叫 saveState()、不操作 localStorage——面板顯示的資料全部是即時查詢／即時運算，
+//     關閉面板後什麼都不會留下。
+// ═══════════════════════════════════════════════════════════
+function openPlatformSizeRegistryDebugPanel() {
+  closePlatformSizeRegistryDebugPanel(); // 避免重複呼叫時疊加多個面板
+  const overlay = document.createElement('div');
+  overlay.id = 'psr-debug-panel';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:99999;overflow:auto;padding:20px;font-family:monospace,monospace;';
+  overlay.innerHTML =
+    '<div style="max-width:640px;margin:0 auto;background:#fff;color:#111;padding:16px;border-radius:8px;">' +
+      '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">' +
+        '<b>#19 Platform Size Registry Debug Panel</b>' +
+        '<button id="psr-debug-close" type="button" style="cursor:pointer">✕ 關閉</button>' +
+      '</div>' +
+      '<div style="font-size:12px;color:#666;margin-bottom:14px">純開發者除錯工具，驗證 Registry → Adapter → Prompt Builder 資料鏈；不寫入任何產品資料，關閉即消失。</div>' +
+      '<div style="margin-bottom:10px"><b>Instagram</b><br>' +
+        '<label><input type="radio" name="psr-debug-usecase" id="psr-debug-portrait-post" value="portrait_post"> 直式貼文</label>' +
+      '</div>' +
+      '<div id="psr-debug-output"></div>' +
+    '</div>';
+  document.body.appendChild(overlay);
+  document.getElementById('psr-debug-close').onclick = closePlatformSizeRegistryDebugPanel;
+  document.getElementById('psr-debug-portrait-post').onchange = function () {
+    if (this.checked) renderPlatformSizeRegistryDebugOutput('social', 'instagram', 'portrait_post');
+  };
+}
+function closePlatformSizeRegistryDebugPanel() {
+  const existing = document.getElementById('psr-debug-panel');
+  if (existing) existing.remove();
+}
+function renderPlatformSizeRegistryDebugOutput(category, platformId, useCaseId) {
+  const output = document.getElementById('psr-debug-output');
+  if (!output) return;
+  const spec = resolvePlatformSizeSpec(category, platformId, useCaseId); // ① Registry：純查詢
+  const displayModel = activePlatformSizeAdapter.buildDisplayModel(spec); // ② Adapter
+  const instructionModel = activePlatformSizeAdapter.buildInstructionModel(spec); // ② Adapter
+  const promptBlock = PlatformSizePromptBuilder.buildAiInstructionBlock(instructionModel); // ③ Prompt Builder
+  function section(title, text) {
+    return '<div style="margin-top:14px"><div style="font-weight:bold;border-bottom:1px solid #ddd;margin-bottom:6px">' + escHtml(title) + '</div>' +
+      '<pre style="white-space:pre-wrap;word-break:break-word;background:#f6f6f6;padding:8px;border-radius:4px;margin:0">' + escHtml(text) + '</pre></div>';
+  }
+  output.innerHTML =
+    section('Display Model', JSON.stringify(displayModel, null, 2)) +
+    section('Instruction Model', JSON.stringify(instructionModel, null, 2)) +
+    // Prompt Builder Input：跟上面 Instruction Model 內容相同，特意用獨立區塊標示「這就是
+    // 即將送進 Prompt Builder 的輸入」——之後要驗證換一個 Prompt Builder 實作、比較輸出差異
+    // 時，這裡的輸入維持不變，方便直接對照。
+    section('Prompt Builder Input', JSON.stringify(instructionModel, null, 2)) +
+    section('Prompt Block', promptBlock);
+}
 
 // ── 依影片類型推薦工具（Sprint 2：只用 tools-catalog.json 已有的工具，Kling／剪映／開拍等 Tool Companion 留給 Sprint 3）──
 const VIDEO_TYPE_TOOL_RECOMMENDATIONS = {
@@ -1492,7 +2100,7 @@ function buildDefaultPromptTemplates() {
     abPolishModeBlock('（依上面要求輸出完整海報文案：主標題／副標題／必要資訊／CTA）')));
 
   list.push(tpl('flow_specific', '設計師', 'poster', '視覺設計', '行銷海報／視覺設計師',
-    '你是商品行銷流程中的海報視覺設計師。\n\n請根據以下已完成的海報文案，直接完成一份完整、可以直接使用的視覺設計內容，讓使用者可以直接帶去圖片工具生成海報。\n\n商品／工作名稱：{{work_name}}\n目前步驟：{{step_name}}\n\n已有成果（含海報文案）：\n{{previous_results}}\n\n每個版本都務必依照以下兩個區塊格式輸出，保留【】標題文字（這是為了讓使用者的工作台能自動分開顯示，請勿省略或改變標題文字）：\n\n【圖片生成請求】\n**直接寫成一句完整的圖片生成請求，開頭就要是「請直接生成一張海報」這種明確要求動手生成的語氣，不是描述或建議**（例如「請直接生成一張海報：主標題『……』、副標題『……』，暖色調背景，簡約排版，把文字清楚放進畫面裡」），把海報文案的主標題／副標題／必要資訊明確寫進這句請求裡。這句話之後會被使用者原封不動貼給另一個 AI 或工具，如果那個 AI／工具本身具備生成圖片的能力，看到這句話就應該直接動手生成海報圖片，而不是回覆文字描述、方向建議或排版說明；如果不具備生成圖片能力，這句話仍然要清楚到可以直接複製貼進 Canva、Gemini 等其他工具使用。讓使用者能整段複製，不需要自己補充或重新組織文字。\n\n【風格建議】\n用 1-2 句話描述適合這張海報的整體視覺風格（例如色調、排版、氛圍），可以直接附加在圖片生成請求後面一起使用。\n\n這份內容會直接被使用者帶去圖片工具製作，內容要具體到可以直接生成，不是抽象的方向建議。兩個版本請給不同的視覺切角，不要只是換幾個字。' +
+    '你是商品行銷流程中的海報視覺設計師。\n\n請根據以下已完成的海報文案，直接完成一份完整、可以直接使用的視覺設計內容，讓使用者可以直接帶去圖片工具生成海報。\n\n商品／工作名稱：{{work_name}}\n目前步驟：{{step_name}}\n\n已有成果（含海報文案）：\n{{previous_results}}\n\n每個版本都務必依照以下兩個區塊格式輸出，保留【】標題文字（這是為了讓使用者的工作台能自動分開顯示，請勿省略或改變標題文字）：\n\n【圖片生成請求】\n**直接寫成一句完整的圖片生成請求，開頭就要是「請直接生成一張海報」這種明確要求動手生成的語氣，不是描述或建議**（例如「請直接生成一張海報：主標題『……』、副標題『……』，暖色調背景，簡約排版，把文字清楚放進畫面裡」），把海報文案的主標題／副標題／必要資訊明確寫進這句請求裡。%%POSTER_RATIO_BLOCK%%這句話之後會被使用者原封不動貼給另一個 AI 或工具，如果那個 AI／工具本身具備生成圖片的能力，看到這句話就應該直接動手生成海報圖片，而不是回覆文字描述、方向建議或排版說明；如果不具備生成圖片能力，這句話仍然要清楚到可以直接複製貼進 Canva、Gemini 等其他工具使用。讓使用者能整段複製，不需要自己補充或重新組織文字。\n\n【風格建議】\n用 1-2 句話描述適合這張海報的整體視覺風格（例如色調、排版、氛圍），可以直接附加在圖片生成請求後面一起使用。\n\n這份內容會直接被使用者帶去圖片工具製作，內容要具體到可以直接生成，不是抽象的方向建議。兩個版本請給不同的視覺切角，不要只是換幾個字。' +
     abPolishModeBlock('（依上面兩個【】區塊格式完整輸出）')));
 
   // Video Workflow vNext（CEO 核准）：「主題」步驟改為引導式協作——不是丟開放式問題
@@ -1649,6 +2257,34 @@ function resolvePolishTemplate() {
 // 兩者相加才是完整指令，Context Pack 不取代 Prompt Template
 // ═════════════════════════════════════════════════════════════
 
+// ── AI Collaboration OS｜Step Boundary Contract V2（總策長／CEO 核准，P0，2026-08-04）──
+// 真人驗收發現：不同 AI（ChatGPT／Claude／Gemini）收到同一份 Prompt，越界行為不一致——
+// 有的會自己往下問下一步的細節，有的會直接把下一步的成果都做出來。不能依賴 AI 自己停下來，
+// 流程只能由工作台推進，AI 永遠只完成「目前這一步」。這是全系統唯一的 Step Boundary
+// 產生器：CONTEXT_PACK_TEMPLATE（12 個 Official Flow 共用）跟品牌中心所有 Prompt 建構
+// 函式都呼叫這一份，不各自寫一份措辭不同的版本。
+// stepSummaryText：「本次工作只完成」底下的內容（可以是多句、含條件說明，呼叫端自己組好
+// 完整句子與標點）；forbiddenItems：「不要」清單，每一項會自動加上 ❌；waitingText：
+// 「等待」後面接的內容，函式會自動補上句號。
+function buildStepBoundaryBlock(stepSummaryText, forbiddenItems, waitingText) {
+  const forbiddenLines = forbiddenItems.map(function (item) { return '❌ ' + item; }).join('\n\n');
+  return '【Step Boundary】\n\n' +
+    '本次工作只完成：\n\n' + stepSummaryText + '\n\n' +
+    '完成後立即停止。\n\n' +
+    '不要：\n\n' + forbiddenLines + '\n\n' +
+    '等待' + waitingText + '。';
+}
+// CONTEXT_PACK_TEMPLATE／buildBriefDiscussionPrompt 等「工作台通用」情境的預設禁止清單，
+// 直接對齊 Step Boundary Contract V2 規格文件裡的全域原則五項。
+const STEP_BOUNDARY_GENERIC_FORBIDDEN = [
+  '自動產生下一步的內容或 Prompt',
+  '詢問是否要繼續下一步',
+  '引導開始下一個階段',
+  '幫使用者跳過工作台',
+  '提供下一個 Step 才該出現的成果'
+];
+const STEP_BOUNDARY_GENERIC_WAITING = '使用者回到工作台，由工作台開始下一個 Step';
+
 // ★ Official Prompt Engine 修正（最高優先，CEO 指令）：
 // 所有 Official Flow 的指令都共用這個 Context Pack，是加入「Deliverable Mode」
 // 共通規則最合適的地方——不用個別去改每一份模板，一次生效，且因為這是常數
@@ -1667,8 +2303,9 @@ const CONTEXT_PACK_TEMPLATE =
   '## 前面累積成果\n{{previous_results}}\n\n' +
   '## 目前成果庫相關成果\n{{related_assets}}\n\n' +
   '## 創作偏好\n{{creative_preferences}}\n\n' +
+  '## 品牌背景\n{{brand_context}}\n\n' +
   '## 工作模式（重要）\n' +
-  '你只負責完成目前這個步驟，不可以自行跳到其他工作，也不可以岔開成教學或延伸討論。\n' +
+  '你只負責完成目前這個步驟，不可以自行跳到其他工作，也不可以岔開成教學或延伸討論。流程只能由工作台推進，不能由你自己決定——完整規則請見這份指令最後的「【Step Boundary】」區塊（AI Collaboration OS 全域規則 V2，見 workspace-global-contracts.md 契約一）。\n' +
   '你的任務不是陪使用者討論，而是直接完成這一步需要交付的正式成果（Deliverable）；只有在缺少完成成果所需的關鍵資訊時，才提出最少必要的問題，且最多一次問 1 至 3 題，不得用大量提問拖延產出。\n' +
   '不要：反覆分析、列出很多方向或選項、要求使用者想清楚更多、討論已經足夠的資訊、寫成說明文件或教學。每一步只完成一件事——這一步該交付的那個成果（除非下面「本次任務」明確要求 A/B 兩個版本，那是刻意設計的打磨模式，不算違反這條原則）。\n' +
   '完成後的成果必須能直接複製、貼上使用、交給下一位協作者或下一個工具，不是一份討論紀錄；如果這個成果之後要貼到別的工具（例如 Suno、ChatGPT、Kling）才能繼續，請直接產出那個工具可以直接使用的正式內容，讓使用者只需要微調，不需要自己重新整理或改寫格式。內容不得過度簡略到無法支援下一步（一句話、幾個關鍵字或空泛結論都不算完成），也不要過度解釋，優先交付成果，說明簡短即可。請保持跟「工作 Brief」「前面累積成果」「創作偏好」一致，不要擅自改變核心方向。\n\n' +
@@ -1686,7 +2323,9 @@ const CONTEXT_PACK_TEMPLATE =
   '3. 成果是否足以進入下一步？\n' +
   '4. 是否避免岔題、空泛與過度解釋？\n' +
   '5. 是否輸出清楚的正式成果區塊，沒有多餘的操作提醒或說明文字？\n' +
-  '若任一項不符合，請先補足再輸出。';
+  '6. 是否完全沒有提到「下一步」「下一階段」「接下來將」，也沒有自行宣告或暗示已經進入下一階段？\n' +
+  '若任一項不符合，請先補足再輸出。\n\n' +
+  '{{step_boundary}}';
 
 const AUDIENCE_BY_FLOW = {
   material: '初學者、一般讀者', course: '初學者、一般讀者', product: '潛在客戶', poster: '潛在客戶',
@@ -1788,8 +2427,14 @@ function buildContextPack(workId) {
       }
       return buildCreativePreferencesText(work);
     })(),
+    brand_context: buildBrandContext(work),
     step_instruction: '請以「' + step.role + '」的身份，完成「' + step.name + '」這個步驟。',
-    output_format: '請參考下方指令母模的詳細輸出要求。'
+    output_format: '請參考下方指令母模的詳細輸出要求。',
+    step_boundary: buildStepBoundaryBlock(
+      '「' + step.name + '」這個步驟的正式成果。',
+      STEP_BOUNDARY_GENERIC_FORBIDDEN,
+      STEP_BOUNDARY_GENERIC_WAITING
+    )
   };
 
   var pack = fillTemplate(CONTEXT_PACK_TEMPLATE, vars);
@@ -1862,7 +2507,20 @@ function buildCleanInstructionText(workId) {
   // 歌曲靈感只出現在「歌名＋歌詞」這一步的模板裡（模板內容含 %%SONG_IDEA_BLOCK%% 標記），
   // 不透過 fillTemplate 的一般變數代換（那套機制對空字串會補「（無）」，不是我們要的「整段不出現」），
   // 用專屬字串標記手動插入／移除；其他模板內容沒有這個標記，.replace() 對它們是無效果的安全操作。
-  return templateText.replace('%%SONG_IDEA_BLOCK%%', buildSongIdeaBlock(work));
+  templateText = templateText.replace('%%SONG_IDEA_BLOCK%%', buildSongIdeaBlock(work));
+  // #18.1 BUG-002：海報用途／尺寸只出現在「視覺設計」這一步的模板裡（含 %%POSTER_RATIO_BLOCK%%
+  // 標記），同一套「標記字串手動插入」機制，不影響其他模板。
+  templateText = templateText.replace('%%POSTER_RATIO_BLOCK%%', buildPosterRatioBlock(work));
+  return templateText;
+}
+// 把使用者選定的海報用途／尺寸，轉成明確寫進「圖片生成請求」裡的一句話——不能只給尺寸數字，
+// 必須連著用途一起講（CEO 明確要求「不能只寫尺寸數字而沒有用途」）。
+function buildPosterRatioBlock(work) {
+  if (work.flowId !== 'poster') return '';
+  const opt = getPosterRatioOption(work.posterRatio);
+  let sizeText = opt.id === 'custom' ? (work.posterRatioCustomText || '') : opt.promptText;
+  if (!sizeText) return '';
+  return '這次選定的用途與尺寸是：' + sizeText + '請把這個尺寸／比例要求也明確寫進【圖片生成請求】這句話裡，不要只給比例數字、要連用途一起講清楚。';
 }
 
 // 指令母模 + 專案內容包 → 完整指令（先給背景，再給任務與輸出要求）
@@ -1956,6 +2614,550 @@ function ensureNewFields(s) {
   if (s.driveAccountSub === undefined) s.driveAccountSub = null;
   if (s.driveLastBackupAt === undefined) s.driveLastBackupAt = null;
   if (!Array.isArray(s.driveBackupTimestamps)) s.driveBackupTimestamps = [];
+  // Brand Center Sprint #1：舊資料（沒有品牌欄位）一律視為「沒有使用品牌」，不可以因為
+  // 欄位不存在就載入失敗——這是規格明訂的相容規則，不是可省略的細節。
+  if (!Array.isArray(s.brands)) s.brands = [];
+  if (!s.nextBrandId) s.nextBrandId = 1;
+  if (s.brandDraftInProgress === undefined) s.brandDraftInProgress = null;
+  // 修正指令五附帶發現：s.projects／s.works 在「還原交易復原」情境下可能被刻意寫成損毀的
+  // 非陣列值（例如 'CORRUPTED-NOT-AN-ARRAY'），用來驗證系統能不能正確偵測並自動回復。
+  // 這裡若不加 Array.isArray() 防護，直接呼叫 .forEach() 會拋出未捕捉例外，導致
+  // ensureNewFields() 中斷、連帶讓開機流程裡排在後面的
+  // checkAndRecoverIncompleteRestoreTransaction() 完全沒有機會執行——等於讓這個新增欄位
+  // 的相容邏輯，意外破壞了既有的資料損毀自動回復機制。isStateStructurallyValid() 之後
+  // 仍然會正確判定這種損毀資料為不合法並觸發回復，這裡只需要不要提前把例外丟出來。
+  if (Array.isArray(s.projects)) {
+    s.projects.forEach(function (p) { if (p.defaultBrandId === undefined) p.defaultBrandId = null; });
+  }
+  if (Array.isArray(s.works)) {
+    s.works.forEach(function (w) {
+      if (w.brandId === undefined) w.brandId = null;
+      if (w.brandSnapshot === undefined) w.brandSnapshot = null;
+      if (w.brandAckVersion === undefined) w.brandAckVersion = null;
+      if (w.brandCalibrationOffered === undefined) w.brandCalibrationOffered = false;
+    });
+  }
+  // #19 品牌共創中心 V2｜Phase 2：Brand Snapshot 資料模型與舊資料相容。
+  if (!Array.isArray(s.brandSnapshots)) s.brandSnapshots = [];
+  if (!Number.isInteger(s.nextBrandSnapshotId) || s.nextBrandSnapshotId < 1) s.nextBrandSnapshotId = 1;
+  // 既有品牌（走過舊版 15 欄位表單／AI 討論建立的）第一次在新版程式開機時，如果完全沒有
+  // 任何 Brand Snapshot 紀錄，自動用既有欄位「搬遷」出一筆 confirmed 版本——這是資料搬遷，
+  // 不是內容生成：只複製使用者已經實際填過的值，V2 新增但舊表單從未收集過的欄位
+  // （background／purpose／coreValues／mission／vision／slogan／imageStyle／
+  // avoidedVisualElements／platforms／assetNeeds／smartCardOutput）一律留空，不捏造，
+  // 等使用者之後走過 Brand Co-Creation 對話（Phase 3 以後）才會真正填入。
+  // 只補一次：已經有任何一筆 snapshot 的品牌不會重複補建。
+  if (Array.isArray(s.brands)) {
+    s.brands.forEach(function (b) {
+      const hasSnapshot = s.brandSnapshots.some(function (snap) { return snap.brandId === b.id; });
+      if (hasSnapshot) return;
+      const migratedFields = buildBrandSnapshotFromLegacyBrand(b);
+      s.brandSnapshots.push(Object.assign(blankBrandSnapshotDraft(), migratedFields, {
+        id: s.nextBrandSnapshotId++,
+        brandId: b.id,
+        version: b.version || 1,
+        status: 'confirmed',
+        completion: computeBrandSnapshotCompletion(migratedFields),
+        createdAt: b.createdAt || new Date().toISOString(),
+        updatedAt: b.updatedAt || new Date().toISOString()
+      }));
+    });
+  }
+  // #19 Brand Foundation｜Blocker 修正（總策長／CEO 核准，2026-08-06）：Brand Assets
+  // 資料相容，舊存檔一律補空陣列，不影響既有 brands／brandSnapshots。
+  if (!Array.isArray(s.brandAssets)) s.brandAssets = [];
+  if (!Number.isInteger(s.nextBrandAssetId) || s.nextBrandAssetId < 1) s.nextBrandAssetId = 1;
+}
+
+// ── 品牌中心（Brand Center Sprint #1）────────────────────────────
+// 資料模型設計說明：
+// · state.brands[i] 是品牌本身（可被編輯、封存、複製），欄位對齊「正式開發指令」三-3/3-4：
+//   必填 name／oneLiner／targetAudience，其餘（tone／coreMessages／preferredWords／
+//   avoidWords／visualDirection／brandStory）皆選填，不可因未填而阻擋建立或使用。
+// · linkedAssets 只存「關聯」，不複製檔案本體——這是 Stage 1 盤點確認「Asset Center
+//   （Logo/圖片/影片/文件檔案庫）在這個系統裡並不存在」後，經總策長核准的最小方案：
+//   改成關聯既有成果庫（state.results）裡的項目，本 Sprint 不建立新的檔案型素材庫。
+// · pendingSuggestions 是「品牌校準建議」與「和AI一起調整既有品牌」共用的同一種資料
+//   （原內容／建議內容／建議原因／影響範圍／狀態），AI 只能建立建議，不能直接改動
+//   name/oneLiner/... 等正式欄位，一定要使用者勾選並按「確認更新」（applyCheckedBrandSuggestions）才會寫入。
+const BRAND_FIELDS = [
+  { key: 'name', label: '品牌名稱', required: true },
+  { key: 'oneLiner', label: '一句話定位', required: true },
+  { key: 'targetAudience', label: '主要服務對象', required: true },
+  { key: 'tone', label: '品牌語氣', required: false },
+  { key: 'coreMessages', label: '核心訊息', required: false },
+  { key: 'preferredWords', label: '常用詞', required: false },
+  { key: 'avoidWords', label: '品牌避免事項', required: false },
+  { key: 'visualDirection', label: '品牌視覺風格', required: false },
+  // 品牌配色與 Logo 視覺選擇流程（總策長補充指令，2026-08-01）：5 個色彩欄位＋Logo建議，
+  // 全部選填，每個色彩欄位存「顏色名稱＋HEX＋用途」一行文字——刻意沿用既有 BRAND_FIELDS
+  // 陣列＋泛用渲染／編輯／持久化機制，不建立新的資料結構，「直接修改」「請AI重新整理」
+  // 「暫不使用」「儲存後重開仍存在」「舊品牌顯示稍後再補」這些既有邏輯全部自動套用。
+  // isColor 標記讓畫面知道要在文字旁多畫一個實際顏色的色塊。
+  { key: 'primaryColor', label: '品牌主色', required: false, isColor: true },
+  { key: 'secondaryColor', label: '品牌輔助色', required: false, isColor: true },
+  { key: 'accentColor', label: '品牌亮點色', required: false, isColor: true },
+  { key: 'backgroundColor', label: '品牌背景色', required: false, isColor: true },
+  { key: 'textColor', label: '品牌文字色', required: false, isColor: true },
+  { key: 'logoSuggestion', label: 'Logo 建議', required: false },
+  { key: 'brandStory', label: '品牌故事', required: false }
+];
+// Brand Center v1.0 UI 實作（總策長／CEO 核准，2026-08-05）：表單與詳情頁共用的四大分區
+// 分組設定——純渲染順序／呈現用途，不改變 BRAND_FIELDS 本身的定義或既有陣列順序，15 個
+// 既有欄位一個不少、一個不重複地分進 4 區。intro 只在表單使用（詳情頁是唯讀檢視，不需要
+// 重複填寫引導語）。
+const BRAND_FORM_SECTIONS = [
+  { title: '品牌是誰', intro: '告訴 AI 這個品牌是誰、服務誰。', keys: ['name', 'oneLiner', 'targetAudience'] },
+  { title: '品牌怎麼說話', intro: '告訴 AI 品牌想說什麼，以及怎麼說。', keys: ['tone', 'coreMessages', 'preferredWords', 'avoidWords'] },
+  { title: '品牌長什麼樣子', intro: '告訴 AI 品牌希望呈現的視覺感覺。', keys: ['visualDirection', 'primaryColor', 'secondaryColor', 'accentColor', 'backgroundColor', 'textColor', 'logoSuggestion'] },
+  { title: '品牌故事', intro: '補充品牌的起點、經歷或想傳達的故事。', keys: ['brandStory'] }
+];
+// 三個欄位的 placeholder；其餘欄位維持原本沒有 placeholder 的樣子，不是每個欄位都要加。
+const BRAND_FIELD_PLACEHOLDERS = {
+  tone: '例如：親切、溫暖，像鄰居阿姨一樣說話。',
+  avoidWords: '例如：不要太商業、不要艱深術語、不要暗黑風格。',
+  visualDirection: '例如：溫暖手作感、電影感寫實、簡約現代風。'
+};
+// 只有「品牌避免事項」這一格需要的常駐說明（不做 hover Tooltip，手機上不好操作；
+// 常駐顯示、字級與既有 .tool-suggest-note 系列同樣低調）。
+const BRAND_AVOID_WORDS_NOTE = '可填寫不希望出現的語氣、用詞、顏色、視覺風格或設計方式。';
+// Context 組裝固定納入的欄位（規格四：不論任務類型都帶進去，是品牌最核心的識別跟語氣）
+const BRAND_FIXED_CONTEXT_FIELDS = ['name', 'oneLiner', 'targetAudience', 'tone', 'coreMessages', 'preferredWords', 'avoidWords'];
+// 依任務類型才納入的視覺相關欄位（規格五-5：建立工作時自動帶入正式配色與 Logo 建議）
+const BRAND_VISUAL_CONTEXT_FIELDS = ['visualDirection', 'primaryColor', 'secondaryColor', 'accentColor', 'backgroundColor', 'textColor', 'logoSuggestion'];
+// Brand Center v1.0 UI 實作（總策長／CEO 核准，2026-08-05）：tone／avoidWords／visualDirection
+// 三個欄位的 label 從這輪開始改名（「語氣與說話方式」→「品牌語氣」等）。parseBrandDraft()／
+// parseBrandSuggestions() 是依「BRAND_FIELDS 目前的 label 文字」動態比對貼回內容，只保護
+// 「這次改名之後才開始的」AI 對話；如果有使用者在改名前就已經複製了舊版指令、還沒貼回，
+// 貼回的內容會是舊 label 文字，這裡額外收一份舊名稱備援比對，避免那份還在進行中的草稿
+// 被解析成空白（不是資料 key 改變，純粹是解析時多接受一種舊文字）。
+const BRAND_FIELD_LEGACY_LABELS = { tone: '語氣與說話方式', avoidWords: '避免用詞', visualDirection: '視覺方向' };
+
+// #19 Brand Foundation｜Phase 5.1 Brand Gate（總策長／CEO 核准，2026-08-05）：真人驗收
+// 分別測試 ChatGPT／Claude／Gemini 三個外部 AI，發現共同問題——品牌都還沒建立完成，
+// AI 就太快開始配色／Logo A/B/C 提案。BRAND_GATE_CORE_FIELD_KEYS 對應 CEO 規格
+// Step1-4（品牌背景／定位／語氣／故事），用既有 15 欄位裡最接近的欄位做對應，
+// 不新增欄位、不重寫品牌流程。BRAND_CORE_CONTENT_FIELD_KEYS 是「品牌共創討論」
+// 第一輪要請 AI 輸出的欄位（核心內容，不含任何視覺／配色／Logo 欄位）。
+const BRAND_GATE_CORE_FIELD_KEYS = ['name', 'oneLiner', 'targetAudience', 'tone', 'brandStory'];
+const BRAND_CORE_CONTENT_FIELD_KEYS = ['name', 'oneLiner', 'targetAudience', 'tone', 'coreMessages', 'preferredWords', 'avoidWords', 'brandStory'];
+function brandCoreContentReady(brand) {
+  return BRAND_GATE_CORE_FIELD_KEYS.every(function (key) { return !!(brand[key] || '').trim(); });
+}
+
+function getBrand(id) { return state.brands.find(function (b) { return b.id === id; }); }
+function activeBrands() { return state.brands.filter(function (b) { return b.status !== '已封存'; }); }
+
+function blankBrandDraft() {
+  const draft = {};
+  BRAND_FIELDS.forEach(function (f) { draft[f.key] = ''; });
+  return draft;
+}
+
+// 建立品牌快照：不是存品牌物件的參照，而是深拷貝當下內容＋版本號，之後品牌本身怎麼改，
+// 這份快照都不會跟著變——Work／複製 Work／brandAckVersion 判斷都靠比較這個 version 數字。
+function buildBrandSnapshot(brand) {
+  const snap = { brandId: brand.id, brandName: brand.name, brandVersion: brand.version };
+  BRAND_FIELDS.forEach(function (f) { snap[f.key] = brand[f.key]; });
+  return snap;
+}
+
+function createBrand(fields) {
+  const b = Object.assign(blankBrandDraft(), fields, {
+    id: state.nextBrandId++,
+    linkedAssets: [],
+    pendingSuggestions: [],
+    status: '使用中',
+    version: 1,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  });
+  state.brands.push(b);
+  saveState();
+  return b;
+}
+
+// ═══════════════════════════════════════════════════════════
+// #19 品牌共創中心 V2｜Phase 2：Brand Snapshot 資料模型（總策長／CEO 核准，2026-08-05）
+// 正式列為 Core Shared Component（跟 Official Brand Selector／Copy Ready 同一批，
+// 不歸屬 #19 私有）——未來 #20／#21／各 Flow 都要唯讀引用同一份，不得各自複製一份。
+//
+// 跟既有 buildBrandSnapshot(brand)／work.brandSnapshot 是兩件不同的事，刻意不共用
+// 同一個名稱／資料形狀，兩者並存：
+//   - buildBrandSnapshot(brand)／work.brandSnapshot：既有機制，Work 套用品牌當下臨時
+//     算出來、直接嵌進 Work 物件，沒有獨立歷史，本輪完全不動。
+//   - state.brandSnapshots[]／createBrandSnapshot()：本輪新增，獨立、有版本歷史的
+//     正式資料實體，只能新增、不能覆寫既有版本，這才是 CEO 規格要的「Brand Snapshot」。
+// Phase 2 範圍只到這裡為止：資料模型＋舊資料相容。Official Brand Selector（把這個
+// 實體接到各 Flow 的畫面／Work／Result）留給 Phase 3 以後，本輪不做。
+// ═══════════════════════════════════════════════════════════
+
+// V2 新增、但舊版 15 欄位表單從未收集過的欄位，全部從空值開始，不得捏造內容。
+function blankBrandSnapshotDraft() {
+  return {
+    name: '', background: '', purpose: '', positioning: '', targetAudience: '', coreValues: '',
+    story: '', mission: '', vision: '', tone: '', preferredWords: '', avoidedWords: '', slogan: '',
+    colors: [], logoDirection: '', visualStyle: '', imageStyle: '', avoidedVisualElements: '',
+    platforms: [], assetNeeds: [],
+    // #19 Brand Foundation｜Blocker 修正（總策長／CEO 核准，2026-08-06）：品牌配色與
+    // Logo 視覺選擇流程正式拆成「配色與字體參考」「Logo 共創」「Logo Prompt 確認」
+    // 三個階段（見十四、真人驗收 Blocker 修正指令）。typography／visualMotifs 是配色
+    // 階段新增的結構化欄位；logoPrompt／logoPromptVersion 是 Logo Prompt 確認階段的
+    // 結果——這裡只新增欄位，不動既有 colors／logoDirection／visualStyle 等欄位的形狀。
+    typography: { headingZh: '', bodyZh: '', latin: '', usageNotes: '' },
+    visualMotifs: [],
+    logoPrompt: '', logoPromptVersion: 0,
+    // Phase 5（總策長／CEO 核准，2026-08-05）：story 從單一字串改為三種長度版本
+    // （card／standard／full），對應智慧名片版／標準版／完整版；tickerItems 改成
+    // {text,enabled} 結構，支援單則啟用／停用。這個欄位截至目前為止沒有任何既有
+    // 消費端會讀寫（Phase 2 建立時就是空的，從未被填過），改形狀不影響任何既有資料。
+    smartCardOutput: { slogan: '', services: [], story: { card: '', standard: '', full: '' }, tickerItems: [] },
+    // Phase 2.1（總策長／CEO 核准，2026-08-05）：完成度一律用 computeBrandSnapshotCompletion()
+    // 從實際內容算出來，這裡只是初始佔位；發布相關的 metadata 預設空，只有真的呼叫
+    // publishBrandSnapshot() 才會填；source 記錄每個欄位的來源（user_confirmed／
+    // ai_generated／edited），供智慧名片／商品／社群等下游知道哪些是使用者親自確認過的。
+    completion: { basic: false, positioning: false, story: false, tone: false, visual: false, assets: false, smartCard: false },
+    publishedAt: null, publishedBy: null, notes: '',
+    source: {}
+  };
+}
+// 完成度是「算出來的」，不是呼叫端自己指定——避免完成度跟實際內容兜不起來（例如手動把
+// story 標成完成，但 story 欄位其實是空的）。七項分類對應 Step 1-6 的四大區塊，
+// 拆得比畫面分區更細一點，方便未來個別判斷「哪些功能可以開放」。
+function computeBrandSnapshotCompletion(snap) {
+  return {
+    basic: !!(snap.name && snap.background && snap.purpose),
+    positioning: !!(snap.positioning && snap.targetAudience && snap.coreValues),
+    story: !!(snap.story && snap.mission && snap.vision),
+    tone: !!(snap.tone && snap.slogan),
+    visual: !!(snap.colors && snap.colors.length > 0 && snap.visualStyle),
+    assets: !!((snap.platforms && snap.platforms.length > 0) || (snap.assetNeeds && snap.assetNeeds.length > 0)),
+    smartCard: !!(snap.smartCardOutput && snap.smartCardOutput.slogan && snap.smartCardOutput.services && snap.smartCardOutput.services.length > 0 && snap.smartCardOutput.story && snap.smartCardOutput.story.card)
+  };
+}
+function brandSnapshotCompletionPercent(snap) {
+  const c = snap.completion || computeBrandSnapshotCompletion(snap);
+  const keys = Object.keys(c);
+  const trueCount = keys.filter(function (k) { return c[k]; }).length;
+  return Math.round((trueCount / keys.length) * 100);
+}
+
+// 舊版 5 個色彩欄位 → 新版 colors[] 結構化陣列的對應表。
+const BRAND_LEGACY_COLOR_ROLE_MAP = [
+  { legacyKey: 'primaryColor', role: 'primary' },
+  { legacyKey: 'secondaryColor', role: 'secondary' },
+  { legacyKey: 'accentColor', role: 'accent' },
+  { legacyKey: 'backgroundColor', role: 'background' },
+  { legacyKey: 'textColor', role: 'text' }
+];
+// 既有色彩欄位是一行自由文字，格式「顏色名稱　HEX　用途說明」（全形空白分隔，
+// 例如「森林綠　#3E6B4F　用於主要按鈕」）。這裡只做「盡量解析」，抓不到 HEX／名稱
+// 時給 null／原始文字，不猜測、不補一個看似合理的假值。
+function parseLegacyColorField(text) {
+  if (!text) return null;
+  const hexMatch = text.match(/#[0-9A-Fa-f]{6}/);
+  const parts = text.split(/[\s　]+/).filter(Boolean);
+  return { name: parts[0] || text, hex: hexMatch ? hexMatch[0] : null };
+}
+// #19 Brand Foundation｜Blocker 修正（總策長／CEO 核准，2026-08-06）：Brand Snapshot
+// 的 colors[] 陣列新增 usage（用途）欄位，格式沿用既有「顏色名稱　HEX　用途說明」一行
+// 文字，這裡在既有 parseLegacyColorField() 的「只做盡量解析」精神上，多切出用途說明——
+// 抓不到就是空字串，不猜測、不補一個看似合理的假值。
+function parseColorFieldWithUsage(text) {
+  if (!text) return { name: '', hex: null, usage: '' };
+  const hexMatch = text.match(/#[0-9A-Fa-f]{6}/);
+  const hex = hexMatch ? hexMatch[0] : null;
+  const parts = text.split(/[\s　]+/).filter(Boolean);
+  const name = parts[0] || '';
+  let usage = text;
+  if (name) usage = usage.replace(name, '');
+  if (hex) usage = usage.replace(hex, '');
+  usage = usage.replace(/^[　\s]+|[　\s]+$/g, '');
+  return { name: name, hex: hex, usage: usage };
+}
+// 「圖案方向」這類欄位允許使用者／AI 用頓號、逗號分隔多個方向，這裡拆成陣列——
+// 抓不到就回傳空陣列，不捏造。
+function splitFreeListText(text) {
+  if (!text) return [];
+  return text.split(/[、,，]/).map(function (s) { return s.trim(); }).filter(Boolean);
+}
+// 真人驗收 Parser 穩健化（總策長／CEO 核准，2026-08-06）：不同 AI／不同輪對話，同一個
+// 「主色」欄位可能用完全不同的排版方式回覆——舊版單行「主色：名稱 HEX 用途」、
+// 表格列「主色｜名稱｜HEX」、甚至真的 Markdown 表格「| 主色 | 名稱 | HEX |」。與其每次
+// 真人驗收發現一種新格式就再修一次 Parser，這裡改成同時支援「：」「:」「｜」「|」四種
+// 常見分隔符號一次涵蓋，日後 ChatGPT／Claude／Gemini 輸出習慣不同也不容易卡住。
+// 找不到就回傳空字串，不猜測、不捏造——這條原則跟既有所有 Parser 一致。
+// 真人驗收發現：配色欄位標籤 AI 幾乎都會照抄，但欄位「名稱」（例如字體）AI 常常自己
+// 換句話說（「中文標題字體」寫成「中文標題」、「英文或數字字體」寫成「英文／數字」），
+// 光支援分隔符號還不夠，還要能接受同一個欄位的「常見別名」。第二個參數改成可以傳
+// 一個標籤，也可以傳一組別名陣列，任何一個對上就算——不用每次真人驗收發現一種新說法
+// 就再補一條 Regex。
+function extractLabeledRowValue(content, labelOrAliases) {
+  const labels = Array.isArray(labelOrAliases) ? labelOrAliases : [labelOrAliases];
+  const lines = content.split('\n');
+  for (let i = 0; i < lines.length; i++) {
+    // 去掉 Markdown 表格常見的前後 | 符號跟多餘空白，再統一用同一組分隔符號切欄位；
+    // 過濾掉空欄位跟表格分隔列常見的「---」「:---:」這類純破折號欄位。
+    const cells = lines[i].trim().replace(/^\|+|\|+$/g, '').split(/[：:｜|]/)
+      .map(function (c) { return c.trim(); })
+      .filter(function (c) { return c !== '' && !/^:?-{2,}:?$/.test(c); });
+    if (cells.length < 2) continue;
+    const matched = labels.some(function (label) { return cells[0] === label || cells[0].indexOf(label) === 0; });
+    if (matched) return cells.slice(1).join('　');
+  }
+  return '';
+}
+// 字體欄位常見別名（總策長／CEO 核准，2026-08-06）：真人驗收實際看到 AI 把「中文標題
+// 字體」簡寫成「中文標題」、「英文或數字字體」寫成「英文／數字」——這裡列出目前已知的
+// 常見說法，任何一個對上都算解析成功。日後真人驗收再發現新的說法，往陣列裡加一個字串
+// 就好，不用改解析邏輯本身。
+const TYPOGRAPHY_LABEL_ALIASES = {
+  headingZh: ['中文標題字體', '中文標題字型', '中文標題', '標題字體'],
+  bodyZh: ['中文內文字體', '中文內文字型', '中文內文', '內文字體'],
+  latin: ['英文或數字字體', '英文或數字字型', '英文／數字', '英文/數字', '英文或數字', '英文數字字體', '英文字體']
+};
+
+// 把既有 brand（BRAND_FIELDS 15 欄位）搬遷成新版 Brand Snapshot 欄位形狀。
+// 這是「資料搬遷」，不是「內容生成」：只複製使用者已經實際填過的值；V2 新增但舊表單
+// 從未問過的欄位（background／purpose／coreValues／mission／vision／slogan／imageStyle／
+// avoidedVisualElements／platforms／assetNeeds／smartCardOutput）一律留空。
+function buildBrandSnapshotFromLegacyBrand(brand) {
+  const draft = blankBrandSnapshotDraft();
+  const source = {};
+  // 搬遷過來的內容，本來就是使用者當初在舊版表單／AI 討論後親自確認過才存進 brand 的，
+  // 誠實標記為 user_confirmed（不是 ai_generated，也不是這輪才 edited）——只對「實際有值」
+  // 的欄位標記來源，沒填的欄位不留下一個誤導性的來源紀錄。
+  function setField(key, value) {
+    draft[key] = value || '';
+    if (value) source[key] = 'user_confirmed';
+  }
+  setField('name', brand.name);
+  setField('positioning', brand.oneLiner);
+  setField('targetAudience', brand.targetAudience);
+  setField('tone', brand.tone);
+  setField('preferredWords', brand.preferredWords);
+  setField('avoidedWords', brand.avoidWords);
+  setField('visualStyle', brand.visualDirection);
+  setField('story', brand.brandStory);
+  setField('logoDirection', brand.logoSuggestion);
+  draft.colors = BRAND_LEGACY_COLOR_ROLE_MAP.map(function (m) {
+    const parsed = parseLegacyColorField(brand[m.legacyKey]);
+    return { role: m.role, name: parsed ? parsed.name : '', hex: parsed ? parsed.hex : null };
+  }).filter(function (c) { return c.hex || c.name; }); // 舊品牌完全沒填的顏色欄位不強塞進陣列
+  if (draft.colors.length > 0) source.colors = 'user_confirmed';
+  draft.source = source;
+  return draft;
+}
+
+function getBrandSnapshot(id) { return state.brandSnapshots.find(function (s) { return s.id === id; }); }
+function brandSnapshotsForBrand(brandId) { return state.brandSnapshots.filter(function (s) { return s.brandId === brandId; }); }
+// 依 version 數字取最新一筆，不分狀態（供「查看目前版本／歷史版本」這類需要看到全部的情境）
+function latestBrandSnapshotForBrand(brandId) {
+  const list = brandSnapshotsForBrand(brandId);
+  if (list.length === 0) return null;
+  return list.reduce(function (a, b) { return b.version > a.version ? b : a; });
+}
+// 只取「已確認／已被引用／已正式發布」的版本（供未來 Official Brand Selector／各 Flow
+// 唯讀引用時使用，排除還在對話中的 draft，避免 Flow 不小心套用一份使用者根本還沒確認過
+// 的草稿）。注意：這個函式回傳「最新一筆確認過的版本」，不等於「目前正式發布的版本」——
+// 兩者可能不同（例如 v4 已確認但公司仍正式使用 v3），Official Brand Selector 要用的是
+// publishedBrandSnapshot()，不是這個函式。
+function latestConfirmedBrandSnapshot(brandId) {
+  const list = brandSnapshotsForBrand(brandId).filter(function (s) { return s.status === 'confirmed' || s.status === 'in_use' || s.status === 'published'; });
+  if (list.length === 0) return null;
+  return list.reduce(function (a, b) { return b.version > a.version ? b : a; });
+}
+// 建立新版本：一律 push 一筆全新紀錄，絕不修改／覆寫陣列裡任何既有的一筆——這是
+// 「不得覆蓋既有Brand Snapshot或品牌版本」規則在程式碼層的具體保證，不是靠使用慣例。
+function createBrandSnapshot(brandId, fields, status) {
+  const brand = getBrand(brandId);
+  const merged = Object.assign(blankBrandSnapshotDraft(), fields);
+  merged.completion = computeBrandSnapshotCompletion(merged); // 完成度永遠重算，不信任呼叫端傳入的值
+  merged.id = state.nextBrandSnapshotId++;
+  merged.brandId = brandId;
+  merged.version = brand ? brand.version : 1;
+  merged.status = status || 'draft';
+  merged.createdAt = new Date().toISOString();
+  merged.updatedAt = new Date().toISOString();
+  state.brandSnapshots.push(merged);
+  saveState();
+  return merged;
+}
+// Phase 2.1：正式發布——跟「確認」是兩件事（確認只代表使用者在共創對話裡按下確認，
+// 發布代表「這是目前全系統要正式引用的版本」）。同一品牌任何時刻最多只有一筆
+// status==='published'，發布新版本時，把舊的發布版本降級為 archived（只改 status，
+// 內容完全不動），確保 Official Brand Selector 任何時候都只會查到單一、明確的正式來源。
+function publishBrandSnapshot(snapshotId, publishedBy, notes) {
+  const snap = getBrandSnapshot(snapshotId);
+  if (!snap) return null;
+  brandSnapshotsForBrand(snap.brandId).forEach(function (s) {
+    if (s.id !== snap.id && s.status === 'published') {
+      s.status = 'archived';
+      s.updatedAt = new Date().toISOString();
+    }
+  });
+  snap.status = 'published';
+  snap.publishedAt = new Date().toISOString();
+  snap.publishedBy = publishedBy || null;
+  if (notes) snap.notes = notes;
+  snap.updatedAt = new Date().toISOString();
+  saveState();
+  return snap;
+}
+function publishedBrandSnapshot(brandId) {
+  return state.brandSnapshots.find(function (s) { return s.brandId === brandId && s.status === 'published'; }) || null;
+}
+// #19 Brand Foundation｜Blocker 修正（總策長／CEO 核准，2026-08-06）：品牌配色與 Logo
+// 流程的第二輪之後，一律要在既有 Brand Snapshot 內容基礎上疊加，不能憑空從空白開始
+// （會遺失已經確認過的品牌核心內容）。找不到任何 Snapshot 時（品牌是舊資料、或這個
+// session 剛建立還沒重新整理過），沿用既有 buildBrandSnapshotFromLegacyBrand() 算出一份
+// 基礎內容——刻意「只算不存」，不寫入 state.brandSnapshots：如果這裡順手 push 一筆搬遷
+// 版本，會導致呼叫端接下來自己 createBrandSnapshot() 建立正式版本時，一次操作意外多出
+// 兩筆版本紀錄（一筆搬遷、一筆正式），版本歷史會被污染。真的需要建立新版本，一律由
+// 呼叫端自己呼叫 createBrandSnapshot()，這裡只負責「算出正確的基礎內容」。
+function brandSnapshotBaseFields(brandId) {
+  const existing = latestConfirmedBrandSnapshot(brandId) || latestBrandSnapshotForBrand(brandId);
+  if (existing) return existing;
+  const brand = getBrand(brandId);
+  return brand ? buildBrandSnapshotFromLegacyBrand(brand) : blankBrandSnapshotDraft();
+}
+// 建立新版 Brand Snapshot 前，先讓 brand.version 往前推一格——createBrandSnapshot() 的
+// version 欄位固定讀 brand.version（既有機制，見上方 createBrandSnapshot()），沿用
+// updateBrandFields() 既有的版本遞增／updatedAt／saveState 邏輯，不新增一套版本號機制。
+function bumpBrandVersionForNewSnapshot(brandId) { updateBrandFields(brandId, {}); }
+
+// ── Brand Assets（總策長／CEO 核准，2026-08-06）───────────────────
+// 圖片是品牌資產，不是 Brand Snapshot：只存「參照」與狀態，不解析成結構化欄位、
+// 不覆蓋 logoPrompt／logoDirection。同一品牌、同一 type 任何時刻最多一筆 status==='selected'，
+// 跟 publishBrandSnapshot() 「發布新版本時把舊版本降級」是同一種設計慣例。
+function brandAssetsForBrand(brandId) { return state.brandAssets.filter(function (a) { return a.brandId === brandId; }); }
+function getBrandAsset(id) { return state.brandAssets.find(function (a) { return a.id === id; }); }
+function createBrandAsset(brandId, fields) {
+  const asset = Object.assign({ type: 'logo', imageRef: '', promptSnapshotId: null, notes: '' }, fields, {
+    id: state.nextBrandAssetId++,
+    brandId: brandId,
+    version: brandAssetsForBrand(brandId).filter(function (a) { return a.type === (fields && fields.type ? fields.type : 'logo'); }).length + 1,
+    status: (fields && fields.status) || 'draft',
+    createdAt: new Date().toISOString()
+  });
+  state.brandAssets.push(asset);
+  saveState();
+  return asset;
+}
+function selectBrandAsset(assetId) {
+  const asset = getBrandAsset(assetId);
+  if (!asset) return null;
+  brandAssetsForBrand(asset.brandId).forEach(function (a) {
+    if (a.id !== asset.id && a.type === asset.type && a.status === 'selected') a.status = 'archived';
+  });
+  asset.status = 'selected';
+  saveState();
+  return asset;
+}
+// 目前採用中（selected）的版本不可移除，避免品牌一時沒有任何 Logo 可用；
+// 其餘 draft／archived 版本可以自由清除。
+function removeBrandAsset(assetId) {
+  const asset = getBrandAsset(assetId);
+  if (!asset || asset.status === 'selected') return false;
+  state.brandAssets = state.brandAssets.filter(function (a) { return a.id !== assetId; });
+  saveState();
+  return true;
+}
+
+// 編輯品牌只會產生「最新版本」，不會回頭改動任何 Work 已經保存的 brandSnapshot——
+// 這是規格三-4／九「編輯只建立最新版本，絕不自動更新既有 Work」的直接落實，
+// 靠的就是 Work 存的是快照副本、不是即時參照，這裡完全不需要另外寫遍歷 Work 的程式碼。
+function updateBrandFields(brandId, fields) {
+  const b = getBrand(brandId);
+  if (!b) return null;
+  Object.assign(b, fields);
+  b.version += 1;
+  b.updatedAt = new Date().toISOString();
+  saveState();
+  return b;
+}
+
+function archiveBrand(brandId) {
+  const b = getBrand(brandId);
+  if (!b) return;
+  b.status = '已封存';
+  // 規格三-10：若還有 Project 預設用這個品牌，提示使用者重新選擇或改為不套用品牌，
+  // 不能讓 Project 繼續指向一個已封存、不能再被選為新品牌的品牌卻毫無提示。
+  const affected = state.projects.filter(function (p) { return p.defaultBrandId === brandId; });
+  saveState();
+  if (affected.length > 0) {
+    showToast('已封存「' + b.name + '」。有 ' + affected.length + ' 個專案的預設品牌需要重新選擇。');
+  } else {
+    showToast('已封存「' + b.name + '」');
+  }
+}
+function unarchiveBrand(brandId) {
+  const b = getBrand(brandId);
+  if (!b) return;
+  b.status = '使用中';
+  saveState();
+  showToast('已恢復「' + b.name + '」');
+}
+
+// 複製品牌：全新 ID、預填原內容、預設名稱加「－副本」，不影響任何既有 Project/Work
+function copyBrand(brandId) {
+  const src = getBrand(brandId);
+  if (!src) return null;
+  const fields = {};
+  BRAND_FIELDS.forEach(function (f) { fields[f.key] = src[f.key]; });
+  fields.name = src.name + '－副本';
+  const copy = createBrand(fields);
+  showToast('已複製為「' + copy.name + '」');
+  return copy;
+}
+
+function projectsUsingBrand(brandId) { return state.projects.filter(function (p) { return p.defaultBrandId === brandId; }); }
+function worksUsingBrand(brandId) { return state.works.filter(function (w) { return w.brandId === brandId; }); }
+
+// ── AI 品牌引用（規格四）───────────────────────────────────────
+// 一律讀 work.brandSnapshot（建立/切換當下凍結的內容），不讀 state.brands 目前最新版本——
+// 這樣「進行中/已完成 Work 保留原品牌內容」不需要額外判斷程式碼，資料結構本身就保證了。
+function buildBrandContext(work) {
+  if (!work.brandId || !work.brandSnapshot) {
+    return '本次工作未套用品牌｜使用通用協作設定。';
+  }
+  const snap = work.brandSnapshot;
+  const lines = [];
+  lines.push('品牌名稱：' + (snap.name || '（未填）'));
+  lines.push('一句話定位：' + (snap.oneLiner || '（未填）'));
+  lines.push('主要服務對象：' + (snap.targetAudience || '（未填）'));
+  if (snap.tone) lines.push('品牌語氣：' + snap.tone);
+  if (snap.coreMessages) lines.push('核心訊息：' + snap.coreMessages);
+  if (snap.preferredWords) lines.push('常用詞：' + snap.preferredWords);
+  if (snap.avoidWords) lines.push('品牌避免事項：' + snap.avoidWords);
+
+  // 依任務類型決定要不要納入「視覺方向／配色／Logo建議」「品牌故事」（規格四：非固定欄位，
+  // 依任務決定）——用角色／步驟名稱關鍵字判斷：設計／視覺相關步驟才需要視覺方向跟正式配色
+  // （總策長補充指令規格五-5：建立工作時自動帶入正式配色與 Logo 建議）；規劃階段（多半是
+  // 整個工作的第一步）才需要品牌故事，避免每一步都把完整故事塞進 Prompt。
+  const step = currentStep(work);
+  const isVisualStep = step.role === '設計師' || /視覺|畫面|封面|海報/.test(step.name);
+  const isEarlyPlanningStep = step.role === '規劃師' || work.currentStepIndex === 0;
+  if (isVisualStep) {
+    BRAND_VISUAL_CONTEXT_FIELDS.forEach(function (key) {
+      const fieldDef = BRAND_FIELDS.find(function (f) { return f.key === key; });
+      if (snap[key]) lines.push(fieldDef.label + '：' + snap[key]);
+    });
+  }
+  if (isEarlyPlanningStep && snap.brandStory) lines.push('品牌故事：' + snap.brandStory);
+
+  const brand = getBrand(work.brandId);
+  if (brand && brand.linkedAssets && brand.linkedAssets.length > 0) {
+    const assetLines = brand.linkedAssets.map(function (a) {
+      const r = state.results.find(function (x) { return x.id === a.resultId; });
+      return '・' + (a.purpose || '相關素材') + '：' + (r ? (r.title || r.stepName) : '（此成果目前無法使用）');
+    });
+    lines.push('相關素材：\n' + assetLines.join('\n'));
+  }
+
+  return lines.join('\n') +
+    '\n\n若這次的使用者要求跟上面的品牌規則明顯衝突，請不要自己默默選一邊，' +
+    '請先簡短提出衝突點，讓使用者決定這次是否要例外處理。';
 }
 function buildChannelDraft(channel, result) {
   const excerpt = (result.content || '').split('\n').filter(Boolean).slice(0, 2).join(' ');
@@ -2008,7 +3210,28 @@ function defaultState() {
     driveLastBackupAt: null,
     // 備份節流用：只記錄「成功」備份的時間戳記（失敗重試不算），捲動視窗判斷
     // 每小時/每日上限，見 canStartDriveBackup()。定期修剪超過 24 小時的紀錄，避免無限增長。
-    driveBackupTimestamps: []
+    driveBackupTimestamps: [],
+    // Brand Center Sprint #1：state.brands 是整個工作台唯一的品牌資料來源。Project 用
+    // defaultBrandId 記「以後新工作預設用哪個品牌」，Work 用 brandId＋brandSnapshot 記
+    // 「這件工作實際套用的品牌快照」——兩者分開存是刻意設計：品牌本身之後會改版，
+    // 但已經在進行中或已完成的 Work 必須看到「當初套用時」的內容，不能被悄悄改掉
+    // （見 buildBrandContext() 一律讀 work.brandSnapshot、不讀 state.brands 最新版本）。
+    brands: [],
+    nextBrandId: 1,
+    brandDraftInProgress: null,
+    // #19 品牌共創中心 V2｜Phase 2（總策長／CEO 核准，2026-08-05）：Brand Snapshot 正式
+    // 升級為獨立、有版本歷史的資料實體（Core Shared Component），不是像過去那樣只在
+    // Work 套用品牌的當下臨時算出來、沒有獨立歷史的東西。state.brands 仍是品牌主資料
+    // （可編輯），state.brandSnapshots 是「已確認的版本」的完整歷史紀錄，只能新增、
+    // 不能覆寫既有版本——見 createBrandSnapshot()。
+    brandSnapshots: [],
+    nextBrandSnapshotId: 1,
+    // #19 Brand Foundation｜Blocker 修正（總策長／CEO 核准，2026-08-06）：Logo 圖片是
+    // 「品牌資產」（Asset），不是 Brand Snapshot——圖片本身不可能是可重複引用的結構化
+    // 資料，所以另開一個跟 brandSnapshots 同層級、同樣「只增不覆寫」慣例的頂層陣列，
+    // 每筆資產用 promptSnapshotId 指回是哪個 Snapshot 版本的 Logo Prompt 產出的。
+    brandAssets: [],
+    nextBrandAssetId: 1
   };
 }
 
@@ -2178,7 +3401,7 @@ function openPurpose(typeKey) {
   if (typeKey === 'custom') {
     const name = prompt('幫這個新專案取個名字：');
     if (!name || !name.trim()) return;
-    const p = { id: state.nextProjectId++, type: 'custom', emoji: '➕', name: name.trim() };
+    const p = { id: state.nextProjectId++, type: 'custom', emoji: '➕', name: name.trim(), defaultBrandId: null };
     state.projects.push(p);
     saveState();
     activeProjectId = p.id;
@@ -2187,7 +3410,7 @@ function openPurpose(typeKey) {
   }
   let p = state.projects.find(function (x) { return x.type === typeKey; });
   if (!p) {
-    p = { id: state.nextProjectId++, type: typeKey, emoji: type.emoji, name: type.name };
+    p = { id: state.nextProjectId++, type: typeKey, emoji: type.emoji, name: type.name, defaultBrandId: null };
     state.projects.push(p);
     saveState();
     showToast('已建立「' + type.name + '」專案');
@@ -2234,6 +3457,66 @@ function currentStep(work) {
 // 收斂成單一函式，之後任何一個 Flow 的完成判斷邏輯要改，只用改這裡一處。
 function isWorkComplete(work, stepIdx) {
   return stepIdx + 1 >= FLOWS[work.flowId].steps.length;
+}
+
+// ── 品牌中心：Work 品牌顯示／切換／更新提示（規格三-7/3-8/3-9）─────────
+// 「是否已經有內容」＝這件工作是否已經保存過任何一步的正式成果。還沒有內容時可以直接切換，
+// 已經有內容時必須先警告「只影響接下來的新產出，已完成內容不會自動修改」並要求確認。
+function workHasAnyContent(work) {
+  return !!(work.stepResultIds && work.stepResultIds.some(Boolean));
+}
+
+function applyBrandToWork(work, brandOrNull) {
+  if (!brandOrNull) {
+    work.brandId = null; work.brandSnapshot = null; work.brandAckVersion = null;
+  } else {
+    work.brandId = brandOrNull.id;
+    work.brandSnapshot = buildBrandSnapshot(brandOrNull);
+    work.brandAckVersion = brandOrNull.version;
+  }
+  saveState();
+}
+
+function switchWorkBrand(brandId) {
+  const work = getActiveWork();
+  const brand = brandId ? getBrand(brandId) : null;
+  const doSwitch = function () {
+    applyBrandToWork(work, brand);
+    showToast(brand ? '已更換為「' + brand.name + '」' : '已改為不套用品牌');
+    showScreen('screen-work-detail');
+  };
+  if (workHasAnyContent(work)) {
+    if (!confirm('更換品牌只會影響接下來的新產出，已完成內容不會自動修改。確定要更換嗎？')) return;
+  }
+  doSwitch();
+}
+function cancelBrandSwitch() { showScreen('screen-work-detail'); }
+
+// 進行中 Work 對應的品牌若已經改版（brand.version > work.brandAckVersion），顯示「有新版」
+// 提示；已封存或找不到品牌都不算「有新版」，Work 仍必須用自己的快照正常運作，不因此出錯。
+function workBrandUpdateAvailable(work) {
+  if (!work.brandId || !work.brandSnapshot) return false;
+  const brand = getBrand(work.brandId);
+  if (!brand || brand.status === '已封存') return false;
+  return brand.version > (work.brandAckVersion || work.brandSnapshot.brandVersion || 0);
+}
+// 「繼續使用原設定」：只記錄「已經看過這個版本的更新提示」，不再重複打擾，品牌之後又更新
+// （version 再往上跳）才會再提示一次。
+function acknowledgeBrandUpdate() {
+  const work = getActiveWork();
+  const brand = getBrand(work.brandId);
+  if (brand) work.brandAckVersion = brand.version;
+  saveState();
+  render();
+  showToast('好的，這個工作繼續使用原本的品牌設定');
+}
+function adoptLatestBrandVersion() {
+  const work = getActiveWork();
+  const brand = getBrand(work.brandId);
+  if (!brand) return;
+  applyBrandToWork(work, brand);
+  showToast('已改用「' + brand.name + '」最新版本，之後的產出會套用新內容');
+  render();
 }
 
 let selectedVideoType = null;
@@ -2378,6 +3661,9 @@ function buildBriefDiscussionPrompt(work) {
     // Prompt 2.0 Blocking Fix（技術長 Approve after Fix，2026-07-31）：不再要求 AI 在 Brief
     // 最後加上「請貼回工作台」這句提醒——工作台自己的貼回畫面已經會顯示「現在請：把 AI
     // 最後輸出的『本次工作 Brief』完整貼回來」，不需要 AI 自己再重複一次。
+    // AI Collaboration OS 全域規則（見 workspace-global-contracts.md 契約一）：Brief 完成
+    // 不等於正式工作已經開始，正式 Step 1 一律由使用者貼回工作台後才會開始，AI 不能在
+    // 這裡就自行宣告「接下來開始製作」之類的話，完整規則見下方【Step Boundary】。
     '輸出完 Brief 內容本身就結束，不要額外加上任何提醒文字或操作說明：\n\n' +
     '【本次工作 Brief】\n\n' +
     '工作目標：\n＿＿＿＿＿＿\n\n' +
@@ -2386,7 +3672,12 @@ function buildBriefDiscussionPrompt(work) {
     '希望呈現的感受／風格：\n＿＿＿＿＿＿\n\n' +
     '必須保留：\n＿＿＿＿＿＿\n\n' +
     '應避免：\n＿＿＿＿＿＿\n\n' +
-    '本次預計完成的成果：\n＿＿＿＿＿＿';
+    '本次預計完成的成果：\n＿＿＿＿＿＿\n\n' +
+    buildStepBoundaryBlock(
+      '前置討論 Brief。',
+      ['宣告或暗示「接下來開始製作」「已經進入正式流程」'].concat(STEP_BOUNDARY_GENERIC_FORBIDDEN),
+      STEP_BOUNDARY_GENERIC_WAITING
+    );
 }
 
 // Brief 討論稿沿用既有的「滿意度／版本歷程」機制（satisfactionGood／satisfactionRevise／
@@ -2446,6 +3737,7 @@ function renderProductCategory() {
 function chooseProductCategory(flowId) {
   pendingFlowId = flowId;
   selectedVideoType = null;
+  pendingWorkBrandChoice = 'brand';
   showScreen('screen-add-work');
 }
 
@@ -2455,6 +3747,7 @@ function openAddWork() {
   if (project.type === 'product') { showScreen('screen-product-category'); return; }
   pendingFlowId = PROJECT_TYPES[project.type] ? PROJECT_TYPES[project.type].flowId : 'custom';
   selectedVideoType = null;
+  pendingWorkBrandChoice = 'brand';
   showScreen('screen-add-work');
 }
 
@@ -2485,6 +3778,22 @@ function confirmNewWork() {
     const songIdea = (songIdeaInput.value || '').trim();
     if (songIdea) work.songIdea = songIdea;
     songIdeaInput.value = '';
+  }
+  // Brand Center Sprint #1（規格三-7）：新 Work 預設繼承 Project 目前的預設品牌，建立當下
+  // 就存一份快照（不是即時參照）。Project 沒有設定預設品牌時，work.brandId 維持 null，
+  // 畫面顯示「本次未套用品牌｜使用通用協作設定」，不會因為找不到品牌而載入失敗。
+  // #20（總策長核准）：使用者在建立海報工作時明確選「自由設計」，即使 Project 有預設品牌，
+  // 這次也刻意不繼承——「沒有品牌」是使用者主動選的完整模式，不是遺漏。
+  work.brandId = null;
+  work.brandSnapshot = null;
+  work.brandAckVersion = null;
+  if (project.defaultBrandId && pendingWorkBrandChoice !== 'free') {
+    const brand = getBrand(project.defaultBrandId);
+    if (brand && brand.status !== '已封存') {
+      work.brandId = brand.id;
+      work.brandSnapshot = buildBrandSnapshot(brand);
+      work.brandAckVersion = brand.version;
+    }
   }
   state.works.push(work);
   saveState();
@@ -2616,12 +3925,27 @@ function validateSongTitleLyricsPaste(text) {
 // 逐幕解析那樣深入解析內容結構——這一步不需要程式後續解析每個欄位，只要保證使用者不會
 // 把還在討論、缺區塊的內容誤存成正式成果即可，符合 Tier 2「有清楚固定格式、但下游不需要
 // 程式解析」的分級原則，不是每一步都要做到 video 那種 Tier 1 強制 Gate。
+// #18.1 Blocker 修正（總策長核准，2026-08-02）：真人測試發現貼回「讓每一個靈感都成為你的
+// 作品！」這種只有一句 CTA 的內容，Gate 有正確擋下，但訊息只說「還沒看到區塊」，沒有明確
+// 提醒「你可能貼錯步驟的內容」，使用者不容易判斷下一步該怎麼做——這裡統一成一句更具體的
+// 訊息，不分兩種措辭，涵蓋所有缺區塊的情況。
+const POSTER_VISUAL_INCOMPLETE_MESSAGE =
+  '這份內容不是完整的「視覺設計」成果。\n請貼回完整的【圖片生成請求】與【風格建議】，不要只貼主標題、CTA、圖片或上一個步驟的海報文案。';
 function validatePosterVisualDesignPaste(text) {
-  if (!/【圖片生成請求】/.test(text)) return { valid: false, message: '這份內容還沒有看到「【圖片生成請求】」這個區塊。請確認格式並重新貼回。' };
-  if (!/【風格建議】/.test(text)) return { valid: false, message: '這份內容還沒有看到「【風格建議】」這個區塊。請確認格式並重新貼回。' };
+  if (!/【圖片生成請求】/.test(text)) return { valid: false, message: POSTER_VISUAL_INCOMPLETE_MESSAGE };
+  if (!/【風格建議】/.test(text)) return { valid: false, message: POSTER_VISUAL_INCOMPLETE_MESSAGE };
   const reqMatch = text.match(/【圖片生成請求】\s*\n?([\s\S]*?)(?=【風格建議】|$)/);
-  if (!reqMatch || !reqMatch[1].trim()) return { valid: false, message: '「【圖片生成請求】」目前是空的。請確認內容完整後重新貼回。' };
+  if (!reqMatch || !reqMatch[1].trim()) return { valid: false, message: POSTER_VISUAL_INCOMPLETE_MESSAGE };
   return { valid: true };
+}
+// Recovery Flow 第三個選項：不是叫使用者自己想辦法回去問 AI，而是直接給一段可以複製、
+// 明確要求「完整版本、不要摘要」的指令——降低使用者卡在「不知道該怎麼跟AI講」的機會。
+function buildPosterVisualRegenerateInstruction() {
+  return '請重新輸出我剛才選定版本的完整內容。\n\n' +
+    '必須完整保留並依照以下格式輸出：\n\n' +
+    '【圖片生成請求】\n（完整圖片生成請求）\n\n' +
+    '【風格建議】\n（完整風格建議）\n\n' +
+    '不要只輸出主標題、CTA、摘要或說明文字。';
 }
 
 // 寬鬆版：給「顯示已經保存的資料」用（例如製作歌曲畫面要把歌詞複製到 Suno），
@@ -2637,9 +3961,25 @@ function parseSongTitleAndLyrics(content) {
   return { title: hasTitle ? titleMatch[1].trim().replace(/^《|》$/g, '').trim() : '', lyrics: lyricsMatch[1].trim() };
 }
 
-function showPasteBackWarning(html) {
+// regenerateInstructionText 選填：有提供時，額外顯示「複製重新輸出完整版本指令」按鈕
+// （#18.1 Blocker 修正，Gate＋Recovery Flow，不是只丟出阻擋訊息就結束）；沒提供時
+// （例如既有的 A/B 未選定、逐幕母稿解析失敗等既有情境）維持原本只有兩個按鈕的行為，
+// 完全不影響既有呼叫點。
+let pasteBackRegenerateInstructionText = '';
+function showPasteBackWarning(html, regenerateInstructionText) {
   document.getElementById('pb-warning-text').innerHTML = html;
   document.getElementById('pb-ab-warning').style.display = 'block';
+  const regenBtn = document.getElementById('pb-warning-regenerate-btn');
+  if (regenerateInstructionText) {
+    pasteBackRegenerateInstructionText = regenerateInstructionText;
+    regenBtn.style.display = 'block';
+  } else {
+    pasteBackRegenerateInstructionText = '';
+    regenBtn.style.display = 'none';
+  }
+}
+function copyPasteBackRegenerateInstruction() {
+  copyPlainText(pasteBackRegenerateInstructionText, '已複製，請貼給你的 AI');
 }
 const AB_UNSELECTED_WARNING_HTML = '<b>這看起來還是 AI 提供的兩個版本。</b><br>請先回到 AI，選擇 A 或 B，等 AI 輸出完整最終版本後，再貼回這裡。';
 
@@ -2684,7 +4024,7 @@ function submitPasteBack() {
   if (work.flowId === 'poster' && step.name === '視覺設計') {
     const validation = validatePosterVisualDesignPaste(content);
     if (!validation.valid) {
-      showPasteBackWarning(escHtml(validation.message));
+      showPasteBackWarning(escHtml(validation.message).replace(/\n/g, '<br>'), buildPosterVisualRegenerateInstruction());
       return;
     }
   }
@@ -2757,10 +4097,12 @@ function saveUnconfirmedVideoDraft(work, project, step, content, flagKey) {
 }
 function pasteBackGoChooseVersion() {
   document.getElementById('pb-ab-warning').style.display = 'none';
+  document.getElementById('pb-warning-regenerate-btn').style.display = 'none';
   showScreen('screen-copy-to-ai');
 }
 function pasteBackDismissAbWarning() {
   document.getElementById('pb-ab-warning').style.display = 'none';
+  document.getElementById('pb-warning-regenerate-btn').style.display = 'none';
 }
 
 // ── 作品打磨（滿意度 → 修改方向 → 修正指令 → 貼回修改版 → 版本歷程）──
@@ -2788,7 +4130,13 @@ function satisfactionGood() {
     createFinalProduct(state, work, project);
     saveState();
     showToast('完成了！已收進成果庫');
-    showScreen('screen-project');
+    // Brand Center Sprint #1（規格五）：Work 這時已經標記完成、成果也已經存進成果庫，
+    // 接下來的品牌校準提示純粹是選擇性的加分動作，就算使用者不理會也不影響 Work 已完成的事實。
+    if (work.brandId && getBrand(work.brandId)) {
+      openBrandCalibrationPrompt(work);
+    } else {
+      showScreen('screen-project');
+    }
   } else {
     work.currentStepIndex += 1;
     saveState();
@@ -2905,6 +4253,11 @@ function renderToolGuide(containerId, buttonId, config) {
       (config.altTools && config.altTools.length ?
         '<details class="ai-why" style="margin-top:14px"><summary>查看替代工具（不想用預設工具時可以參考）</summary><div class="ai-why-body">' +
           config.altTools.map(function (t) {
+            // #18.1 BUG-003（總策長核准，共用函式修正）：替代工具有有效網址時提供「開啟」按鈕，
+            // 跟官方推薦工具同樣待遇；沒有網址時只顯示介紹文字，不產生壞連結，也不暗示替代
+            // 工具能力跟官方推薦完全相同——這裡仍然清楚保留「其他可選」的介紹脈絡，不是把
+            // 替代工具偷換成第二個「官方推薦」。
+            const openLink = t.toolId ? buildToolOpenLinkHtml(t.toolId, '開啟 ' + t.name, ';margin-top:8px') : '';
             return '<div class="line" style="margin-top:8px"><b>' + escHtml(t.name) + '</b>' + (t.rating ? '　' + starString(t.rating) : '') +
               (t.positioning ? '<br><span style="color:var(--gold)">' + escHtml(t.positioning) + '</span>' : '') +
               (t.fitFor ? '<br><span style="color:var(--gold)">適合：' + escHtml(t.fitFor) + '</span>' : '') +
@@ -2912,6 +4265,7 @@ function renderToolGuide(containerId, buttonId, config) {
               (t.mobileExperience ? '<br>手機操作：' + escHtml(t.mobileExperience) : '') +
               (t.pricingNote ? '<br>費用提醒：' + escHtml(t.pricingNote) : '') +
               (t.caution ? '<br>注意：' + escHtml(t.caution) : '') +
+              openLink +
               '</div>';
           }).join('') +
         '</div></details>' : '') +
@@ -3067,6 +4421,7 @@ function renderSongNext() {
   const work = getActiveWork();
   document.getElementById('sn-song-title').textContent = work.songTitle || work.name;
   document.getElementById('sn-filename').textContent = lastSongFileName || buildSuggestedFileName(work.songTitle || work.name, '歌曲');
+  renderBrandCalibrationBanner(work, 'sn-brand-calibration-box');
 }
 
 // Sprint 1.1/1.2（歌曲 Flow 銜接影片 Flow）：點「製作影片」直接建立／開啟這首歌的 MV 工作，
@@ -3843,6 +5198,7 @@ function renderVideoComplete() {
   } else {
     sourceLine.style.display = 'none';
   }
+  renderBrandCalibrationBanner(work, 'vc-brand-calibration-box');
 }
 
 // ── 完成海報（行銷海報 Production Studio）─────────────────────────
@@ -3872,9 +5228,9 @@ const POSTER_TOOL_GUIDE = {
   toolIntro: '很多人會直接用 ChatGPT 生成海報圖片，操作簡單，內建的圖片功能就能用。',
   toolFeatures: ['文字生成圖片，操作簡單', '可以把文案內容直接寫進圖片裡', '適合第一次製作海報', '不需要額外學設計軟體'],
   altTools: [
-    { name: 'Canva', rating: 5, fitFor: '需要精確排版、中文字型、QR Code', reason: '適合需要精確調整繁體中文排版、版面、QR Code 與品牌素材的時候，比生成式圖片工具更好手動微調細節。' },
-    { name: 'Gemini', rating: 4, fitFor: '免費額度充足、想多比較幾種風格', reason: '適合圖片發想、想比較不同風格初版，或 ChatGPT 額度用完時的替代選擇。' },
-    { name: 'PPT／Google Slides', rating: 4, fitFor: '需要可編輯版面、之後想自己調文字', reason: '適合需要可編輯版面、簡報式海報，或之後想自己調整文字內容時使用。' }
+    { name: 'Canva', toolId: 'canva', rating: 5, fitFor: '需要精確排版、中文字型、QR Code', reason: '適合需要精確調整繁體中文排版、版面、QR Code 與品牌素材的時候，比生成式圖片工具更好手動微調細節。' },
+    { name: 'Gemini', toolId: 'gemini', rating: 4, fitFor: '免費額度充足、想多比較幾種風格', reason: '適合圖片發想、想比較不同風格初版，或 ChatGPT 額度用完時的替代選擇。' },
+    { name: 'PPT／Google Slides', toolId: 'google_slides', rating: 4, fitFor: '需要可編輯版面、之後想自己調文字', reason: '適合需要可編輯版面、簡報式海報，或之後想自己調整文字內容時使用。' }
   ],
   steps: [
     '複製海報文案',
@@ -3883,14 +5239,14 @@ const POSTER_TOOL_GUIDE = {
     '貼上圖片生成請求與風格建議，請它生成海報',
     '看看效果，不滿意可以請它調整或重新生成',
     '滿意後，先在 ChatGPT 下載海報圖片或複製分享連結',
-    '回到工作台，按「下一步：確認海報進度」'
+    '回到工作台，按「我已完成海報製作」'
   ],
   completionReminder: {
     title: '完成後記得保存',
     items: [
       '想保留在手機或電腦：在 ChatGPT 下載海報圖片。',
       '想傳給朋友或分享到社群：複製圖片分享連結。',
-      '完成後回到工作台，按「下一步：確認海報進度」。'
+      '完成後回到工作台，按「我已完成海報製作」。'
     ]
   },
   firstTimeReminder: '第一次使用不用擔心。照著步驟貼上文字，很快就能看到第一版海報。',
@@ -3939,6 +5295,131 @@ function renderMakePoster() {
   document.getElementById('mp-style-content').textContent = sections.style || '（還沒有風格建議）';
 
   renderToolGuide('mp-tool-guide', 'mp-open-tool-btn', withOfficialRecommendation(TOOL_GUIDES.poster, 'poster', '工程師', '完成海報'));
+  renderCompletionBrandAssets(work, 'mp-brand-assets');
+  renderPosterMaterialChecklist(work);
+}
+
+// #18.1 BUG-004：素材複選清單——提醒使用者「這次準備附哪些素材」，不驗證檔案是否真的存在。
+function renderPosterMaterialChecklist(work) {
+  const checked = work.posterMaterialChecklist || [];
+  document.getElementById('mp-material-checklist').innerHTML = POSTER_MATERIAL_ITEMS.map(function (item) {
+    const isChecked = checked.indexOf(item.id) !== -1;
+    // 修正：card 背景是淺色（--cream），<label> 沒有另外指定文字顏色時會直接繼承 body 的
+    // 淺色文字（--cream），淺色疊淺色會完全看不見——這裡明確指定跟其他卡片內文字一致的
+    // 深色（--text-mid，跟既有 .card .line 同一個顏色），跟本輪稍早修正的「首次備份提醒」
+    // 同一種問題，這次在寫的當下就直接補上，不留給下一輪真人測試才發現。
+    return '<label style="display:flex;align-items:center;gap:8px;margin:6px 0;cursor:pointer;color:var(--text-mid);font-size:14px">' +
+      '<input type="checkbox" ' + (isChecked ? 'checked' : '') + ' onchange="togglePosterMaterial(\'' + item.id + '\')"> ' + escHtml(item.label) +
+      '</label>';
+  }).join('');
+  renderPosterMaterialReminder(work);
+}
+function togglePosterMaterial(id) {
+  const work = getActiveWork();
+  let checked = work.posterMaterialChecklist || [];
+  if (id === 'none') {
+    // 「這次沒有要附圖片素材」跟其他項目互斥：選了它，清空其他；已經選了它時再點一次是取消
+    checked = checked.indexOf('none') !== -1 ? [] : ['none'];
+  } else {
+    checked = checked.filter(function (x) { return x !== 'none'; }); // 選了具體素材，自動取消「沒有素材」
+    if (checked.indexOf(id) !== -1) checked = checked.filter(function (x) { return x !== id; });
+    else checked = checked.concat([id]);
+  }
+  work.posterMaterialChecklist = checked;
+  saveState();
+  renderPosterMaterialChecklist(work);
+}
+// 動態提醒文字：勾了什麼就提醒帶什麼，QR Code 額外加「不要求AI重繪＋手機掃描確認」的特別提醒
+// （生成式 AI 重畫的 QR Code 通常不可靠，這句提醒很重要，不能省略）。
+function renderPosterMaterialReminder(work) {
+  const box = document.getElementById('mp-material-reminder');
+  const checked = work.posterMaterialChecklist || [];
+  if (checked.length === 0) { box.style.display = 'none'; box.innerHTML = ''; return; }
+  if (checked.indexOf('none') !== -1) {
+    box.style.display = 'block';
+    box.innerHTML = '<div class="line">好的，這次不用準備額外圖片素材。</div>';
+    return;
+  }
+  const labels = checked.map(function (id) { return POSTER_MATERIAL_ITEMS.find(function (i) { return i.id === id; }).label; });
+  let html = '<div class="line">請把已勾選的' + labels.join('、') + '，與文字指令一起上傳給繪圖 AI。</div>';
+  if (checked.indexOf('qrcode') !== -1) {
+    html += '<div class="line" style="margin-top:6px;color:var(--gold)">⚠️ 請上傳真正的 QR Code 圖片，不要要求 AI 重新繪製；完成後務必用手機實際掃描確認可讀。</div>';
+  }
+  box.style.display = 'block';
+  box.innerHTML = html;
+}
+// 「複製完整圖片生成請求」的提醒式 Recovery（非阻擋 Gate）：完全沒勾選任何項目（含「沒有
+// 素材」）時，先問一次要不要先確認素材，使用者仍然可以直接選擇繼續複製，不會被永久卡住。
+function copyMakePosterVisualWithReminder() {
+  const work = getActiveWork();
+  const checked = work.posterMaterialChecklist || [];
+  if (checked.length === 0) {
+    document.getElementById('mp-material-unselected-notice').style.display = 'block';
+    return;
+  }
+  copyMakePosterVisual();
+}
+function confirmCopyMakePosterVisualAnyway() {
+  document.getElementById('mp-material-unselected-notice').style.display = 'none';
+  copyMakePosterVisual();
+}
+function dismissCopyMakePosterVisualNotice() {
+  document.getElementById('mp-material-unselected-notice').style.display = 'none';
+  document.getElementById('mp-material-checklist').scrollIntoView({ behavior: 'smooth', block: 'center' });
+}
+
+// #18.1 Blocker 修正（總策長核准）：共用函式，本輪只接入海報完成頁（screen-make-poster）。
+// 只誠實顯示「目前真的存在」的品牌資料：5 色配色（含色塊）、Logo 建議文字、關聯成果庫項目。
+// 明確不做的事：不假稱 logoSuggestion 文字欄位就是 Logo 圖檔、不把文字成果說成圖片素材、
+// 不用系統預設值補出「看起來很完整」的內容——缺什麼就誠實顯示「稍後再補」或「尚未關聯」。
+// 是否要接入 video／song 的完成畫面，需要另外評估影響再決定，本輪不擴大呼叫範圍。
+function renderCompletionBrandAssets(work, containerId) {
+  const box = document.getElementById(containerId);
+  if (!box) return;
+  // #20 商品行銷中心｜自由設計模式（總策長核准，2026-08-02）：沒有套用品牌不是缺陷，是
+  // 一種完整模式（幫客戶做海報、一次性活動、社區公告等本來就不需要固定品牌）。這裡不再顯示
+  // 「未套用品牌，沒有…可以顯示」這種聽起來像少一塊的負面提示，改成正向說明「自由設計模式」
+  // 這件事本身是什麼、使用者仍然能做什麼——舊資料（沒有 brandId 的既有 Work）也會自然落入
+  // 這個分支，一併受益，不需要另外遷移或標記。
+  if (!work.brandId || !work.brandSnapshot) {
+    box.innerHTML =
+      '<div class="section-label">🎨 自由設計模式</div>' +
+      '<div class="line" style="margin-top:6px">本次作品依照這次工作的內容進行設計，不會套用固定品牌風格。</div>' +
+      '<div class="line" style="margin-top:8px">你仍然可以準備 Logo、QR Code、照片或任何素材，一起交給繪圖 AI（見下方素材清單）。</div>' +
+      '<div class="line" style="margin-top:8px;color:var(--text-dim);font-size:12.5px">若日後希望建立一致的品牌形象，可以建立品牌後再套用，不需要重新設計。</div>';
+    return;
+  }
+  const snap = work.brandSnapshot;
+  const brand = getBrand(work.brandId);
+  const colorFields = BRAND_FIELDS.filter(function (f) { return f.isColor; });
+  const anyColor = colorFields.some(function (f) { return snap[f.key]; });
+
+  let html = '<div class="section-label">品牌配色</div>';
+  html += anyColor
+    ? colorFields.map(function (f) {
+      if (!snap[f.key]) return '';
+      return '<div class="line" style="margin:4px 0">' + colorSwatchHtml(snap[f.key]) + escHtml(f.label) + '：' + escHtml(snap[f.key]) + '</div>';
+    }).join('')
+    : '<div class="tool-suggest-note">稍後再補</div>';
+
+  html += '<div class="section-label" style="margin-top:10px">Logo 建議</div>';
+  html += snap.logoSuggestion
+    ? '<div class="line" style="white-space:pre-wrap;word-break:break-word">' + escHtml(snap.logoSuggestion) + '</div>'
+    : '<div class="tool-suggest-note">稍後再補</div>';
+
+  html += '<div class="section-label" style="margin-top:10px">相關素材</div>';
+  if (brand && brand.linkedAssets && brand.linkedAssets.length > 0) {
+    html += brand.linkedAssets.map(function (a) {
+      const r = state.results.find(function (x) { return x.id === a.resultId; });
+      return '<div class="line">・' + escHtml(a.purpose || '相關素材') + '：' + (r ? escHtml(r.title || r.stepName) : '（此成果目前無法使用）') + '</div>';
+    }).join('');
+  } else {
+    html += '<div class="tool-suggest-note">尚未關聯任何素材</div>';
+  }
+
+  html += '<div class="notice" style="margin-top:10px;font-size:12.5px">⚠️ QR Code、Logo 圖片、工作台截圖或其他參考圖片，工作台目前無法保存，請自行準備並另外上傳給繪圖 AI。' +
+    '<br>📱 QR Code 匯出或印刷前，請使用手機實際掃描確認可讀（縮放或壓縮可能導致無法辨識）。</div>';
+  box.innerHTML = html;
 }
 
 function goPosterConfirm() { showScreen('screen-poster-confirm'); }
@@ -4011,6 +5492,7 @@ function renderPosterComplete() {
   const work = getActiveWork();
   document.getElementById('pc-name').textContent = work.name;
   document.getElementById('pc-filename').textContent = lastPosterFileName || buildSuggestedFileName(work.name, '海報');
+  renderBrandCalibrationBanner(work, 'pc-brand-calibration-box');
 }
 
 // 從「成果詳情」畫面直接進入打磨（例如已經按過「很滿意」，但回頭看又想再調整）
@@ -4270,7 +5752,44 @@ function readFileAsText(fileInput) {
 // Task 5：Full Replace Import——整包覆蓋現有 state，不做合併（CEO 已核准的策略，
 // 理由見 Proposal：這是單裝置救回，不是多裝置資料合併，合併需要處理每種 entity 的
 // ID 重新對應，超出這次範圍）。還原前必須明確二次確認，說清楚「會完全覆蓋」。
+// Samsung Internet／部分 Android 瀏覽器對 <input accept="application/json"> 的檔案選擇器
+// 有已知限制，會誤判成只給相機／相簿來源，選不到「我的檔案」。修正方式是拿掉 accept
+// 限制（改用系統一般檔案選擇器），副檔名檢查、JSON 解析、備份結構驗證全部改到選檔「之後」
+// 由 JavaScript 自己把關，不依賴瀏覽器層級的檔案類型篩選。
+// Samsung Internet Blocker 第四次診斷：在點擊「還原資料」／「測試我的備份檔」當下，
+// 立刻把「瀏覽器實際看到的這個 input 真正的屬性」畫在螢幕上（在系統選擇器彈出之前），
+// 讓手機截圖可以直接證明網頁本身送出去的設定是什麼，不再只能靠猜測或間接推論。
+function showFileInputDebugInfo(inputId) {
+  const el = document.getElementById(inputId);
+  const box = document.getElementById('dsc-file-input-debug');
+  if (!box) return;
+  if (!el) {
+    box.style.display = 'block';
+    box.textContent = '除錯資訊：找不到 id="' + inputId + '" 的元素（這本身就是問題所在）';
+    return;
+  }
+  const allInputsWithSameId = document.querySelectorAll('[id="' + inputId + '"]');
+  box.style.display = 'block';
+  box.textContent = '除錯資訊　id=' + el.id +
+    '　tagName=' + el.tagName +
+    '　type=' + (el.getAttribute('type') || '（無）') +
+    '　accept=' + (el.getAttribute('accept') || '（無）') +
+    '　capture=' + (el.getAttribute('capture') || '（無）') +
+    '　同ID元素數=' + allInputsWithSameId.length +
+    '　版本=' + LOCAL_BUILD_TAG;
+}
+
+function hasJsonExtension(fileInput) {
+  const file = fileInput && fileInput.files && fileInput.files[0];
+  return !!(file && /\.json$/i.test(file.name || ''));
+}
+
 function importDataFile(fileInput) {
+  if (!hasJsonExtension(fileInput)) {
+    fileInput.value = '';
+    showToast('請選擇副檔名為 .json 的備份檔');
+    return;
+  }
   readFileAsText(fileInput).then(function (rawText) {
     const result = parseBackupFile(rawText);
     fileInput.value = '';
@@ -4310,6 +5829,12 @@ function importDataFile(fileInput) {
 // Task 6：Recovery Test（測試我的備份檔）——只解析驗證，全程不寫入 state，
 // 讓使用者在真的需要還原之前，就能先確認「這份備份檔真的可以用」。
 function testBackupFile(fileInput) {
+  if (!hasJsonExtension(fileInput)) {
+    fileInput.value = '';
+    renderRecoveryTestResult({ valid: false });
+    showToast('請選擇副檔名為 .json 的備份檔');
+    return;
+  }
   readFileAsText(fileInput).then(function (rawText) {
     const result = parseBackupFile(rawText);
     fileInput.value = '';
@@ -4385,6 +5910,24 @@ function render() {
   if (id === 'screen-preferred-ai-onboarding') renderOnboardingAi();
   if (id === 'screen-my-ai') renderMyAiList();
   if (id === 'screen-add-my-ai') renderAddMyAi();
+  if (id === 'screen-brand-center') renderBrandCenter();
+  if (id === 'screen-brand-detail') renderBrandDetail();
+  if (id === 'screen-brand-form') renderBrandForm();
+  if (id === 'screen-brand-discuss-input') renderBrandDiscussInput();
+  if (id === 'screen-brand-copy-to-ai') renderBrandCopyToAi();
+  if (id === 'screen-brand-color-preview') renderBrandColorPreview();
+  if (id === 'screen-brand-visual-confirm') renderBrandVisualConfirm();
+  if (id === 'screen-brand-visual-saved') renderBrandVisualSaved();
+  if (id === 'screen-brand-logo-direction-preview') renderBrandLogoDirectionPreview();
+  if (id === 'screen-brand-logo-prompt-confirm') renderBrandLogoPromptConfirm();
+  if (id === 'screen-brand-logo-asset') renderBrandLogoAsset();
+  if (id === 'screen-brand-paste-back') renderBrandPasteBack();
+  if (id === 'screen-brand-confirm') renderBrandConfirm();
+  if (id === 'screen-brand-asset-link') renderBrandAssetLink();
+  if (id === 'screen-brand-suggestions') renderBrandSuggestions();
+  if (id === 'screen-brand-switch') renderBrandSwitch();
+  if (id === 'screen-project-brand-picker') renderProjectBrandPicker();
+  if (id === 'screen-brand-calibration-prompt') renderBrandCalibrationPrompt();
 }
 
 function renderHome() {
@@ -4429,6 +5972,16 @@ function renderProject() {
     '<div class="line"><b>目前做到哪？</b>　進行中 ' + doing.length + '　等待開始 ' + waiting.length + '　已完成 ' + done.length + '</div>' +
     '<div class="line"><b>今天可以做什麼？</b>　' + (doing[0] ? doing[0].name + '（' + currentStep(doing[0]).name + '）' : (waiting[0] ? waiting[0].name + '（尚未開始）' : '目前沒有待處理的工作')) + '</div>' +
     '<div class="line"><b>最近成果？</b>　' + (recentAsset ? escHtml(recentAsset.title) : '還沒有成果') + '</div>';
+
+  const brandRow = document.getElementById('proj-brand-row');
+  if (project.defaultBrandId) {
+    const brand = getBrand(project.defaultBrandId);
+    brandRow.innerHTML = brand
+      ? '目前預設品牌：<b>🏷️ ' + escHtml(brand.name) + (brand.status === '已封存' ? '（已封存，請重新選擇）' : '') + '</b>　<span style="opacity:0.6">變更 ›</span>'
+      : '目前預設品牌：<b>（此品牌已不存在，請重新選擇）</b>　<span style="opacity:0.6">變更 ›</span>';
+  } else {
+    brandRow.innerHTML = '尚未設定預設品牌　<span style="opacity:0.6">設定 ›</span>';
+  }
 
   const list = document.getElementById('proj-work-list');
   if (works.length === 0) {
@@ -4507,7 +6060,13 @@ function renderHomeDataSafetySummary() {
     '<div class="line" style="color:var(--green-soft);font-weight:700">前往資料安全中心 →</div>';
 }
 
+// Samsung Internet Blocker：手機截圖能直接看到現在載入的是哪個版本，避免「改了但畫面
+// 沒變」時無法判斷究竟是快取問題還是真的沒套用——只是一段固定文字，不影響任何功能。
+const LOCAL_BUILD_TAG = 'LOCAL-BUILD-2026-08-01-samsung-restore-fix4-debug';
+
 function renderDataSafetyCenter() {
+  const buildTagEl = document.getElementById('dsc-build-tag');
+  if (buildTagEl) buildTagEl.textContent = '版本標籤：' + LOCAL_BUILD_TAG;
   const reminder = backupReminderStatus();
   const statusBox = document.getElementById('dsc-backup-status');
   const statusLines = [];
@@ -5473,9 +7032,12 @@ function reselectDriveAccount() {
 }
 
 function useLocalImportInstead() {
+  // Samsung Internet Blocker 第三次修正：不再用 JS 合成點擊觸發檔案選擇器（那正是問題根源）。
+  // 這裡只導回資料安全中心並提示，讓使用者自己點畫面上真正的「⬆️ 還原資料」<label> 按鈕——
+  // 唯有使用者直接點在 label／input 本身上的點擊，才能穩定觸發完整的系統檔案選擇器。
   pendingDriveRestoreContext = null;
   showScreen('screen-data-safety-center');
-  document.getElementById('dsc-restore-file-input').click();
+  showToast('請在下方點「⬆️ 還原資料」選擇你的備份檔');
 }
 
 // 帳號切換防呆：偵測到跟上次不同的帳號，先提醒，不直接建立或覆蓋（CEO 核准規則）
@@ -5531,7 +7093,17 @@ function renderAddWork() {
   // 歌曲靈感（Song Inspiration Hotfix）：只在建立歌曲工作時顯示，不清空使用者已經打好的內容
   // （這個欄位沒有另外用 JS 變數追蹤選取狀態，切換流程再切回來時，DOM 裡打好的文字不會不見）
   document.getElementById('song-idea-field').style.display = pendingFlowId === 'song' ? 'block' : 'none';
+
+  // Phase 3｜Official Brand Selector（總策長／CEO 核准，2026-08-05）：品牌套用選擇原本
+  // 只在建立海報工作時顯示（#20，2026-08-02），現在正式推廣為全部 Flow 共用，建立任何
+  // 工作時都會顯示同一組「套用目前品牌／自由設計」選擇，不再限定海報／商品行銷。
+  const brandChoiceField = document.getElementById('new-work-brand-choice-field');
+  brandChoiceField.style.display = 'block';
+  document.getElementById('nw-brand-choice-brand').checked = pendingWorkBrandChoice !== 'free';
+  document.getElementById('nw-brand-choice-free').checked = pendingWorkBrandChoice === 'free';
 }
+let pendingWorkBrandChoice = 'brand'; // 'brand'（套用目前品牌，預設）｜'free'（自由設計，不套用品牌）
+function setWorkBrandChoice(choice) { pendingWorkBrandChoice = choice; }
 
 function renderWorkDetail() {
   const work = getActiveWork();
@@ -5578,6 +7150,8 @@ function renderWorkDetail() {
   document.getElementById('wd-step-name').textContent = step.name;
   document.getElementById('wd-role').textContent = ROLE_ICON[step.role] + ' ' + step.role;
 
+  renderWorkBrandSection(work);
+  renderPosterRatioSection(work, step);
   renderAiPartnerSection(work, step);
 
   const toolsBox = document.getElementById('wd-recommended-tools');
@@ -5605,6 +7179,40 @@ function renderWorkDetail() {
   }).join('');
 
   renderCreativePreferencesSection(work);
+}
+
+// #18.1 BUG-002：海報用途／尺寸選擇，只在「視覺設計」這一步顯示（規格明訂「放在視覺設計
+// 之前」），不是整個海報工作全程顯示——避免使用者在不相關的步驟看到跟目前任務無關的選項。
+function renderPosterRatioSection(work, step) {
+  const box = document.getElementById('wd-poster-ratio');
+  if (!box) return;
+  if (work.flowId !== 'poster' || step.name !== '視覺設計') { box.style.display = 'none'; return; }
+  box.style.display = 'block';
+  const current = work.posterRatio || POSTER_RATIO_OPTIONS.find(function (o) { return o.isDefault; }).id;
+  document.getElementById('wd-poster-ratio-pills').innerHTML = POSTER_RATIO_OPTIONS.map(function (o) {
+    const sel = o.id === current ? ' selected' : '';
+    return '<span class="template-pick' + sel + '" onclick="setPosterRatio(\'' + o.id + '\')">' + escHtml(o.label) + '</span>';
+  }).join('');
+  const currentOpt = getPosterRatioOption(current);
+  document.getElementById('wd-poster-ratio-desc').textContent = currentOpt.desc;
+  const customField = document.getElementById('wd-poster-ratio-custom-field');
+  if (current === 'custom') {
+    customField.style.display = 'block';
+    document.getElementById('wd-poster-ratio-custom-input').value = work.posterRatioCustomText || '';
+  } else {
+    customField.style.display = 'none';
+  }
+}
+function setPosterRatio(id) {
+  const work = getActiveWork();
+  work.posterRatio = id;
+  saveState();
+  render();
+}
+function setPosterRatioCustomText(text) {
+  const work = getActiveWork();
+  work.posterRatioCustomText = (text || '').trim();
+  saveState();
 }
 
 // ── 創作偏好 UI（Creative Preferences MVP）：只在 screen-work-detail 顯示，跟 wd-source-tag
@@ -5907,7 +7515,8 @@ function renderAssetDetail() {
     sourceBox.style.display = 'none';
   }
 
-  document.getElementById('rd-content').textContent = r.content;
+  // #18.1 BUG-001：只有海報成果在「成果庫」顯示時套用乾淨格式化，原始 r.content 完全不變
+  document.getElementById('rd-content').textContent = r.flowId === 'poster' ? formatPosterResultForDisplay(r.content) : r.content;
   document.getElementById('rd-final-btn').textContent = r.isFinal ? '取消最終成品標記' : '標記為最終成品';
 
   const versions = getVersionHistory(r);
@@ -6018,6 +7627,2621 @@ function renderSettings() {
   document.getElementById('settings-username').value = state.userName;
   document.getElementById('settings-workspacename').value = state.workspaceName;
   document.getElementById('settings-count').textContent = state.projects.length + ' 個專案、' + state.works.length + ' 件工作、' + state.results.length + ' 筆成果';
+}
+
+// ── 品牌中心（Brand Center Sprint #1）─────────────────────────────
+// 入口放在「我的工作台」次要功能區塊（跟「⭐我的AI夥伴」同一個既定慣例），不是底部導覽
+// 第 6 個分頁——這是 Stage 1 盤點衝突②，總策長已核准的最小範圍方案。
+
+function openBrandCenter() { showScreen('screen-brand-center'); }
+
+function renderBrandCenter() {
+  const draftBanner = document.getElementById('bc-draft-banner');
+  if (state.brandDraftInProgress) {
+    draftBanner.style.display = 'block';
+    draftBanner.querySelector('.txt') && (draftBanner.querySelector('.txt').textContent = '你有一個尚未完成的品牌草稿');
+  } else {
+    draftBanner.style.display = 'none';
+  }
+
+  const list = document.getElementById('bc-brand-list');
+  const brands = activeBrands();
+  if (brands.length === 0) {
+    list.innerHTML = '<div class="empty-state"><div class="icon">🏷️</div><div class="txt">還沒有任何品牌，先建立第一個吧</div></div>';
+    return;
+  }
+  list.innerHTML = brands.map(function (b) {
+    const projectCount = projectsUsingBrand(b.id).length;
+    const workCount = worksUsingBrand(b.id).length;
+    return '<div class="card" onclick="openBrandDetail(' + b.id + ')">' +
+      '<h3>🏷️ ' + escHtml(b.name) + '</h3>' +
+      '<div class="line" style="margin-top:4px">' + escHtml(b.oneLiner || '（尚未填寫一句話定位）') + '</div>' +
+      '<div class="meta" style="margin-top:6px">使用中　·　' + projectCount + ' 個專案、' + workCount + ' 件工作在用　·　更新於 ' + formatDate(b.updatedAt) + '</div>' +
+      '</div>';
+  }).join('');
+}
+
+function resumeBrandDraft() {
+  const d = state.brandDraftInProgress;
+  if (!d) return;
+  if (d.stage === 'discussing') {
+    brandFlowContext = { mode: 'create', freeText: d.freeText || '' };
+    showScreen('screen-brand-discuss-input');
+  } else if (d.stage === 'confirming') {
+    pendingBrandDraft = d.draft;
+    brandFlowContext = { mode: 'create' };
+    showScreen('screen-brand-confirm');
+  } else {
+    showScreen('screen-brand-center');
+  }
+}
+function discardBrandDraft() {
+  if (!confirm('確定要放棄這份尚未完成的品牌草稿嗎？')) return;
+  state.brandDraftInProgress = null;
+  saveState();
+  showToast('已放棄草稿');
+  render();
+}
+
+// ── 建立品牌：兩種入口，收斂到同一個確認畫面（補充指令二）───────────
+let pendingBrandDraft = null;
+let brandFlowContext = null; // { mode: 'create'|'adjust'|'calibrate', brandId, workId, freeText }
+let brandLastCopyText = '';
+
+function openBrandCreateChoice() { showScreen('screen-brand-create-choice'); }
+
+function openBrandDiscussCreate() {
+  brandFlowContext = { mode: 'create', freeText: '' };
+  const d = state.brandDraftInProgress;
+  if (d && d.stage === 'discussing' && d.freeText) brandFlowContext.freeText = d.freeText;
+  showScreen('screen-brand-discuss-input');
+}
+function openBrandFormCreate() {
+  pendingBrandDraft = blankBrandDraft();
+  brandFormMode = 'create';
+  brandFormEditingId = null;
+  showScreen('screen-brand-form');
+}
+
+// 品牌共創討論輸入畫面：一次收集自由描述＋（調整既有品牌時）想調整的方向，
+// 最多只有一輪輸入，AI 端最多 1-3 題的收斂發生在「AI回覆」裡，不是在這個畫面裡逐題問——
+// 這個 App 從不直接呼叫外部 AI，所有「AI協作」都是「組指令→使用者貼到外部AI→貼回解析」
+// 這一套既有機制（沿用既有「先一起討論」Brief 的做法，不建立新的對話系統）。
+function renderBrandDiscussInput() {
+  const mode = brandFlowContext && brandFlowContext.mode;
+  const isAdjust = mode === 'adjust';
+  // Blocker 修正（總策長／CEO 核准，2026-08-06）：Step 6 Logo 共創沿用這個既有的
+  // 「先在畫面上輸入，再組一輪指令」機制（這個 App 從不即時對話），不是新開一套多輪
+  // 對話系統——CEO 要的「AI 先問 1-3 題再整理方向」，實務上就是先讓使用者在這個既有
+  // 畫面回答，quick chips 換成 Logo 共創的 6 個引導問題。
+  const isLogoDiscuss = mode === 'logoDiscuss';
+  document.getElementById('bd-title').textContent = isAdjust ? '和 AI 一起調整品牌' : (isLogoDiscuss ? '✨ Logo 共創' : '和 AI 一起建立品牌');
+  document.getElementById('bd-hint').textContent = isAdjust
+    ? '想調整哪個方向？可以直接說，或先點下面的方向。'
+    : isLogoDiscuss
+      ? '先簡單說說你對 Logo 的想法，AI 會幫你整理出 2～3 個方向：想用純圖案、純文字還是圖文組合？最希望保留什麼代表圖案？喜歡什麼風格？主要用在哪裡？縮到手機小圖示要保留哪些元素？有什麼不希望出現？'
+      : '不知道怎麼寫沒關係，說說你自己是誰、在做什麼、想服務誰、希望給人什麼感受、有哪些堅持，AI 會陪你整理。';
+  const quickBox = document.getElementById('bd-quick-chips');
+  if (isAdjust) {
+    const chips = ['重新整理品牌定位', '調整服務對象', '調整品牌語氣', '整理核心訊息', '補充品牌故事', '調整品牌視覺風格', '其他品牌想法'];
+    quickBox.style.display = 'block';
+    quickBox.innerHTML = chips.map(function (c) {
+      return '<span class="template-pick" onclick="appendBrandDiscussChip(\'' + c + '\')">' + c + '</span>';
+    }).join('');
+  } else if (isLogoDiscuss) {
+    const chips = ['純圖案', '純文字', '圖文組合', '想保留的代表圖案：', '風格：圓潤手繪', '風格：簡約幾何', '風格：科技感', '主要用在：', '小圖示要保留：', '不希望出現：'];
+    quickBox.style.display = 'block';
+    quickBox.innerHTML = chips.map(function (c) {
+      return '<span class="template-pick" onclick="appendBrandDiscussChip(\'' + c + '\')">' + c + '</span>';
+    }).join('');
+  } else {
+    quickBox.style.display = 'none';
+    quickBox.innerHTML = '';
+  }
+  document.getElementById('bd-free-input').value = brandFlowContext.freeText || '';
+  document.getElementById('bd-submit-btn').textContent = isAdjust ? '請 AI 提供建議' : (isLogoDiscuss ? '請 AI 整理 Logo 方向' : '整理成品牌內容');
+}
+function backFromBrandDiscuss() {
+  const mode = brandFlowContext && brandFlowContext.mode;
+  showScreen((mode === 'adjust' || mode === 'logoDiscuss') ? 'screen-brand-detail' : 'screen-brand-center');
+}
+function backFromBrandForm() {
+  showScreen(brandFormMode === 'edit' ? 'screen-brand-detail' : 'screen-brand-center');
+}
+function appendBrandDiscussChip(text) {
+  const el = document.getElementById('bd-free-input');
+  el.value = (el.value ? el.value + '\n' : '') + text + '：';
+  el.focus();
+}
+function submitBrandDiscussInput() {
+  const text = (document.getElementById('bd-free-input').value || '').trim();
+  if (!text) { showToast('請先簡單說一下你的想法'); return; }
+  brandFlowContext.freeText = text;
+
+  if (brandFlowContext.mode === 'adjust') {
+    const brand = getBrand(brandFlowContext.brandId);
+    brandLastCopyText = buildBrandAdjustPrompt(brand, text);
+  } else if (brandFlowContext.mode === 'logoDiscuss') {
+    const brand = getBrand(brandFlowContext.brandId);
+    const snap = brandSnapshotBaseFields(brandFlowContext.brandId);
+    brandLastCopyText = buildBrandLogoDirectionPrompt(brand, snap, text);
+  } else {
+    // 建立中途持久化草稿（規格六：中途離開能保留），還沒送出確認前完全不影響正式 Brand DNA
+    state.brandDraftInProgress = { stage: 'discussing', freeText: text };
+    saveState();
+    brandLastCopyText = buildBrandDiscoveryPrompt(text);
+  }
+  showScreen('screen-brand-copy-to-ai');
+}
+
+// AI 協作討論的指令：跟「先一起討論」Brief 是同一種既有模式（組指令→複製→貼回），
+// 差別只在輸出格式改成品牌元素草案，故意不寫成長篇多輪對話。
+// #19 Brand Foundation｜Blocker 修正（總策長／CEO 核准，2026-08-06）：品牌配色與字體
+// 參考流程要求的固定格式——標記文字（【配色方案 A/B/C】、裸的「主色：」「輔助色：」
+// 欄位）沿用 Phase 5.1 Brand Gate 建立時的既有寫法不變，因為 parseColorPaletteOptions()
+// 的切段邏輯就是綁這個文字格式（Mode A／Mode B 共用同一個 Parser，見 Parser Blocker
+// 修正 2026-08-06）。這裡只是在既有 5 個色彩欄位之外，多加字體／視覺風格／圖案方向／
+// 避免元素——不再要求 Logo（Logo 移到 Gate 通過、配色與字體確認之後的獨立階段）。
+const VISUAL_OPTION_TEXT_FORMAT =
+  '【配色方案 A】\n' +
+  '主色：（顏色名稱）　（#HEX）　（用途，例如：主要按鈕與強調區塊）\n' +
+  '輔助色：（顏色名稱）　（#HEX）　（用途）\n' +
+  '亮點色：（顏色名稱）　（#HEX）　（用途）\n' +
+  '背景色：（顏色名稱）　（#HEX）　（用途）\n' +
+  '文字色：（顏色名稱）　（#HEX）　（用途）\n' +
+  '中文標題字體：（建議字體名稱）\n' +
+  '中文內文字體：（建議字體名稱）\n' +
+  '英文或數字字體：（建議字體名稱）\n' +
+  '字體使用情境：（簡短說明）\n' +
+  '視覺風格：（簡短說明）\n' +
+  '圖案方向：（簡短說明，可用、分隔多個方向）\n' +
+  '避免元素：（簡短說明）\n\n' +
+  '【配色方案 B】\n（同上十二行格式）\n\n' +
+  '【配色方案 C】\n（同上十二行格式）';
+
+function buildBrandDiscoveryPrompt(freeText) {
+  return '# 品牌共創討論\n\n' +
+    '## 使用者的描述\n' + freeText + '\n\n' +
+    '## 你的角色\n請你扮演「品牌顧問」，用白話文（不要用「品牌定位」「Brand DNA」這類專業術語）協助使用者把想法整理成具體的品牌內容。\n\n' +
+    '## 固定任務\n' +
+    '1. 先理解使用者是誰、在做什麼、想服務誰。\n' +
+    '2. 如果關鍵資訊不足，最多用 1-3 個簡單問題引導（例如：你最想服務或陪伴哪些人？你希望品牌讓人有什麼感受？你最重視哪些堅持？你說話通常是溫暖、專業還是活潑？有沒有一定想用或不想用的詞？有沒有想分享的品牌故事或起點？），資訊已經足夠時不要多問，直接整理。\n' +
+    '3. 絕對不能捏造使用者沒有說過的經歷、成就、客戶或承諾。\n' +
+    '4. 資料不足的欄位，請直接填「稍後再補」，不要瞎掰內容硬填滿。\n\n' +
+    '## Brand Gate（重要，請務必遵守）\n' +
+    '這一輪只確認品牌的核心內容（品牌是誰、怎麼說話、品牌故事）。**請不要提供配色、Logo、Banner、主視覺或任何 A／B／C 設計方案**——品牌核心內容確認之後，使用者會回到品牌詳情頁另外開始「品牌配色與 Logo 設計」，那時候才是討論視覺設計的時機，現在請專心把品牌內容問清楚、整理好就好。\n\n' +
+    '請直接輸出以下完整格式（欄位名稱請照抄，不要更動格式或順序）：\n\n' +
+    '【品牌內容草案】\n' +
+    BRAND_CORE_CONTENT_FIELD_KEYS.map(function (key) {
+      const f = BRAND_FIELDS.find(function (x) { return x.key === key; });
+      return f.label + '：＿＿＿＿＿＿';
+    }).join('\n') + '\n\n' +
+    buildStepBoundaryBlock(
+      '品牌核心內容草案。',
+      ['提供配色、Logo、Banner、主視覺或任何 A／B／C 設計方案'].concat(STEP_BOUNDARY_GENERIC_FORBIDDEN),
+      STEP_BOUNDARY_GENERIC_WAITING
+    );
+}
+
+// #19 Brand Foundation｜Blocker 修正（總策長／CEO 核准，2026-08-06）：真人驗收發現
+// 前一版把「配色」跟「Logo」擠在同一輪直接產圖，圖片沒辦法貼回工作台變成結構化資料，
+// 流程會中斷。這裡明確拆開：這一輪（Brand Gate 通過後的「品牌配色與字體參考」）只做
+// 配色／字體／視覺風格，明確禁止本輪生成正式 Logo；Logo 移到配色確認後的獨立「Logo
+// 共創」階段（見 openBrandLogoDiscuss()）。
+// #19 Brand Foundation｜真人驗收 UX Blocker 修正（總策長／CEO 核准，2026-08-06）：真人
+// 驗收發現，光有結構化文字（色票／字體／風格）使用者仍然「無法直觀看出」配色跟字體套用
+// 在品牌畫面上是什麼感覺——原本「可以另外產生一張情境示意圖」語氣太弱，AI 很容易只回
+// 文字。這裡改成強制兩段式輸出：第一部分先出完整文字資料（不變，沿用既有
+// VISUAL_OPTION_TEXT_FORMAT），第二部分「一定要」提供情境參考圖——支援產圖的話同一輪
+// 直接畫，不支援的話一定要輸出可複製的完整生圖指令（不能只說沒有畫圖功能），並用一個
+// 具體範例教會 AI 這個指令要多具體、不能用省略號。
+function buildBrandColorDesignPrompt(brand, regenerateNote) {
+  const context = BRAND_CORE_CONTENT_FIELD_KEYS.map(function (key) {
+    const f = BRAND_FIELDS.find(function (x) { return x.key === key; });
+    return f.label + '：' + (brand[key] || '（未填）');
+  }).join('\n');
+  const brandName = brand.name || '（品牌名稱）';
+  return '# 品牌配色與字體參考\n\n' +
+    '## 品牌核心內容（已確認，設計時請以此為準，不要重新詢問或更動）\n' + context + '\n\n' +
+    '## 你的角色\n請你扮演「品牌顧問」，根據上面已確認的品牌內容，協助設計品牌配色與字體方向。\n\n' +
+    (regenerateNote ? '## 使用者的補充說明\n' + regenerateNote + '\n\n' : '') +
+    '## 這一階段只做配色、字體與視覺風格（重要）\n' +
+    '**這一階段不要生成正式 Logo**，Logo 將在使用者選定配色與字體之後，另外開一輪「Logo 共創」討論，現在請專心把配色跟字體提清楚就好。\n\n' +
+    '## 請依照下面的順序，完成兩個部分（缺一不可，順序不能顛倒）\n\n' +
+    '### 第一部分｜先輸出完整文字資料\n' +
+    '請根據上面的品牌內容，提出 3 組差異清楚的方案（A／B／C），每組都要包含：\n' +
+    '・5 個顏色（主色、輔助色、亮點色、背景色、文字色），每個顏色都要有「顏色名稱＋用途＋實際 HEX 色碼」，不能只用「溫暖、專業、明亮」這種形容詞帶過。\n' +
+    '・3 種字體建議（中文標題字體、中文內文字體、英文或數字字體）與字體使用情境說明。\n' +
+    '・整體視覺風格、圖案方向、應避免的視覺元素。\n\n' +
+    '請用以下固定格式列出三組完整資料（欄位名稱與格式請照抄，這一部分必須可以直接複製貼回工作台）：\n\n' + VISUAL_OPTION_TEXT_FORMAT + '\n\n' +
+    '### 第二部分｜完成文字後，再產生情境參考圖（這一部分是必要的，不是可有可無）\n' +
+    '文字資料負責讓使用者能貼回工作台；情境參考圖負責讓使用者「直觀看見」三組方案套用在真實畫面上的差異，兩者缺一不可，圖片不能取代文字，文字也不能取代圖片。\n\n' +
+    '情境參考圖規格：\n' +
+    '・A／B／C 三組畫在同一張圖裡，三欄並排比較。\n' +
+    '・三欄必須使用相同構圖、相同品牌名稱、相同文字內容、相同資訊層級、相同應用情境，只能改變配色、字體氣質、圖案方向與視覺風格——這樣使用者才能公平比較，不會被構圖差異干擾。\n' +
+    '・每一欄至少呈現以下四類情境中的三類：①品牌首頁或 Banner（品牌名稱、一句話定位、主按鈕、背景、裝飾圖案）②商品包裝（例如紙袋、禮盒、標籤，含標題字體、內文字體、色彩層次、圖案裝飾）③社群貼文或海報（標題字體、內文字體、CTA 按鈕、圖案裝飾）④智慧名片或名片（Logo 預留位置、品牌名稱、服務項目、聯絡按鈕、背景與文字色）。\n' +
+    '・圖案不能只寫名稱，要在圖裡實際畫出簡化後的圖案效果（例如：線條裝飾、簡化輪廓、紋理背景），但要在圖上明確標示「此為視覺圖案方向參考，不是正式 Logo」，這個階段不要畫出完成版 Logo。\n' +
+    '・字體要有實際的視覺比較：品牌名稱要用標題字體實際呈現、一句話定位要用內文字體實際呈現、如果有價格或日期也用英文數字字體實際呈現，讓使用者能看出字體氣質的差異（是否太正式、是否好閱讀、跟品牌名稱搭不搭）。\n\n' +
+    '接著請依你自己的能力，二選一（這是必須執行的步驟，不是「可以考慮」）：\n' +
+    '・**如果你支援圖片生成**：請在「這一輪回覆」裡，完成上面的文字之後，直接產生一張符合上述規格的 A／B／C 三欄比較圖，不要只說明要怎麼畫、也不要只給生圖建議，要直接畫出來。\n' +
+    '・**如果你不支援圖片生成**：不要只回覆「我沒有圖片功能」就結束，你一定要另外輸出一段完整的「【情境參考圖生成指令】」，讓使用者可以直接複製去給支援生圖的 AI 使用。這段指令要包含品牌名稱、三欄相同的構圖與應用情境要求、每一欄的具體內容（Banner／包裝／社群／名片，四選三）、三組方案各自的實際配色與字體資料（不能用「方案 A 使用……」這種省略號帶過，要把上面已經提出的三組真實資料整段寫進去）、圖案是視覺方向參考不是正式 Logo 的提醒。範例格式如下（下面是用「幸福緣手作工作室」示範格式長什麼樣子，請把品牌名稱換成「' + brandName + '」，並把三組配色／字體換成你剛剛在第一部分實際提出的資料，不可以照抄範例裡的品牌或配色）：\n\n' +
+    '「請直接生成一張「幸福緣手作工作室」品牌配色與字體情境比較圖。畫面以 A／B／C 三欄並排，三欄使用完全相同構圖、相同品牌名稱、相同文字內容與相同應用情境，只改變配色、字體氣質、圖案方向與視覺風格。每欄包含：1. 品牌 Banner　2. 麵包或甜點包裝　3. 社群貼文　4. 智慧名片小畫面　5. 五色色票與 HEX　6. 品牌名稱標題字體示範　7. 內文字體示範　8. 麥穗、麵包、葉片等簡化裝飾圖案。這是品牌視覺方向參考，不是正式 Logo，不要設計完成版 Logo。方案 A 使用（實際顏色名稱＋HEX＋字體＋風格，完整寫出）。方案 B 使用（同上，完整寫出）。方案 C 使用（同上，完整寫出）。」\n\n' +
+    '「【情境參考圖生成指令】」這幾個字請照抄當作這段指令的開頭標記，方便使用者的工作台程式辨識。\n\n' +
+    '如果使用者沒辦法看到圖片，也可以直接把整段回覆（文字資料＋情境參考圖生成指令）貼回品牌中心，工作台會自動顯示視覺色票卡跟複製指令的按鈕。\n\n' +
+    '## 等待使用者選擇（重要）\n' +
+    '提出方案與情境參考圖（或生成指令）後，請在下面附上這句話讓使用者選擇，並且**先停在這裡，不要往下產生 Logo 或其他內容**：\n\n' +
+    '「請選擇你比較喜歡的方案：A／B／C／都不喜歡，重新產生／想混合兩個方案／只想調整某一部分」\n\n' +
+    buildStepBoundaryBlock(
+      '品牌配色與字體方案（A／B／C）。',
+      ['提到「下一階段」「接下來將」「已進入 Logo」「下面開始 Logo」', '生成正式 Logo'].concat(STEP_BOUNDARY_GENERIC_FORBIDDEN),
+      STEP_BOUNDARY_GENERIC_WAITING
+    );
+}
+// 選定 A／B／C 其中一組之後，再請 AI 用固定格式「確認」一次完整資料（不是重新設計）——
+// 沿用 Gate 修正時就有的既定手法：原始三組方案的回覆可能夾雜圖片說明或其他文字，
+// 這一輪用更嚴格的單一格式重新取得一次，貼回解析更可靠。
+// Parser Blocker 修正（總策長／CEO 核准，2026-08-06）：格式改回跟第一輪一樣的
+// 「【配色方案 X】＋裸標籤」格式（不再要求「品牌主色」前綴）——真人驗收發現 AI 選定
+// 方案後，經常自然延續第一輪看到的格式回覆，不會照抄前綴格式要求，導致確認版被
+// parseColorPaletteOptions() 判斷成「還沒選定」而卡在錯誤訊息。現在改成 Parser 端
+// 用「解析出幾組方案」判斷模式（1 組＝已選定的確認版，2～3 組＝還在比較），不再靠
+// Prompt 端硬性要求特定前綴格式來區分，兩邊都更貼近 AI 實際會怎麼回覆。
+function buildBrandVisualFinalizePrompt(opt) {
+  const colorLines = ['主色：' + opt.primaryColor, '輔助色：' + opt.secondaryColor, '亮點色：' + opt.accentColor, '背景色：' + opt.backgroundColor, '文字色：' + opt.textColor].join('\n');
+  return '# 品牌配色與字體已選定，請確認完整資料\n\n' +
+    '## 使用者選定的方案\n方案 ' + opt.label + '：\n' + colorLines + '\n\n' +
+    '## 使用者選定的字體與視覺風格\n' +
+    '中文標題字體：' + (opt.headingZh || '（未填）') + '\n' +
+    '中文內文字體：' + (opt.bodyZh || '（未填）') + '\n' +
+    '英文或數字字體：' + (opt.latin || '（未填）') + '\n' +
+    '字體使用情境：' + (opt.usageNotes || '（未填）') + '\n' +
+    '視覺風格：' + (opt.visualStyle || '（未填）') + '\n' +
+    '圖案方向：' + (opt.visualMotifs || '（未填）') + '\n' +
+    '避免元素：' + (opt.avoidedVisualElements || '（未填）') + '\n\n' +
+    '## 你的任務\n請直接以上面這組配色與字體為準（不要重新提議其他內容），確認並輸出完整資料，格式請照抄，欄位名稱不要更動：\n\n' +
+    '【配色方案 ' + opt.label + '】\n' +
+    '主色：（顏色名稱）　（#HEX）　（用途）\n輔助色：（顏色名稱）　（#HEX）　（用途）\n亮點色：（顏色名稱）　（#HEX）　（用途）\n背景色：（顏色名稱）　（#HEX）　（用途）\n文字色：（顏色名稱）　（#HEX）　（用途）\n中文標題字體：＿＿＿＿＿＿\n中文內文字體：＿＿＿＿＿＿\n英文或數字字體：＿＿＿＿＿＿\n字體使用情境：＿＿＿＿＿＿\n視覺風格：＿＿＿＿＿＿\n圖案方向：＿＿＿＿＿＿\n避免元素：＿＿＿＿＿＿\n\n' +
+    '## 輸出完成後請立即停止（重要，請務必遵守）\n' +
+    '這時候這個方案還沒有被使用者貼回工作台確認保存，Brand Snapshot 也還沒有正式建立新版本，你不知道使用者最後會不會有其他調整，所以：\n' +
+    '・請只輸出上面「【配色方案 ' + opt.label + '】」這個固定格式的資料，輸出完成後立即停止，不要再輸出其他方案（A／B／C 只留這一組）。\n' +
+    '・**不要**加入任何下一階段說明、**不要**提到 Logo 共創、**不要**說「下一階段」「接下來將」「已進入 Logo」「下面開始 Logo」，**不要**主動產生 Logo 建議、Logo 方向或 Logo Prompt——這一階段不要生成正式 Logo，也不要暗示已經進入 Logo 階段。Logo 共創只能由使用者自己回到工作台完成這一步的保存後，主動按下「開始 Logo 共創」才會開始，不是你這輪回覆可以決定或提前開始的事。\n' +
+    '・最後一行請只輸出這句話，不要再加其他內容：「請將以上內容貼回品牌中心完成確認與保存。」\n\n' +
+    buildStepBoundaryBlock(
+      '品牌配色與字體確認版本（方案 ' + opt.label + '）。',
+      ['提到 Logo 共創、Logo 方向或 Logo Prompt', '暗示已經進入 Logo 階段'].concat(STEP_BOUNDARY_GENERIC_FORBIDDEN),
+      STEP_BOUNDARY_GENERIC_WAITING
+    );
+}
+// 解析「品牌配色與字體」確認回覆——這是 parseColorPaletteOptions() 找不到任何
+// 「【配色方案 X】」標記時的防禦性 fallback（見 submitBrandPasteBack() 的 0 組分支），
+// 優先抓「品牌主色」等有前綴的標籤（舊格式），抓不到再嘗試裸的「主色」等標籤（真人
+// 驗收發現 AI 有時候連分隔標記都省略，直接用裸標籤回覆），兩種都抓不到才留空，不捏造。
+// 回傳的形狀直接對應 Brand Snapshot 的 colors／typography／visualStyle／visualMotifs／
+// avoidedVisualElements 欄位。
+function parseBrandVisualFinalizeDraft(content) {
+  // Parser 穩健化（2026-08-06）：改用 extractLabeledRowValue()，同時支援單行冒號格式跟
+  // 表格列／Markdown 表格格式。
+  function grab(label) { return extractLabeledRowValue(content, label); }
+  function grabEither(prefixedLabel, bareLabel) { return grab(prefixedLabel) || grab(bareLabel); }
+  function colorEntry(role, prefixedLabel, bareLabel) {
+    const parsed = parseColorFieldWithUsage(grabEither(prefixedLabel, bareLabel));
+    return { role: role, name: parsed.name, hex: parsed.hex, usage: parsed.usage };
+  }
+  const colors = [
+    colorEntry('primary', '品牌主色', '主色'),
+    colorEntry('secondary', '品牌輔助色', '輔助色'),
+    colorEntry('accent', '品牌亮點色', '亮點色'),
+    colorEntry('background', '品牌背景色', '背景色'),
+    colorEntry('text', '品牌文字色', '文字色')
+  ].filter(function (c) { return c.hex || c.name; });
+  return {
+    colors: colors,
+    typography: {
+      headingZh: grab(TYPOGRAPHY_LABEL_ALIASES.headingZh),
+      bodyZh: grab(TYPOGRAPHY_LABEL_ALIASES.bodyZh),
+      latin: grab(TYPOGRAPHY_LABEL_ALIASES.latin),
+      usageNotes: grab('字體使用情境')
+    },
+    visualStyle: grab('視覺風格'),
+    visualMotifs: splitFreeListText(grab('圖案方向')),
+    avoidedVisualElements: grab('避免元素')
+  };
+}
+// 真人驗收 Parser Blocker 修正（總策長／CEO 核准，2026-08-06）：Mode B（正式回填模式）
+// 用——使用者選定方案後，AI 常常自然延續第一輪「【配色方案 X】＋裸標籤」的格式回覆
+// 「確認版」，不會照抄 buildBrandVisualFinalizePrompt() 要求的「品牌主色」前綴格式。
+// 這裡把 parseColorPaletteOptions() 解析出來的單一 option（裸標籤，跟 Mode A 共用同一個
+// Parser），轉成跟 parseBrandVisualFinalizeDraft() 完全一樣的資料形狀，兩條路徑最後
+// 都能餵給同一個 screen-brand-visual-confirm／confirmBrandVisualDraft()。
+function colorOptionToVisualDraft(opt) {
+  function colorEntry(role, raw) {
+    const parsed = parseColorFieldWithUsage(raw);
+    return { role: role, name: parsed.name, hex: parsed.hex, usage: parsed.usage };
+  }
+  const colors = [
+    colorEntry('primary', opt.primaryColor),
+    colorEntry('secondary', opt.secondaryColor),
+    colorEntry('accent', opt.accentColor),
+    colorEntry('background', opt.backgroundColor),
+    colorEntry('text', opt.textColor)
+  ].filter(function (c) { return c.hex || c.name; });
+  return {
+    colors: colors,
+    typography: { headingZh: opt.headingZh || '', bodyZh: opt.bodyZh || '', latin: opt.latin || '', usageNotes: opt.usageNotes || '' },
+    visualStyle: opt.visualStyle || '',
+    visualMotifs: splitFreeListText(opt.visualMotifs || ''),
+    avoidedVisualElements: opt.avoidedVisualElements || ''
+  };
+}
+let pendingBrandVisualDraft = null;
+// Step 5C（總策長／CEO 核准，2026-08-06）：貼回配色與字體確認回覆後，不是直接寫入，
+// 而是先進這個確認畫面讓使用者看過色塊／HEX／字體／視覺風格，按確認才正式建立新版
+// Brand Snapshot——跟既有「品牌內容確認畫面」（screen-brand-confirm）先看再確認的
+// 精神一致，只是這裡資料形狀是 Brand Snapshot 而不是 legacy brand 欄位。
+// #19 Brand Foundation｜Recovery Flow（總策長／CEO 核准，2026-08-06）：即使 Parser 已經
+// 很穩健，AI 仍可能因為模型更新、格式變化、遺漏欄位而只解析出部分資料——這不該是
+// 「❌ 無法解析，請重新整理」的 Error Flow，而是「品牌資料已完成 N%，還需要補充：…」的
+// Recovery Flow。核心原則：Parser 永遠不阻擋流程，只要有資料就能繼續，缺的部分之後
+// 再補（見 confirmBrandVisualDraft() 本來就不要求完整才能建立 Brand Snapshot）。
+const BRAND_VISUAL_DRAFT_CHECKLIST_ITEMS = [
+  { key: 'colors', label: '品牌配色' },
+  { key: 'typography', label: '品牌字體' },
+  { key: 'visualStyle', label: '視覺風格' },
+  { key: 'visualMotifs', label: '圖案方向' },
+  { key: 'avoidedVisualElements', label: '避免元素' }
+];
+function computeBrandVisualDraftCompletion(draft) {
+  if (!draft) return { colors: false, typography: false, visualStyle: false, visualMotifs: false, avoidedVisualElements: false };
+  return {
+    colors: !!(draft.colors && draft.colors.length === 5 && draft.colors.every(function (c) { return c.hex; })),
+    typography: !!(draft.typography && draft.typography.headingZh && draft.typography.bodyZh && draft.typography.latin),
+    visualStyle: !!draft.visualStyle,
+    visualMotifs: !!(draft.visualMotifs && draft.visualMotifs.length > 0),
+    avoidedVisualElements: !!draft.avoidedVisualElements
+  };
+}
+function brandVisualDraftCompletionPercent(completion) {
+  const keys = Object.keys(completion);
+  const trueCount = keys.filter(function (k) { return completion[k]; }).length;
+  return Math.round((trueCount / keys.length) * 100);
+}
+// Level 3｜一鍵修復 Prompt：只請 AI 補缺少的欄位，明確列出已經確認、不要更動的內容，
+// 避免使用者要整個重來一次。
+function buildBrandVisualFixMissingFieldsPrompt(draft, missingItems) {
+  const resolvedLines = [];
+  if (draft.colors && draft.colors.length) resolvedLines.push('配色：' + draft.colors.map(function (c) { return (c.name || '') + ' ' + (c.hex || ''); }).join('、'));
+  if (draft.typography && (draft.typography.headingZh || draft.typography.bodyZh || draft.typography.latin)) {
+    resolvedLines.push('字體：中文標題 ' + (draft.typography.headingZh || '（未填）') + '／中文內文 ' + (draft.typography.bodyZh || '（未填）') + '／英文或數字 ' + (draft.typography.latin || '（未填）'));
+  }
+  if (draft.visualStyle) resolvedLines.push('視覺風格：' + draft.visualStyle);
+  if (draft.visualMotifs && draft.visualMotifs.length) resolvedLines.push('圖案方向：' + draft.visualMotifs.join('、'));
+  if (draft.avoidedVisualElements) resolvedLines.push('避免元素：' + draft.avoidedVisualElements);
+  const fieldFormatMap = {
+    colors: '主色：（顏色名稱）　（#HEX）　（用途）\n輔助色：（顏色名稱）　（#HEX）　（用途）\n亮點色：（顏色名稱）　（#HEX）　（用途）\n背景色：（顏色名稱）　（#HEX）　（用途）\n文字色：（顏色名稱）　（#HEX）　（用途）',
+    typography: '中文標題字體：＿＿＿＿＿＿\n中文內文字體：＿＿＿＿＿＿\n英文或數字字體：＿＿＿＿＿＿',
+    visualStyle: '視覺風格：＿＿＿＿＿＿',
+    visualMotifs: '圖案方向：＿＿＿＿＿＿',
+    avoidedVisualElements: '避免元素：＿＿＿＿＿＿'
+  };
+  return '# 補齊品牌配色與字體缺少的欄位\n\n' +
+    '## 已經確認、不要更動的內容\n' + (resolvedLines.join('\n') || '（目前還沒有任何已確認的內容）') + '\n\n' +
+    '## 你的任務\n請不要重新設計品牌配色，請直接沿用上面已經確認的內容，只補充目前缺少的欄位：' + missingItems.map(function (i) { return i.label; }).join('、') + '。\n\n' +
+    '請用以下固定格式輸出（只需要輸出缺少的欄位，欄位名稱請照抄）：\n\n' +
+    missingItems.map(function (item) { return fieldFormatMap[item.key]; }).join('\n') + '\n\n' +
+    '請只輸出這些欄位，不要重新輸出已經確認的內容。\n\n' +
+    buildStepBoundaryBlock(
+      '補齊缺少的欄位（' + missingItems.map(function (i) { return i.label; }).join('、') + '）。',
+      ['重新輸出已經確認的內容', '提到下一階段或 Logo 共創'].concat(STEP_BOUNDARY_GENERIC_FORBIDDEN),
+      STEP_BOUNDARY_GENERIC_WAITING
+    );
+}
+function renderBrandVisualConfirm() {
+  const box = document.getElementById('bvc-content');
+  if (!pendingBrandVisualDraft) { box.innerHTML = ''; return; }
+  const d = pendingBrandVisualDraft;
+  const completion = computeBrandVisualDraftCompletion(d);
+  const percent = brandVisualDraftCompletionPercent(completion);
+  const missingItems = BRAND_VISUAL_DRAFT_CHECKLIST_ITEMS.filter(function (item) { return !completion[item.key]; });
+  const fixMissingBtn = document.getElementById('bvc-fix-missing-btn');
+  if (fixMissingBtn) fixMissingBtn.style.display = missingItems.length > 0 ? 'block' : 'none';
+
+  // Level 1／5：解析結果 checklist ＋ 完成度進度條，而不是只有「尚未解析」。
+  const checklistHtml =
+    '<div class="section-label">解析結果（' + percent + '%）</div>' +
+    '<div class="line" style="margin-top:6px;background:rgba(0,0,0,0.08);border-radius:6px;height:8px;overflow:hidden"><div style="height:100%;width:' + percent + '%;background:var(--gold, #C9A227)"></div></div>' +
+    BRAND_VISUAL_DRAFT_CHECKLIST_ITEMS.map(function (item) {
+      return '<div class="line" style="margin-top:4px">' + (completion[item.key] ? '✅' : '⬜') + ' ' + escHtml(item.label) + '</div>';
+    }).join('');
+
+  const roleLabels = { primary: '主色', secondary: '輔助色', accent: '亮點色', background: '背景色', text: '文字色' };
+  const colorRows = (d.colors || []).map(function (c) {
+    return '<div class="line" style="display:flex;align-items:center;gap:8px;margin-top:6px">' +
+      (c.hex ? '<span style="display:inline-block;width:20px;height:20px;border-radius:5px;background:' + c.hex + ';border:1px solid rgba(0,0,0,0.15);flex-shrink:0"></span>' : '') +
+      '<span>' + escHtml(roleLabels[c.role] || c.role) + '　' + escHtml(c.name || '') + (c.hex ? '　' + escHtml(c.hex) : '（未解析到 HEX）') + (c.usage ? '　' + escHtml(c.usage) : '') + '</span>' +
+      '</div>';
+  }).join('');
+  const t = d.typography || {};
+
+  // Level 3／「需要補充的內容」框架（不是「錯誤」）：品牌資料已完成 N%，還需要補充哪些，
+  // 附上可以直接複製、只請 AI 補缺少欄位的指令。
+  const missingNoteHtml = missingItems.length > 0
+    ? '<div class="secondary-note" style="margin-top:14px">品牌資料已完成 ' + percent + '%，還需要補充：' + missingItems.map(function (i) { return i.label; }).join('、') + '</div>' +
+      copyReadyActionsHtml(buildBrandVisualFixMissingFieldsPrompt(d, missingItems), '已複製補齊缺少欄位的指令', ';margin-top:8px')
+    : '<div class="secondary-note" style="margin-top:14px">✅ 品牌配色與字體資料已完整。</div>';
+
+  box.innerHTML =
+    checklistHtml +
+    '<div class="section-label" style="margin-top:14px">配色</div>' + (colorRows || '<div class="line" style="opacity:0.5;margin-top:6px">尚未解析到配色</div>') +
+    '<div class="section-label" style="margin-top:14px">字體</div>' +
+    '<div class="line">中文標題字體：' + escHtml(t.headingZh || '（未填）') + '</div>' +
+    '<div class="line">中文內文字體：' + escHtml(t.bodyZh || '（未填）') + '</div>' +
+    '<div class="line">英文或數字字體：' + escHtml(t.latin || '（未填）') + '</div>' +
+    '<div class="line">字體使用情境：' + escHtml(t.usageNotes || '（未填）') + '</div>' +
+    '<div class="section-label" style="margin-top:14px">視覺風格</div>' +
+    '<div class="line">' + escHtml(d.visualStyle || '（未填）') + '</div>' +
+    '<div class="section-label" style="margin-top:14px">圖案方向</div>' +
+    '<div class="line">' + ((d.visualMotifs || []).length ? escHtml(d.visualMotifs.join('、')) : '（未填）') + '</div>' +
+    '<div class="section-label" style="margin-top:14px">避免元素</div>' +
+    '<div class="line">' + escHtml(d.avoidedVisualElements || '（未填）') + '</div>' +
+    missingNoteHtml +
+    '<div class="secondary-note" style="margin-top:14px">確認後會建立新版 Brand Snapshot，品牌核心內容（名稱／定位／語氣／故事）不會被更動。</div>';
+}
+// 確認後才建立新版 Brand Snapshot：在既有（或搬遷補建的）Snapshot 內容基礎上疊加視覺
+// 欄位，不是從空白開始——這樣才不會遺失已經確認過的品牌核心內容。建立新版本前先讓
+// brand.version 往前推一格（bumpBrandVersionForNewSnapshot()），沿用既有版本號機制。
+function confirmBrandVisualDraft() {
+  if (!pendingBrandVisualDraft || !brandFlowContext) return;
+  const brandId = brandFlowContext.brandId;
+  const baseSnap = brandSnapshotBaseFields(brandId);
+  const fields = Object.assign({}, baseSnap, pendingBrandVisualDraft);
+  bumpBrandVersionForNewSnapshot(brandId);
+  const snap = createBrandSnapshot(brandId, fields, 'confirmed');
+  // 真人驗收 UX Blocker 修正（2026-08-06）：情境參考圖如果使用者有貼上網址，確認方案的
+  // 同時保存成 visual-reference 類型的 Brand Asset，用 snapshotId 指回這一版——圖片仍然
+  // 只是「參考」，不是正式 Logo，也不會覆蓋或取代剛剛建立的 Brand Snapshot 內容。
+  if (pendingVisualReferenceImageRef) {
+    createBrandAsset(brandId, { type: 'visual-reference', imageRef: pendingVisualReferenceImageRef, snapshotId: snap.id, status: 'reference' });
+  }
+  pendingBrandVisualDraft = null;
+  pendingVisualReferenceImageRef = null;
+  pendingVisualReferenceInstructionText = null;
+  // 真人驗收 Flow Blocker 修正（總策長／CEO 核准，2026-08-06）：配色完成 ≠ 直接 Logo。
+  // 資料這時候已經真的存進 state.brandSnapshots（saveState() 在 createBrandSnapshot()
+  // 裡已經跑過，中途離開也不會遺失），但不直接跳回品牌詳情頁——改停在一個明確的「已儲存」
+  // 畫面，使用者看得到「✅ 已確認並儲存」，自己按「下一步：開始 Logo 共創」才會進入 Logo
+  // 流程，不會自動接著跳過去。
+  activeBrandDetailId = brandId;
+  showScreen('screen-brand-visual-saved');
+}
+function cancelBrandVisualDraft() {
+  pendingBrandVisualDraft = null;
+  showScreen('screen-brand-paste-back');
+}
+// Level 4｜三種選擇之二：只補缺少欄位——不用整個流程重來，帶著已解析的內容產生一輪
+// 「只請 AI 補缺的」指令。已經完整（沒有缺少欄位）時不會被呼叫到（按鈕本身會隱藏），
+// 這裡多一層防呆，直接跳過不做事。
+function requestBrandVisualFixMissingFields() {
+  if (!pendingBrandVisualDraft || !brandFlowContext) return;
+  const completion = computeBrandVisualDraftCompletion(pendingBrandVisualDraft);
+  const missingItems = BRAND_VISUAL_DRAFT_CHECKLIST_ITEMS.filter(function (item) { return !completion[item.key]; });
+  if (missingItems.length === 0) { showToast('目前資料已經完整，不需要補充'); return; }
+  brandLastCopyText = buildBrandVisualFixMissingFieldsPrompt(pendingBrandVisualDraft, missingItems);
+  brandFlowContext.mode = 'colorFixMissing';
+  showScreen('screen-brand-copy-to-ai');
+}
+// Level 4｜三種選擇之三：全部重新產生——放棄目前草稿，回到 Step 5A 重新走一次配色提案，
+// 不是只補缺的，是真的整組重來（跟「只補缺少欄位」互斥，各自對應不同的使用情境）。
+function regenerateBrandVisualFromScratch() {
+  if (!brandFlowContext) return;
+  const brand = getBrand(brandFlowContext.brandId);
+  pendingBrandVisualDraft = null;
+  brandFlowContext.mode = 'colorDesign';
+  brandLastCopyText = buildBrandColorDesignPrompt(brand, '請提供全新的配色與字體方案，不需要保留之前的資料');
+  showScreen('screen-brand-copy-to-ai');
+}
+// 「品牌配色已儲存」中繼畫面（真人驗收 Flow Blocker 修正，2026-08-06）：只顯示品牌名稱＋
+// 新版本號，讓使用者明確看到「這是哪個品牌、存到第幾版」；提供「下一步：開始 Logo 共創」
+// （直接呼叫既有 openBrandLogoDiscuss()，這一步本來就會再檢查一次 Gate，這裡不用重複判斷）
+// 跟「回到品牌詳情頁」兩個對等的出口，使用者自己選，不會被強迫往下走。
+// 真人驗收 UX 修正（總策長／CEO 核准，2026-08-06）：品牌共創進度——讓使用者知道「目前
+// 做到哪裡」，不是只知道「下一步 Logo」。每一項都是從實際資料算出來，不是憑空打勾：
+// 品牌定位／故事／語氣直接讀 brand 核心欄位；品牌配色與字體讀 brandVisualReady()（跟
+// Logo 共創 Gate 同一個判斷函式，兩邊不會兜不起來）；Logo 共創讀 Snapshot 是否已有
+// logoPrompt（Step 7 確認過才算數，不是選了方向就算）；品牌素材讀 state.brandAssets
+// 是否至少有一筆。這裡故意不列 CEO 範例裡的「Banner」——目前整個工作台沒有 Banner
+// 相關的任何機制，列出來會是一個假的、永遠打不勾的項目，等之後真的有 Banner 功能再加。
+const BRAND_CO_CREATION_PROGRESS_ITEMS = [
+  { key: 'positioning', label: '品牌定位' },
+  { key: 'story', label: '品牌故事' },
+  { key: 'tone', label: '品牌語氣' },
+  { key: 'colors', label: '品牌配色與字體' },
+  { key: 'logo', label: 'Logo 共創' },
+  { key: 'assets', label: '品牌素材' }
+];
+function brandCoCreationProgress(brandId) {
+  const brand = getBrand(brandId);
+  const snap = latestConfirmedBrandSnapshot(brandId);
+  return {
+    positioning: !!(brand && brand.name && brand.oneLiner && brand.targetAudience),
+    story: !!(brand && brand.brandStory),
+    tone: !!(brand && brand.tone),
+    colors: brandVisualReady(brandId),
+    // Logo 流程優化 Round 2：「Logo 共創」進度只在使用者實際按過「已保存，完成 Logo」
+    // （logoStatus === 'confirmed'）才算完成，不是一確認 Logo Prompt 就算數——對齊
+    // 新增的保存提醒步驟，也完全不看有沒有貼過圖片網址（圖片是選用，不是完成條件）。
+    logo: !!(snap && snap.logoStatus === 'confirmed'),
+    assets: brandAssetsForBrand(brandId).length > 0
+  };
+}
+function renderBrandCoCreationProgressHtml(brandId) {
+  const progress = brandCoCreationProgress(brandId);
+  const rows = BRAND_CO_CREATION_PROGRESS_ITEMS.map(function (item) {
+    return '<div class="line" style="margin-top:4px">' + (progress[item.key] ? '✅' : '⬜') + ' ' + escHtml(item.label) + '</div>';
+  }).join('');
+  return '<div class="section-label" style="margin-top:16px">品牌共創進度</div>' + rows;
+}
+function renderBrandVisualSaved() {
+  const brand = getBrand(activeBrandDetailId);
+  const snap = brand ? latestConfirmedBrandSnapshot(brand.id) : null;
+  document.getElementById('bvs-summary').textContent = brand ? ('「' + brand.name + '」　Brand Snapshot v' + (snap ? snap.version : brand.version)) : '';
+  document.getElementById('bvs-progress').innerHTML = brand ? renderBrandCoCreationProgressHtml(brand.id) : '';
+}
+function goToLogoDiscussFromVisualSaved() {
+  openBrandLogoDiscuss(activeBrandDetailId);
+}
+
+// 既有品牌 AI 協作調整：帶入目前內容，讓 AI 只針對使用者這次想調整的方向給建議，
+// 其餘欄位不需要重複輸出——避免每次調整都要求 AI 重寫整份品牌內容。
+function buildBrandAdjustPrompt(brand, focusText) {
+  const current = BRAND_FIELDS.map(function (f) { return f.label + '：' + (brand[f.key] || '（未填）'); }).join('\n');
+  return '# 既有品牌 AI 協作調整\n\n' +
+    '## 目前品牌內容\n' + current + '\n\n' +
+    '## 使用者這次想調整的方向\n' + focusText + '\n\n' +
+    '## 你的角色\n請你扮演「品牌顧問」，只針對使用者這次想調整的方向提供建議，沒有提到的欄位不需要輸出。\n' +
+    '不能捏造使用者沒有說過的事實；沒有足夠資訊就不要硬給建議。\n\n' +
+    '## 請針對每一個需要調整的欄位，用以下重複格式輸出（有幾個欄位需要調整就重複幾次）：\n\n' +
+    '【建議】\n' +
+    '項目：（填欄位名稱，例如：品牌語氣）\n' +
+    '建議內容：＿＿＿＿＿＿\n' +
+    '建議原因：＿＿＿＿＿＿\n' +
+    '影響範圍：＿＿＿＿＿＿\n\n' +
+    buildStepBoundaryBlock('品牌調整建議清單。', STEP_BOUNDARY_GENERIC_FORBIDDEN, '使用者逐項審核採用或拒絕');
+}
+
+// 完成一項工作後的品牌校準建議：帶入這次工作的正式成果，請 AI 判斷有沒有值得保存成
+// 品牌規則的新發現——只在使用者主動點「提出品牌建議」時才會產生，不會自動觸發。
+function buildBrandCalibratePrompt(work, brand) {
+  const current = BRAND_FIELDS.map(function (f) { return f.label + '：' + (brand[f.key] || '（未填）'); }).join('\n');
+  // 這裡要的是「這次工作完整的最終內容」，不是 buildPreviousResults()（那個只回傳目前步驟
+  // 之前的內容，用在還在進行中的 Prompt 組裝；工作已經完成，最後一步的內容也要一起看）——
+  // createFinalProduct() 在呼叫這個函式之前已經執行過，成果庫裡一定找得到這筆最終成品。
+  const finalResult = state.results.find(function (r) { return r.workId === work.id && r.isFinal; });
+  const fullContent = finalResult ? finalResult.content : buildPreviousResults(work.id);
+  return '# 品牌校準建議\n\n' +
+    '## 目前品牌內容\n' + current + '\n\n' +
+    '## 這次完成的工作內容\n' + fullContent + '\n\n' +
+    '## 你的角色\n請你判斷這次工作內容裡，有沒有值得保存成品牌規則的新發現（例如：反覆出現的說法、語氣、用詞）。\n' +
+    '沒有明顯值得保存的發現時，請直接回覆「這次沒有明顯需要調整品牌的地方」，不要為了湊建議而硬找。\n\n' +
+    '## 如果有，請針對每一項用以下重複格式輸出：\n\n' +
+    '【建議】\n' +
+    '項目：（填欄位名稱）\n' +
+    '建議內容：＿＿＿＿＿＿\n' +
+    '建議原因：＿＿＿＿＿＿\n' +
+    '影響範圍：＿＿＿＿＿＿\n\n' +
+    buildStepBoundaryBlock('品牌校準建議清單（若有）。', STEP_BOUNDARY_GENERIC_FORBIDDEN, '使用者逐項審核採用或拒絕');
+}
+
+function renderBrandCopyToAi() {
+  const mode = brandFlowContext && brandFlowContext.mode;
+  // Brand Gate（2026-08-05）／Blocker 修正（2026-08-06）：配色選擇提醒只在 colorDesign
+  // （品牌配色與字體參考）才會發生，建立品牌（create）第一輪不再涉及配色，Logo 共創／
+  // Logo Prompt 確認（logoDiscuss／logoPromptConfirm）另有自己的標題，不需要配色提醒。
+  const isColorDesign = mode === 'colorDesign';
+  const titleMap = { adjust: '交給 AI（品牌調整建議）', colorDesign: '交給 AI（品牌配色與字體）', colorFixMissing: '交給 AI（補齊缺少欄位）', logoDiscuss: '交給 AI（Logo 共創）', logoPromptConfirm: '交給 AI（確認 Logo Prompt）' };
+  document.getElementById('bc2ai-title').textContent = titleMap[mode] || '交給 AI（品牌內容）';
+  document.getElementById('bc2ai-text-box').textContent = brandLastCopyText;
+  document.getElementById('bc2ai-goto-pasteback-btn').textContent = isColorDesign ? '選好方案並拿到配色與字體建議 → 貼回來' : '拿到回答了 → 貼回來';
+  document.getElementById('bc2ai-color-reminder').style.display = isColorDesign ? 'block' : 'none';
+}
+function copyBrandTextToClipboard() { copyPlainText(brandLastCopyText, '已複製，請貼給你習慣使用的 AI'); }
+function goBrandPasteBack() { showScreen('screen-brand-paste-back'); }
+
+function renderBrandPasteBack() {
+  const mode = brandFlowContext ? brandFlowContext.mode : 'create';
+  const titleMap = { create: '把 AI 整理的品牌內容貼回來', colorDesign: '把 AI 的配色與字體建議貼回來', colorFixMissing: '把 AI 補齊的欄位貼回來', logoDiscuss: '把 AI 整理的 Logo 方向貼回來', logoPromptConfirm: '把 AI 確認的 Logo Prompt 貼回來' };
+  document.getElementById('bpb-title').textContent = titleMap[mode] || '把 AI 的建議貼回來';
+  document.getElementById('bpb-color-incomplete-warning').style.display = 'none';
+}
+// 選色 Gate 沒通過：留在貼回畫面，說明缺什麼，並準備好可以直接複製的重新整理指令
+// （Gate＋Recovery Flow，不是只丟出阻擋訊息）。
+let brandColorFixInstructionText = '';
+function showBrandColorIncompleteWarning(reason) {
+  brandColorFixInstructionText = buildBrandPaletteFixPrompt(reason);
+  document.getElementById('bpb-color-incomplete-reason').textContent = reason;
+  document.getElementById('bpb-color-incomplete-warning').style.display = 'block';
+}
+function copyBrandColorFixInstruction() {
+  copyPlainText(brandColorFixInstructionText, '已複製重新整理指令，請貼給你的 AI');
+}
+function submitBrandPasteBack() {
+  const textarea = document.getElementById('brand-paste-back-textarea');
+  const content = stripCopyBackReminderLine((textarea.value || '').trim());
+  if (!content) { showToast('請先貼上 AI 給你的內容'); return; }
+  textarea.value = '';
+
+  if (brandFlowContext.mode === 'create') {
+    // Brand Gate（總策長／CEO 核准，2026-08-05）：建立品牌的第一輪不再請 AI 提供配色，
+    // 貼回來的內容一律當成品牌核心內容草稿解析（配色相關的 Gate＋Recovery Flow 移到
+    // 下面 mode === 'colorDesign' 分支，只有 Brand Gate 通過後才會用到）。
+    pendingBrandDraft = parseBrandDraft(content);
+    state.brandDraftInProgress = { stage: 'confirming', draft: pendingBrandDraft };
+    saveState();
+    showScreen('screen-brand-confirm');
+    return;
+  }
+
+  // Recovery Flow Level 4（總策長／CEO 核准，2026-08-06）：「只補缺少欄位」這一輪貼回的
+  // 內容只包含缺的那幾個欄位，不是完整的配色方案——用同一個 parseBrandVisualFinalizeDraft()
+  // 解析（本來就支援表格／別名等多種格式），只合併「這次真的有解析到值」的欄位進既有草稿，
+  // 已經確認過的欄位完全不會被覆蓋成空值，補完後恢復成一般 colorDesign 模式回到確認畫面。
+  if (brandFlowContext.mode === 'colorFixMissing') {
+    const supplement = parseBrandVisualFinalizeDraft(content);
+    const merged = Object.assign({}, pendingBrandVisualDraft);
+    if (supplement.colors && supplement.colors.length > 0) merged.colors = supplement.colors;
+    if (supplement.typography) {
+      merged.typography = Object.assign({}, merged.typography);
+      if (supplement.typography.headingZh) merged.typography.headingZh = supplement.typography.headingZh;
+      if (supplement.typography.bodyZh) merged.typography.bodyZh = supplement.typography.bodyZh;
+      if (supplement.typography.latin) merged.typography.latin = supplement.typography.latin;
+      if (supplement.typography.usageNotes) merged.typography.usageNotes = supplement.typography.usageNotes;
+    }
+    if (supplement.visualStyle) merged.visualStyle = supplement.visualStyle;
+    if (supplement.visualMotifs && supplement.visualMotifs.length > 0) merged.visualMotifs = supplement.visualMotifs;
+    if (supplement.avoidedVisualElements) merged.avoidedVisualElements = supplement.avoidedVisualElements;
+    pendingBrandVisualDraft = merged;
+    brandFlowContext.mode = 'colorDesign';
+    showToast('已補齊缺少的欄位');
+    showScreen('screen-brand-visual-confirm');
+    return;
+  }
+
+  if (brandFlowContext.mode === 'colorDesign') {
+    // 真人驗收 UX Blocker 修正：這一輪只是重新產生情境參考圖（regenerateVisualReferenceImage()
+    // 觸發），不是重新提配色——用旗標區分，避免被下面「解析出幾組方案」的判斷邏輯誤判成
+    // 新一輪配色提案或確認版（AI 這時候的回覆通常不會有完整的配色方案格式）。已經選好、
+    // 還沒確認的三組配色（pendingColorPaletteOptions）完全不受影響。
+    if (brandFlowContext.awaitingVisualReferenceRegenerate) {
+      pendingVisualReferenceInstructionText = extractVisualReferenceInstruction(content) || pendingVisualReferenceInstructionText;
+      brandFlowContext.awaitingVisualReferenceRegenerate = false;
+      showToast('已更新情境參考圖，配色與字體資料不受影響');
+      showScreen('screen-brand-color-preview');
+      return;
+    }
+    // 真人驗收 Parser Blocker 修正（總策長／CEO 核准，2026-08-06）：原本用「品牌主色」
+    // 前綴格式 vs 裸標籤格式來分辨「已選定的確認版」跟「還沒選定的待選方案」，但真人驗收
+    // 發現 AI 選定方案後，常常自然延續第一輪「【配色方案 X】＋裸標籤」的格式回覆確認版，
+    // 不會照抄前綴格式要求——導致確認版被誤判成「還沒選定」，卡在「三組配色資料不完整」
+    // 的錯誤訊息，流程走不下去。改用更可靠的訊號：解析出幾組方案。
+    //   ・1 組＝Mode B（正式回填模式）：使用者已經選定，直接當成最終資料，不需要三組、
+    //     也不需要嚴格 Gate。
+    //   ・2～3 組＝Mode A（配色比較模式）：還在比較階段，維持既有嚴格驗證（一定要
+    //     A／B／C 三組、15 色 HEX 齊全才能進色票卡）。
+    //   ・0 組（完全沒有「【配色方案」標記或裸「主色：」「輔助色：」標籤）：可能是舊版
+    //     「品牌主色」前綴格式，走原本的 parseBrandVisualFinalizeDraft() 相容解析，不強制
+    //     要求 AI 一定要用括號標記格式。
+    const parsedOptions = parseColorPaletteOptions(content);
+
+    if (parsedOptions.length === 1) {
+      pendingBrandVisualDraft = colorOptionToVisualDraft(parsedOptions[0]);
+      pendingVisualReferenceInstructionText = extractVisualReferenceInstruction(content) || pendingVisualReferenceInstructionText;
+      showScreen('screen-brand-visual-confirm');
+      return;
+    }
+
+    if (parsedOptions.length >= 2) {
+      const validation = validateColorPaletteOptions(parsedOptions);
+      if (validation.valid) {
+        pendingColorPaletteOptions = parsedOptions;
+        // 真人驗收 UX Blocker 修正：每次重新貼回一輪新方案，都要重置情境參考圖的暫存狀態，
+        // 避免舊方案的圖片／指令被誤帶到這一輪新方案上。
+        pendingVisualReferenceInstructionText = extractVisualReferenceInstruction(content);
+        pendingVisualReferenceImageRef = null;
+        showScreen('screen-brand-color-preview');
+        return;
+      }
+      // Gate：三組配色不完整（欠缺方案、或任何一個 HEX 缺漏／格式錯誤），絕對不能進色票卡
+      // 畫面（會用系統預設色偽裝成看似完整的方案）。留在貼回畫面，明確告知原因，並提供
+      // 可直接複製的重新整理指令。
+      textarea.value = content; // 保留使用者剛貼的內容，不用重新複製貼上一次
+      showBrandColorIncompleteWarning(validation.reason);
+      return;
+    }
+
+    // 沒有偵測到任何「【配色方案 X】」標記或裸欄位——相容解析舊版「品牌主色」前綴格式。
+    pendingBrandVisualDraft = parseBrandVisualFinalizeDraft(content);
+    pendingVisualReferenceInstructionText = extractVisualReferenceInstruction(content) || pendingVisualReferenceInstructionText;
+    showScreen('screen-brand-visual-confirm');
+    return;
+  }
+
+  // Step 6：Logo 共創流程收斂（總策長／CEO 核准，2026-08-04）：真人驗收發現，「使用者回 AI
+  // 說『我選 B』，AI 再產生一份正式確認版，再貼回工作台」（流程 A）跟「AI 一次提出 A／B／C，
+  // 使用者直接在工作台按『採用這個方向』」（流程 B）兩條路同時存在，造成使用者不知道該回
+  // AI 還是直接按按鈕，也讓 Parser 要同時支援兩種格式、增加 AI 往返次數與解析失敗機率。
+  // 正式決策：只保留流程 B。AI 只負責提出方向（2～3 個），選擇與確認一律由工作台的
+  // 「✅ 採用這個方向」按鈕完成（見 chooseLogoDirection() → proceedWithLogoDirection()，
+  // 按下後直接進 Step 7，不會再回頭問 AI 要正式確認版）。因此這裡不再有「已選定模式」
+  // 的關鍵字特判分支，貼回的內容一律當候選方向解析，一律要求至少 2 個。
+  if (brandFlowContext.mode === 'logoDiscuss') {
+    const options = parseLogoDirectionOptions(content);
+    const validation = validateLogoDirectionOptions(options);
+    if (!validation.valid) {
+      textarea.value = content;
+      showBrandLogoDirectionIncompleteWarning(validation.reason);
+      return;
+    }
+    pendingLogoDirectionOptions = options;
+    showScreen('screen-brand-logo-direction-preview');
+    return;
+  }
+
+  // Step 7：Logo Prompt 確認——貼回的內容就是 AI 產生的 Logo 生圖指令本身（自由文字，
+  // 不需要標籤解析），先進確認畫面讓使用者看過、可修改，按確認才正式存進 Brand Snapshot。
+  if (brandFlowContext.mode === 'logoPromptConfirm') {
+    pendingLogoPromptDraft = content;
+    showScreen('screen-brand-logo-prompt-confirm');
+    return;
+  }
+
+  // 補充修正指令三：品牌內容確認畫面每個欄位可以單獨請 AI 重新整理，只更新這一個欄位，
+  // 其餘欄位保持原狀——這裡直接把整段回覆當成這個欄位的新內容，不需要標籤解析。
+  if (brandFlowContext.mode === 'field') {
+    pendingBrandDraft[brandFlowContext.field] = content;
+    showToast('已更新「' + brandFlowContext.fieldLabel + '」，其他欄位不變');
+    showScreen('screen-brand-confirm');
+    return;
+  }
+
+  const brand = getBrand(brandFlowContext.brandId);
+  const isCalibrate = brandFlowContext.mode === 'calibrate';
+  const fallbackScreen = brandFlowContext.returnScreen || (isCalibrate ? 'screen-project' : 'screen-brand-detail');
+  const suggestions = parseBrandSuggestions(content);
+  if (suggestions.length === 0) {
+    // 修正指令二：沒有明確品牌價值時，不強迫產生建議；AI 誠實回覆「沒有明顯需要調整的地方」
+    // 時，這裡完全不阻擋使用者離開，直接照原本的路徑往下走。
+    showToast('這次沒有明顯需要調整品牌的地方，已略過');
+    showScreen(fallbackScreen);
+    return;
+  }
+  let addedCount = 0;
+  suggestions.forEach(function (sg) {
+    // AI 回覆的「項目」是欄位「標籤」（例如「核心訊息」），但既有建議存的 .field 是欄位
+    // 「代碼」（例如 coreMessages）——比對前一定要先解析成同一種代碼再比，否則標籤跟代碼
+    // 永遠對不上，dedup 形同虛設（曾經是一個真的 bug，被「已拒絕的建議不得反覆出現」這條
+    // 測試要求抓出來，這裡修正為先解析 fieldDef，再用同一個 key 做全部比對）。
+    const fieldDef = BRAND_FIELDS.find(function (f) { return f.label === sg.field || f.key === sg.field || BRAND_FIELD_LEGACY_LABELS[f.key] === sg.field; });
+    const sgKey = fieldDef ? fieldDef.key : sg.field;
+    // 已經被拒絕過的一模一樣建議，不再重複塞回待審核清單，避免同一個被駁回的建議一直打擾使用者
+    const alreadyRejected = brand.pendingSuggestions.some(function (p) {
+      return p.status === 'rejected' && p.field === sgKey && (p.suggested || '').trim() === sg.suggested.trim();
+    });
+    const alreadyPending = brand.pendingSuggestions.some(function (p) {
+      return p.status === 'pending' && p.field === sgKey && (p.suggested || '').trim() === sg.suggested.trim();
+    });
+    if (alreadyRejected || alreadyPending) return;
+    brand.pendingSuggestions.push({
+      id: (brand.pendingSuggestions.reduce(function (m, p) { return Math.max(m, p.id || 0); }, 0)) + 1,
+      field: sgKey,
+      fieldLabel: fieldDef ? fieldDef.label : sg.field,
+      current: fieldDef ? (brand[fieldDef.key] || '（未填）') : '',
+      suggested: sg.suggested,
+      reason: sg.reason,
+      scope: sg.scope || (isCalibrate ? '僅影響之後套用此品牌的新產出' : ''),
+      status: 'pending',
+      source: isCalibrate ? 'calibrate' : 'adjust',
+      createdAt: new Date().toISOString()
+    });
+    addedCount += 1;
+  });
+  saveState();
+  if (isCalibrate) {
+    showToast(addedCount > 0 ? '已收到 ' + addedCount + ' 項品牌建議，可以到品牌中心查看' : '這次沒有新的建議');
+    showScreen(fallbackScreen);
+  } else {
+    showToast(addedCount > 0 ? '已收到 ' + addedCount + ' 項建議，請逐項確認' : '這次沒有新的建議');
+    showScreen('screen-brand-suggestions');
+  }
+}
+
+// 寬鬆的「標籤：內容」解析——跟既有 parseMasterScript／貼回解析同樣的既定手法，
+// 依標籤行切段，容忍全形/半形冒號與前後空白；抓不到就留空字串（規格四要求優先，不可捏造）。
+function parseBrandDraft(content) {
+  const draft = blankBrandDraft();
+  const lines = content.split('\n');
+  let currentKey = null;
+  let buffer = [];
+  function flush() {
+    if (currentKey) {
+      let val = buffer.join('\n').trim();
+      if (val === '＿＿＿＿＿＿' || val === '稍後再補' || val === '（無）' || val === '無') val = '';
+      draft[currentKey] = val;
+    }
+    buffer = [];
+  }
+  lines.forEach(function (line) {
+    const trimmed = line.trim();
+    const matched = BRAND_FIELDS.find(function (f) {
+      if (trimmed.indexOf(f.label + '：') === 0 || trimmed.indexOf(f.label + ':') === 0) return true;
+      const legacyLabel = BRAND_FIELD_LEGACY_LABELS[f.key];
+      return !!legacyLabel && (trimmed.indexOf(legacyLabel + '：') === 0 || trimmed.indexOf(legacyLabel + ':') === 0);
+    });
+    if (matched) {
+      flush();
+      currentKey = matched.key;
+      const rest = trimmed.slice((trimmed.indexOf('：') !== -1 ? trimmed.indexOf('：') : trimmed.indexOf(':')) + 1).trim();
+      buffer = rest ? [rest] : [];
+    } else if (currentKey) {
+      buffer.push(line);
+    }
+  });
+  flush();
+  return draft;
+}
+
+// 建議區塊解析：以「【建議」開頭切段，每段抓「項目／建議內容／建議原因／影響範圍」四個標籤
+function parseBrandSuggestions(content) {
+  const blocks = content.split(/【建議\d*】/).slice(1);
+  return blocks.map(function (block) {
+    function grab(label) {
+      const re = new RegExp(label + '[：:]\\s*([\\s\\S]*?)(?=\\n[一-龥Ａ-Ｚa-zA-Z]+[：:]|$)');
+      const m = block.match(re);
+      return m ? m[1].trim() : '';
+    }
+    return { field: grab('項目'), suggested: grab('建議內容'), reason: grab('建議原因'), scope: grab('影響範圍') };
+  }).filter(function (s) { return s.field && s.suggested; });
+}
+
+// 依【配色方案 A】【配色方案 B】【配色方案 C】切段——跟 parseBrandDraft() 同樣的
+// 「標籤：內容」寬鬆解析手法，抓不到的欄位留空字串，不阻擋、不捏造。
+// Blocker 修正（總策長／CEO 核准，2026-08-06）：除了既有的 5 個色彩欄位，多抓字體與
+// 視覺風格欄位；這些新欄位不影響既有的 5 色欄位解析，也不受 Gate 強制（Gate 只嚴格
+// 驗證顏色，見 validateColorPaletteOptions()）——抓不到就留空字串。
+// Parser 穩健化（2026-08-06）：每個欄位改用 extractLabeledRowValue()，同時支援單行
+// 「主色：名稱 HEX」跟表格列／Markdown 表格「主色｜名稱｜HEX」兩種常見格式。
+function parseColorPaletteOptions(content) {
+  const parts = content.split(/【配色方案\s*([A-Ca-c])】/);
+  const options = [];
+  for (let i = 1; i < parts.length; i += 2) {
+    const label = parts[i].toUpperCase();
+    const block = parts[i + 1] || '';
+    function grab(fieldLabel) { return extractLabeledRowValue(block, fieldLabel); }
+    options.push({
+      label: label,
+      primaryColor: grab('主色'),
+      secondaryColor: grab('輔助色'),
+      accentColor: grab('亮點色'),
+      backgroundColor: grab('背景色'),
+      textColor: grab('文字色'),
+      headingZh: grab(TYPOGRAPHY_LABEL_ALIASES.headingZh),
+      bodyZh: grab(TYPOGRAPHY_LABEL_ALIASES.bodyZh),
+      latin: grab(TYPOGRAPHY_LABEL_ALIASES.latin),
+      usageNotes: grab('字體使用情境'),
+      visualStyle: grab('視覺風格'),
+      visualMotifs: grab('圖案方向'),
+      avoidedVisualElements: grab('避免元素')
+    });
+  }
+  return options;
+}
+
+const COLOR_PALETTE_KEYS = ['primaryColor', 'secondaryColor', 'accentColor', 'backgroundColor', 'textColor'];
+const COLOR_PALETTE_KEY_LABELS = { primaryColor: '主色', secondaryColor: '輔助色', accentColor: '亮點色', backgroundColor: '背景色', textColor: '文字色' };
+
+// 修正指令（2026-08-01）：選色 Gate 必須嚴格——A／B／C 三組、每組 5 色、共 15 個有效 HEX
+// 缺一不可，不完整就不能進色票卡畫面，更不能退回一般品牌草稿解析（那樣等於繞過選色 Gate，
+// 讓格式不完整或跟原本描述有落差的內容被當成正式草稿）。回傳缺失明細，讓 Recovery Flow
+// 的提示文字能具體告訴使用者少了什麼，不是只講「格式不對」。
+function validateColorPaletteOptions(options) {
+  const labels = options.map(function (o) { return o.label; }).join('');
+  if (options.length !== 3 || labels !== 'ABC') {
+    return { valid: false, reason: '需要同時看到方案 A、B、C 三組完整配色，目前只解析到：' + (labels || '（無法辨識）') };
+  }
+  const missing = [];
+  options.forEach(function (opt) {
+    COLOR_PALETTE_KEYS.forEach(function (key) {
+      if (!extractHexFromText(opt[key])) missing.push('方案 ' + opt.label + ' 的' + COLOR_PALETTE_KEY_LABELS[key]);
+    });
+  });
+  if (missing.length > 0) {
+    return { valid: false, reason: '以下顏色缺少有效的 HEX 色碼：' + missing.join('、') };
+  }
+  return { valid: true, reason: '' };
+}
+// 缺配色時的重新整理指令：明確告訴 AI 少了哪些顏色，不是重新問一次整份描述——
+// 使用者留在貼回畫面就能直接複製這段指令，形成 Gate＋Recovery Flow，不是只有阻擋訊息。
+function buildBrandPaletteFixPrompt(reason) {
+  return '# 配色資料不完整，請補齊\n\n' +
+    '## 問題\n' + reason + '\n\n' +
+    '## 你的任務\n請重新輸出完整的三組配色方案（A／B／C），每組都要包含主色、輔助色、亮點色、背景色、文字色，' +
+    '每個顏色都要有「顏色名稱＋用途＋實際 HEX 色碼」，不能省略任何一個，格式如下：\n\n' + VISUAL_OPTION_TEXT_FORMAT + '\n\n' +
+    buildStepBoundaryBlock('補齊後的三組配色方案（A／B／C）。', STEP_BOUNDARY_GENERIC_FORBIDDEN, STEP_BOUNDARY_GENERIC_WAITING);
+}
+
+let pendingColorPaletteOptions = null; // [{ label, primaryColor, secondaryColor, accentColor, backgroundColor, textColor }, ...]
+// #19 Brand Foundation｜真人驗收 UX Blocker 修正（總策長／CEO 核准，2026-08-06）：情境
+// 參考圖是「幫助使用者直觀感受」的東西，不是結構化資料，所以不跟 pendingColorPaletteOptions
+// 混在一起存——這個 App 沒有檔案上傳機制，圖片本身沒辦法貼進文字框，這裡存的是兩種
+// 「暫存、還沒正式確認」的狀態：AI 給的生圖指令文字（不支援產圖時），或使用者自己貼上的
+// 圖片網址（AI 直接產圖、使用者在外部 AI 視窗看到圖後，自己複製圖片網址回來貼）。
+let pendingVisualReferenceInstructionText = null;
+let pendingVisualReferenceImageRef = null;
+// 依固定標記【情境參考圖生成指令】切出後半段——抓不到就回傳 null，不猜測、不捏造。
+function extractVisualReferenceInstruction(content) {
+  const marker = '【情境參考圖生成指令】';
+  const idx = content.indexOf(marker);
+  if (idx === -1) return null;
+  return content.slice(idx + marker.length).trim();
+}
+
+// 三組視覺色票卡：同一版型呈現（背景／標題／卡片／按鈕／簡化 Logo 圖示），讓使用者
+// 不需要外部 AI 產圖也能在工作台裡直接「看見顏色」再選——這是規格明訂的備援機制，
+// 不是等外部 AI 有沒有畫圖的能力才決定要不要提供。
+// 修正指令一：這裡不再對缺漏的顏色補系統預設色——submitBrandPasteBack() 已經用
+// validateColorPaletteOptions() 擋在前面，只有「三組、15 色、全部有效 HEX」才會走到
+// 這個畫面，所以正常情況下每個 extractHexFromText() 一定拿得到值。萬一真的拿不到
+// （理論上不該發生，防禦性寫法），一律顯示中性灰色＋文字提醒，不能顯示成任何看起來
+// 像是「AI 提供的顏色」的色塊，避免使用者誤選並非 AI 真正建議的顏色。
+// Blocker 修正（2026-08-06）：卡片除了色塊示範，也把字體與視覺風格列出來，讓使用者
+// 選方案時能一起比較，不用等到後面才知道字體是什麼。
+// 真人驗收 UX Blocker 修正（總策長／CEO 核准，2026-08-06）：畫面拆成兩區塊——
+// 區塊一情境參考（圖片，幫助「感受」）、區塊二結構化方案（文字，「帶得走」）。
+// 兩者定位不同，不互相取代，各自獨立渲染。
+function renderBrandVisualReferenceSection() {
+  const box = document.getElementById('bcpv-visual-reference');
+  if (!box) return;
+  const imageBlock = pendingVisualReferenceImageRef
+    ? '<div class="line" style="margin-top:8px;word-break:break-all">' + escHtml(pendingVisualReferenceImageRef) + '</div>' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">' +
+      '<button class="btn outline" style="width:auto;flex:1;padding:8px;font-size:12.5px;margin-top:0" onclick="previewPendingVisualReferenceImage()">🔍 查看大圖</button>' +
+      '<button class="btn outline" style="width:auto;flex:1;padding:8px;font-size:12.5px;margin-top:0" onclick="addPendingVisualReferenceImage()">✏️ 換一張圖片網址</button>' +
+      '</div>'
+    : '';
+  const regenerateButtonsHtml =
+    '<div class="secondary-note" style="margin-top:10px">圖片不滿意，配色與字體文字方案會保留，不會被清除：</div>' +
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">' +
+    '<button class="btn outline" style="width:auto;flex:1;padding:8px;font-size:12.5px;margin-top:0" onclick="regenerateVisualReferenceImage(\'\')">🔄 重新產生情境參考圖</button>' +
+    '<button class="btn outline" style="width:auto;flex:1;padding:8px;font-size:12.5px;margin-top:0" onclick="regenerateVisualReferenceImage(\'請減少裝飾元素，保持畫面簡潔\')">✏️ 減少裝飾</button>' +
+    '<button class="btn outline" style="width:auto;flex:1;padding:8px;font-size:12.5px;margin-top:0" onclick="regenerateVisualReferenceImage(\'請增加品牌圖案的比例，讓圖案更明顯\')">✏️ 增加品牌圖案</button>' +
+    '</div>' +
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">' +
+    '<button class="btn outline" style="width:auto;flex:1;padding:8px;font-size:12.5px;margin-top:0" onclick="regenerateVisualReferenceImage(\'請把應用情境改成商品包裝為主\')">✏️ 改成包裝情境</button>' +
+    '<button class="btn outline" style="width:auto;flex:1;padding:8px;font-size:12.5px;margin-top:0" onclick="regenerateVisualReferenceImage(\'請把應用情境改成社群貼文為主\')">✏️ 改成社群情境</button>' +
+    '<button class="btn outline" style="width:auto;flex:1;padding:8px;font-size:12.5px;margin-top:0" onclick="regenerateVisualReferenceImage(\'請把應用情境改成網站首頁為主\')">✏️ 改成網站情境</button>' +
+    '</div>';
+
+  if (pendingVisualReferenceInstructionText) {
+    box.innerHTML = '<div class="section-label">🖼️ 品牌情境參考圖</div>' +
+      '<div class="notice">這一輪 AI 沒有直接畫圖，這是可以複製去給支援生圖 AI 使用的完整指令，畫出來之後把圖片網址貼回來就能在這裡查看。</div>' +
+      copyReadyActionsHtml(pendingVisualReferenceInstructionText, '已複製情境參考圖生成指令') +
+      '<button class="btn outline" style="margin-top:8px" onclick="addPendingVisualReferenceImage()">' + (pendingVisualReferenceImageRef ? '✏️ 換一張圖片網址' : '🖼️ 已經有圖了，貼上網址') + '</button>' +
+      imageBlock + regenerateButtonsHtml;
+  } else {
+    box.innerHTML = '<div class="section-label">🖼️ 品牌情境參考圖</div>' +
+      (pendingVisualReferenceImageRef
+        ? imageBlock
+        : '<div class="notice">如果 AI 在對話裡直接畫了一張情境比較圖，貼上圖片網址就能在這裡查看，方便跟下面的文字方案一起比較。</div>' +
+          '<button class="btn outline" style="margin-top:8px" onclick="addPendingVisualReferenceImage()">🖼️ 貼上情境參考圖網址</button>') +
+      regenerateButtonsHtml;
+  }
+}
+// 真人驗收 UX Blocker 修正（總策長／CEO 核准，2026-08-06）：原本的「按鈕示範」只是一顆
+// 固定樣式按鈕，看不出這組配色實際套用在品牌畫面上的效果。改成一個小型品牌情境預覽——
+// Hero 區塊（品牌名稱＋一句話＋CTA 按鈕）＋資訊卡片＋社群／名片一角示意，三個情境全部
+// 用這組方案「實際的 HEX」渲染，不是憑空示意。字體名稱只能用文字標示、無法真的套用該
+// 字型渲染（這個 App 是離線 PWA，不接外部字型服務，這是誠實的技術限制，不是疏漏）。
+function renderBrandColorPreview() {
+  renderBrandVisualReferenceSection();
+  const list = document.getElementById('bcpv-palette-list');
+  if (!pendingColorPaletteOptions) { list.innerHTML = ''; return; }
+  const brand = brandFlowContext ? getBrand(brandFlowContext.brandId) : null;
+  const brandName = (brand && brand.name) || '品牌名稱';
+  const brandOneLiner = (brand && brand.oneLiner) || '一句話定位示意';
+  const FALLBACK_NEUTRAL = '#9A9A88'; // 中性灰，刻意不是任何品牌色，一眼看得出是「異常」不是「AI 選的顏色」
+  list.innerHTML = pendingColorPaletteOptions.map(function (opt) {
+    const bg = extractHexFromText(opt.backgroundColor) || FALLBACK_NEUTRAL;
+    const text = extractHexFromText(opt.textColor) || '#FFFFFF';
+    const primary = extractHexFromText(opt.primaryColor) || FALLBACK_NEUTRAL;
+    const secondary = extractHexFromText(opt.secondaryColor) || FALLBACK_NEUTRAL;
+    const accent = extractHexFromText(opt.accentColor) || FALLBACK_NEUTRAL;
+    const typographyLines = [
+      opt.headingZh ? '中文標題字體 ' + escHtml(opt.headingZh) : '',
+      opt.bodyZh ? '中文內文字體 ' + escHtml(opt.bodyZh) : '',
+      opt.latin ? '英文或數字字體 ' + escHtml(opt.latin) : '',
+      opt.visualStyle ? '視覺風格 ' + escHtml(opt.visualStyle) : '',
+      opt.visualMotifs ? '圖案方向 ' + escHtml(opt.visualMotifs) : ''
+    ].filter(Boolean).join('<br>');
+    const heroBlock =
+      '<div style="padding:14px;border-radius:10px;background:' + bg + ';color:' + text + '">' +
+      '<div style="font-size:16px;font-weight:700">' + escHtml(brandName) + '</div>' +
+      '<div style="margin-top:4px;font-size:12px;opacity:0.85">' + escHtml(brandOneLiner) + '</div>' +
+      '<button style="margin-top:10px;padding:8px 16px;border:none;border-radius:8px;background:' + primary + ';color:#fff;font-weight:700;font-size:12.5px">了解更多</button>' +
+      '</div>';
+    const infoCard =
+      '<div style="margin-top:8px;padding:10px;border-radius:10px;background:' + secondary + ';color:' + text + ';font-size:12px;display:flex;align-items:center;gap:6px">' +
+      '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:' + accent + ';flex-shrink:0"></span>資訊卡片示意｜服務項目一　服務項目二</div>';
+    const socialRow =
+      '<div style="margin-top:8px;display:flex;align-items:center;gap:8px">' +
+      '<span style="display:inline-block;width:22px;height:22px;border-radius:50%;background:' + accent + ';flex-shrink:0"></span>' +
+      '<span style="font-size:11.5px;opacity:0.75">社群貼文／名片一角示意</span></div>';
+    return '<div class="card" style="margin-bottom:14px;border:2px solid ' + primary + '">' +
+      '<div style="font-size:17px;font-weight:700">方案 ' + escHtml(opt.label) + '</div>' +
+      '<div style="margin-top:10px">' + heroBlock + infoCard + socialRow + '</div>' +
+      '<div style="margin-top:10px;font-size:11.5px;line-height:1.7;opacity:0.85">' +
+      '主色 ' + escHtml(opt.primaryColor || '（未解析到）') + '<br>' +
+      '輔助色 ' + escHtml(opt.secondaryColor || '（未解析到）') + '<br>' +
+      '亮點色 ' + escHtml(opt.accentColor || '（未解析到）') + '<br>' +
+      '背景色 ' + escHtml(opt.backgroundColor || '（未解析到）') + '<br>' +
+      '文字色 ' + escHtml(opt.textColor || '（未解析到）') +
+      (typographyLines ? '<br>' + typographyLines : '') + '</div>' +
+      '<button class="btn" style="margin-top:12px" onclick="chooseColorPalette(\'' + opt.label + '\')">選擇方案 ' + escHtml(opt.label) + '</button>' +
+      '</div>';
+  }).join('');
+}
+function cancelColorPalettePreview() {
+  pendingColorPaletteOptions = null;
+  pendingVisualReferenceInstructionText = null;
+  pendingVisualReferenceImageRef = null;
+  showScreen('screen-brand-detail');
+}
+// 選定後：不是直接把這組配色當成正式資料，而是產生「下一輪」指令交回外部 AI，
+// 請它用固定格式「確認」一次完整的配色與字體資料——回到既有的交給AI→貼回這一套機制，
+// 跟其他模式共用同一個 screen-brand-copy-to-ai／paste-back。Brand Gate 之後，這幾個
+// 函式（chooseColorPalette／regenerateColorPalette／mixColorPalette／
+// requestBrandVisualPartialAdjust）只會在 brandFlowContext.mode === 'colorDesign'
+// 時被呼叫到（建立品牌的第一輪已經不再提供配色方案，不會走到這個畫面）。
+function chooseColorPalette(label) {
+  const opt = pendingColorPaletteOptions.find(function (o) { return o.label === label; });
+  if (!opt) return;
+  brandLastCopyText = buildBrandVisualFinalizePrompt(opt);
+  pendingColorPaletteOptions = null;
+  showScreen('screen-brand-copy-to-ai');
+}
+function regenerateColorPalette() {
+  const brand = getBrand(brandFlowContext.brandId);
+  brandLastCopyText = buildBrandColorDesignPrompt(brand, '請提供三組跟前面完全不同的新配色方案');
+  pendingColorPaletteOptions = null;
+  showScreen('screen-brand-copy-to-ai');
+}
+function mixColorPalette() {
+  const pick = prompt('想混合哪兩組？可以簡單描述，例如：「A 的主色跟亮點色，搭配 B 的背景色跟文字色」：', '');
+  if (pick === null || !pick.trim()) return;
+  brandLastCopyText = buildBrandPaletteMixPrompt(pendingColorPaletteOptions, pick.trim());
+  pendingColorPaletteOptions = null;
+  showScreen('screen-brand-copy-to-ai');
+}
+// Blocker 修正（總策長／CEO 核准，2026-08-06）：Step 5B「指定修改某一部分」——不滿意
+// 三組方案裡的某一個面向時，不用整個流程重來，只需要說清楚要調整哪一個維度，其餘維度
+// 沿用既有 buildBrandColorDesignPrompt() 的 regenerateNote 參數帶進去，不新增一套機制。
+const BRAND_VISUAL_PARTIAL_DIMENSION_LABELS = { colors: '配色', typography: '字體', visualStyle: '視覺風格', visualMotifs: '圖案方向' };
+function requestBrandVisualPartialAdjust(dimension) {
+  const label = BRAND_VISUAL_PARTIAL_DIMENSION_LABELS[dimension];
+  if (!label) return;
+  const note = prompt('只想調整「' + label + '」，其他部分維持不變。想怎麼調整？可以簡單描述：', '');
+  if (note === null || !note.trim()) return;
+  const otherLabels = Object.keys(BRAND_VISUAL_PARTIAL_DIMENSION_LABELS).filter(function (k) { return k !== dimension; }).map(function (k) { return BRAND_VISUAL_PARTIAL_DIMENSION_LABELS[k]; }).join('／');
+  const keepNote = '使用者這次只想調整「' + label + '」這一個部分：' + note.trim() + '。其餘（' + otherLabels + '）請保留原本三組方案裡的方向，不要整個重新設計。';
+  const brand = getBrand(brandFlowContext.brandId);
+  brandLastCopyText = buildBrandColorDesignPrompt(brand, keepNote);
+  pendingColorPaletteOptions = null;
+  showScreen('screen-brand-copy-to-ai');
+}
+function buildBrandPaletteMixPrompt(options, pickDescription) {
+  const optionsText = options.map(function (o) {
+    return '【方案 ' + o.label + '】\n主色：' + o.primaryColor + '\n輔助色：' + o.secondaryColor + '\n亮點色：' + o.accentColor + '\n背景色：' + o.backgroundColor + '\n文字色：' + o.textColor +
+      (o.headingZh ? '\n中文標題字體：' + o.headingZh : '') + (o.bodyZh ? '\n中文內文字體：' + o.bodyZh : '') + (o.visualStyle ? '\n視覺風格：' + o.visualStyle : '');
+  }).join('\n\n');
+  return '# 混合配色方案\n\n' +
+    '## 原本三組方案\n' + optionsText + '\n\n' +
+    '## 使用者想混合的方向\n' + pickDescription + '\n\n' +
+    '## 你的任務\n請依使用者的描述，混合出一組新的方案（5 色齊全，附完整 HEX，字體與視覺風格也要一起給），用跟原本一樣的固定格式重新輸出三組方案（可以把這組混合結果放進 A／B／C 其中一組，其餘可以維持原方案或再微調），格式如下：\n\n' + VISUAL_OPTION_TEXT_FORMAT + '\n\n' +
+    buildStepBoundaryBlock('混合後的三組配色方案（A／B／C）。', STEP_BOUNDARY_GENERIC_FORBIDDEN, STEP_BOUNDARY_GENERIC_WAITING);
+}
+
+// 真人驗收 UX Blocker 修正（總策長／CEO 核准，2026-08-06）：重新產生情境參考圖，
+// 「不應該」連帶重新產生配色資料——這裡固定帶入目前三組已經確定的配色與字體（不要求
+// AI 重新設計），只請 AI 換一種呈現方式重畫比較圖。呼叫端要記得把
+// brandFlowContext.awaitingVisualReferenceRegenerate 設成 true，submitBrandPasteBack()
+// 才知道這一輪貼回的內容不是新配色，不會誤判成一般配色提案。
+function buildVisualReferenceRegeneratePrompt(options, focusNote) {
+  const optionsText = (options || []).map(function (o) {
+    return '【方案 ' + o.label + '】主色 ' + o.primaryColor + '／輔助色 ' + o.secondaryColor + '／亮點色 ' + o.accentColor + '／背景色 ' + o.backgroundColor + '／文字色 ' + o.textColor +
+      '／中文標題字體 ' + (o.headingZh || '未指定') + '／中文內文字體 ' + (o.bodyZh || '未指定') + '／視覺風格 ' + (o.visualStyle || '未指定') + '／圖案方向 ' + (o.visualMotifs || '未指定');
+  }).join('\n');
+  return '# 重新產生品牌情境參考圖\n\n' +
+    '## 三組已經確定的配色與字體方案（請直接使用，不要重新設計或更動這三組資料）\n' + (optionsText || '（沒有可用的方案資料）') + '\n\n' +
+    (focusNote ? '## 這次想調整的呈現方式\n' + focusNote + '\n\n' : '') +
+    '## 你的任務\n請直接產生一張 A／B／C 三欄並排的品牌視覺情境比較圖，三欄使用完全相同構圖、相同品牌名稱、相同文字內容、相同應用情境，只有配色／字體氣質／圖案方向／視覺風格不同。這是視覺方向參考，不是正式 Logo，不要畫出完成版 Logo。**不要重新輸出或更動上面三組配色與字體資料，這一輪只需要圖片。**\n\n' +
+    '如果你不支援圖片生成，請輸出「【情境參考圖生成指令】」開頭的完整指令文字，讓使用者可以複製去給支援生圖的 AI，指令內容請直接使用上面三組真實資料，不要用省略號。\n\n' +
+    buildStepBoundaryBlock('重新產生的情境參考圖（或情境參考圖生成指令）。', ['重新輸出或更動三組配色與字體資料'].concat(STEP_BOUNDARY_GENERIC_FORBIDDEN), STEP_BOUNDARY_GENERIC_WAITING);
+}
+function regenerateVisualReferenceImage(focusNote) {
+  brandLastCopyText = buildVisualReferenceRegeneratePrompt(pendingColorPaletteOptions, focusNote || '');
+  brandFlowContext.awaitingVisualReferenceRegenerate = true;
+  showScreen('screen-brand-copy-to-ai');
+}
+// 使用者在外部 AI 對話視窗看到情境參考圖後，把圖片網址貼回來——這個 App 沒有檔案上傳
+// 機制，沿用既有「只存參照」的既定做法（跟 Brand Assets 的 imageRef 同一套邏輯）。
+function addPendingVisualReferenceImage() {
+  const ref = prompt('貼上情境參考圖的網址：', pendingVisualReferenceImageRef || '');
+  if (ref === null || !ref.trim()) return;
+  pendingVisualReferenceImageRef = ref.trim();
+  renderBrandColorPreview();
+}
+function previewPendingVisualReferenceImage() {
+  if (!pendingVisualReferenceImageRef) return;
+  previewImageUrlDialog(pendingVisualReferenceImageRef, '品牌情境參考圖');
+}
+
+// ── 品牌內容確認畫面（規格補充二：兩種建立方式收斂到同一個畫面）───────
+// 配色與 Logo 視覺選擇流程：從「顏色名稱＋HEX＋用途」這種自由文字裡找出 #HEX 色碼，
+// 用來畫實際色塊——找不到就不畫色塊，不阻擋顯示（使用者可能還沒填、或格式不完全符合）。
+function extractHexFromText(text) {
+  if (!text) return null;
+  const m = String(text).match(/#[0-9a-fA-F]{6}\b|#[0-9a-fA-F]{3}\b/);
+  return m ? m[0] : null;
+}
+function colorSwatchHtml(text) {
+  const hex = extractHexFromText(text);
+  if (!hex) return '';
+  return '<span style="display:inline-block;width:18px;height:18px;border-radius:5px;background:' + hex + ';border:1px solid rgba(0,0,0,0.15);vertical-align:middle;margin-right:6px"></span>';
+}
+// 補充指令四：Logo 建議要能完整保存六項內容，手機畫面不能擠成一長行——這裡統一改用
+// pre-wrap，AI 產出的換行（指令裡有明確要求 Logo 建議用換行分項）會被保留，不會被
+// 瀏覽器預設的空白摺疊行為擠成一整行。
+function renderBrandConfirm() {
+  const list = document.getElementById('bcf-field-list');
+  list.innerHTML = BRAND_FIELDS.map(function (f) {
+    const val = pendingBrandDraft[f.key];
+    const swatch = f.isColor ? colorSwatchHtml(val) : '';
+    const display = val ? (swatch + escHtml(val)) : '<span style="opacity:0.5">' + (f.required ? '（尚未填寫）' : '稍後再補') + '</span>';
+    const clearBtn = (!f.required && val) ? '<button class="tool-delete" onclick="clearBrandDraftField(\'' + f.key + '\')" title="暫不使用">暫不使用</button>' : '';
+    return '<div class="card" style="margin-bottom:10px">' +
+      '<div class="section-label">' + escHtml(f.label) + (f.required ? '　<span style="color:var(--gold)">必填</span>' : '') + '</div>' +
+      '<div class="line" style="margin:6px 0;white-space:pre-wrap;word-break:break-word">' + display + '</div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap">' +
+      '<button class="btn outline" style="width:auto;flex:1;padding:9px;font-size:12.5px;margin-top:0" onclick="editBrandDraftField(\'' + f.key + '\',\'' + escHtml(f.label) + '\')">✏️ 直接修改</button>' +
+      '<button class="btn outline" style="width:auto;flex:1;padding:9px;font-size:12.5px;margin-top:0" onclick="requestBrandFieldReorganize(\'' + f.key + '\',\'' + escHtml(f.label) + '\')">🔁 請 AI 重新整理</button>' +
+      clearBtn +
+      '</div></div>';
+  }).join('');
+}
+// 補充修正指令三：只針對「這一個」欄位請 AI 重新整理，明確要求其他欄位不用重複輸出，
+// 貼回來的內容整段就是這個欄位的新內容（submitBrandPasteBack() 的 mode==='field' 分支），
+// 不會動到 pendingBrandDraft 裡其他已經填好或已經確認過的欄位。
+function requestBrandFieldReorganize(key, label) {
+  const currentVal = pendingBrandDraft[key];
+  brandFlowContext = { mode: 'field', field: key, fieldLabel: label };
+  brandLastCopyText =
+    '# 品牌欄位單獨重新整理\n\n' +
+    '## 使用者原本的描述\n' + (brandFlowContext.freeText || (state.brandDraftInProgress && state.brandDraftInProgress.freeText) || '（無，請直接依下方欄位目前內容調整）') + '\n\n' +
+    '## 只需要調整這一個欄位\n' + label + '\n\n' +
+    '## 這個欄位目前的內容\n' + (currentVal || '（尚未填寫）') + '\n\n' +
+    '## 你的角色\n請你只針對「' + label + '」這一個欄位重新整理，提供另一個版本。其他品牌欄位不用重複輸出，也不要更動。\n' +
+    '不能捏造使用者沒有說過的內容；如果資訊仍然不足，可以維持「稍後再補」。\n\n' +
+    '## 請直接輸出這個欄位新的內容本身\n不要加欄位名稱、不要加其他說明文字，只要輸出這一個欄位可以直接使用的內容。';
+  showScreen('screen-brand-copy-to-ai');
+}
+function editBrandDraftField(key, label) {
+  const val = prompt('修改「' + label + '」：', pendingBrandDraft[key] || '');
+  if (val === null) return;
+  pendingBrandDraft[key] = val.trim();
+  renderBrandConfirm();
+}
+function clearBrandDraftField(key) {
+  pendingBrandDraft[key] = '';
+  renderBrandConfirm();
+}
+function brandConfirmRequestReorganize() {
+  // 「請AI重新整理」：回到討論輸入畫面，帶回上一輪的描述，讓使用者補充後再送一次——
+  // 不是逐欄位重新請 AI 生成（那需要另一輪獨立的單欄位往返），這是本 Sprint 的最小可行範圍，
+  // 已在 Stage 2 報告中明確列為已知限制，而非未察覺的缺漏。
+  brandFlowContext = brandFlowContext || { mode: 'create' };
+  brandFlowContext.mode = 'create';
+  showScreen('screen-brand-discuss-input');
+}
+function brandConfirmBackToForm() {
+  brandFormMode = 'create';
+  brandFormEditingId = null;
+  showScreen('screen-brand-form');
+}
+function brandConfirmSaveDraft() {
+  state.brandDraftInProgress = { stage: 'confirming', draft: pendingBrandDraft };
+  saveState();
+  showToast('已保存草稿，稍後可以回來繼續');
+  showScreen('screen-brand-center');
+}
+function confirmCreateBrandFromDraft() {
+  const missing = BRAND_FIELDS.filter(function (f) { return f.required && !(pendingBrandDraft[f.key] || '').trim(); });
+  if (missing.length > 0) { showToast('請先填寫：' + missing.map(function (f) { return f.label; }).join('、')); return; }
+  const brand = createBrand(pendingBrandDraft);
+  state.brandDraftInProgress = null;
+  pendingBrandDraft = null;
+  saveState();
+  showToast('已建立品牌「' + brand.name + '」');
+  activeBrandDetailId = brand.id;
+  showScreen('screen-brand-detail');
+}
+
+// ── 直接自己填寫表單（同時用於：新建立-手動路徑／既有品牌編輯）─────
+let brandFormMode = 'create'; // 'create' | 'edit'
+let brandFormEditingId = null;
+
+function openBrandEdit(brandId) {
+  const b = getBrand(brandId);
+  pendingBrandDraft = {};
+  BRAND_FIELDS.forEach(function (f) { pendingBrandDraft[f.key] = b[f.key] || ''; });
+  brandFormMode = 'edit';
+  brandFormEditingId = brandId;
+  showScreen('screen-brand-form');
+}
+function renderBrandForm() {
+  document.getElementById('bf-title').textContent = brandFormMode === 'edit' ? '編輯品牌' : '直接自己填寫';
+  document.getElementById('bf-submit-btn').textContent = brandFormMode === 'edit' ? '儲存變更' : '建立並使用這個品牌';
+  // Brand Center v1.0 UI 實作：依 BRAND_FORM_SECTIONS 四大分區渲染，取代原本 15 個欄位
+  // 無分區攤平的呈現方式；欄位本身（key／必填規則／輸入值保存方式）完全不變，只是換了
+  // 分組顯示順序，且每個 section 只把屬於自己的欄位挑出來渲染一次，不遺漏、不重複。
+  document.getElementById('bf-fields').innerHTML = BRAND_FORM_SECTIONS.map(function (section) {
+    const fieldsHtml = section.keys.map(function (key) {
+      const f = BRAND_FIELDS.find(function (x) { return x.key === key; });
+      const val = escHtml(pendingBrandDraft[f.key] || '');
+      const placeholder = BRAND_FIELD_PLACEHOLDERS[f.key] ? ' placeholder="' + escHtml(BRAND_FIELD_PLACEHOLDERS[f.key]) + '"' : '';
+      const note = f.key === 'avoidWords' ? '<div class="secondary-note">' + escHtml(BRAND_AVOID_WORDS_NOTE) + '</div>' : '';
+      return '<div class="field"><label>' + escHtml(f.label) + (f.required ? '（必填）' : '（選填）') + '</label>' +
+        '<textarea id="bf-field-' + f.key + '" maxlength="300" style="min-height:56px"' + placeholder + '>' + val + '</textarea>' + note + '</div>';
+    }).join('');
+    return '<div class="section-label" style="margin-top:16px">' + escHtml(section.title) + '</div>' +
+      '<div class="secondary-note" style="margin-top:0;margin-bottom:8px">' + escHtml(section.intro) + '</div>' +
+      fieldsHtml;
+  }).join('');
+}
+function submitBrandForm() {
+  const fields = {};
+  BRAND_FIELDS.forEach(function (f) { fields[f.key] = (document.getElementById('bf-field-' + f.key).value || '').trim(); });
+  const missing = BRAND_FIELDS.filter(function (f) { return f.required && !fields[f.key]; });
+  if (missing.length > 0) { showToast('請先填寫：' + missing.map(function (f) { return f.label; }).join('、')); return; }
+
+  if (brandFormMode === 'edit') {
+    // 編輯提交前先顯示異動摘要（規格三-4：編輯顯示變更摘要後才提交）
+    const b = getBrand(brandFormEditingId);
+    const changes = BRAND_FIELDS.filter(function (f) { return (b[f.key] || '') !== fields[f.key]; });
+    if (changes.length === 0) { showToast('沒有任何變更'); showScreen('screen-brand-detail'); return; }
+    const summary = changes.map(function (f) { return f.label + '：「' + (b[f.key] || '（無）') + '」→「' + fields[f.key] + '」'; }).join('\n');
+    if (!confirm('確定要儲存以下變更嗎？（只會建立最新版本，不會改動任何已完成或進行中工作已保存的內容）\n\n' + summary)) return;
+    updateBrandFields(brandFormEditingId, fields);
+    showToast('已更新「' + fields.name + '」');
+    activeBrandDetailId = brandFormEditingId;
+    showScreen('screen-brand-detail');
+  } else {
+    pendingBrandDraft = fields;
+    showScreen('screen-brand-confirm');
+  }
+}
+
+// ── 品牌首頁／詳情 ─────────────────────────────────────────────
+let activeBrandDetailId = null;
+function openBrandDetail(brandId) { activeBrandDetailId = brandId; showScreen('screen-brand-detail'); }
+
+// 單一欄位的唯讀顯示（品牌詳情頁用）：有值就顯示（isColor 欄位加色塊），沒填就顯示
+// 既有的「稍後再補」淡化提示——這段邏輯抽成共用函式，避免第一區跟其餘分區各寫一份。
+function renderBrandDetailFieldLine(brand, f) {
+  const swatch = f.isColor ? colorSwatchHtml(brand[f.key]) : '';
+  const val = brand[f.key] ? (swatch + escHtml(brand[f.key])) : '<span style="opacity:0.5">稍後再補</span>';
+  return '<div class="line" style="margin-bottom:8px;white-space:pre-wrap;word-break:break-word"><b>' + escHtml(f.label) + '</b><br>' + val + '</div>';
+}
+function renderBrandDetail() {
+  const b = getBrand(activeBrandDetailId);
+  if (!b) { showScreen('screen-brand-center'); return; }
+  document.getElementById('bdt-name').textContent = b.name + (b.status === '已封存' ? '（已封存）' : '');
+
+  // Brand Center v1.0 UI 實作：四大分區跟表單一致。第一區（品牌是誰）沿用既有卡片位置，
+  // 品牌名稱已經是頁面標題，這裡只放一句話定位＋主要服務對象；第二～四區在 bdt-fields
+  // 依序渲染。詳情頁是唯讀檢視，不重複顯示表單那句「引導語」（那是填寫情境才需要的提示）。
+  const section1 = BRAND_FORM_SECTIONS[0];
+  document.getElementById('bdt-section-1').innerHTML =
+    '<div class="section-label">' + escHtml(section1.title) + '</div>' +
+    '<div style="margin-top:8px">' + section1.keys.filter(function (k) { return k !== 'name'; }).map(function (key) {
+      const f = BRAND_FIELDS.find(function (x) { return x.key === key; });
+      return renderBrandDetailFieldLine(b, f);
+    }).join('') + '</div>';
+
+  const fieldsBox = document.getElementById('bdt-fields');
+  fieldsBox.innerHTML = BRAND_FORM_SECTIONS.slice(1).map(function (section, idx) {
+    const fieldsHtml = section.keys.map(function (key) {
+      const f = BRAND_FIELDS.find(function (x) { return x.key === key; });
+      return renderBrandDetailFieldLine(b, f);
+    }).join('');
+    return '<div class="section-label"' + (idx > 0 ? ' style="margin-top:16px"' : '') + '>' + escHtml(section.title) + '</div>' + fieldsHtml;
+  }).join('');
+
+  // 品牌版本／最後更新：低視覺權重，只用次要文字樣式，不做卡片、不加圖示、不提供互動。
+  // createBrand()／updateBrandFields() 都會可靠寫入 updatedAt，這裡不需要防呆缺值情況。
+  const updatedDate = new Date(b.updatedAt);
+  const updatedText = updatedDate.getFullYear() + '/' + String(updatedDate.getMonth() + 1).padStart(2, '0') + '/' + String(updatedDate.getDate()).padStart(2, '0');
+  document.getElementById('bdt-version-info').textContent = '品牌版本 v' + b.version + '　·　最後更新 ' + updatedText;
+
+  const assetsBox = document.getElementById('bdt-assets');
+  if (!b.linkedAssets || b.linkedAssets.length === 0) {
+    assetsBox.innerHTML = '<div class="tool-suggest-note">還沒有關聯任何成果</div>';
+  } else {
+    assetsBox.innerHTML = b.linkedAssets.map(function (a) {
+      const r = state.results.find(function (x) { return x.id === a.resultId; });
+      return '<div class="tool-row"><div class="tool-info"><div><div class="tool-name">' + escHtml(a.purpose || '相關素材') + '</div>' +
+        '<div class="tool-category">' + (r ? escHtml(r.title || r.stepName) : '此成果目前無法使用') + '</div></div></div>' +
+        '<div class="tool-actions"><button class="tool-delete" onclick="unlinkBrandAsset(' + b.id + ',' + a.resultId + ')" title="解除關聯">🗑️</button></div></div>';
+    }).join('');
+  }
+
+  const suggBox = document.getElementById('bdt-suggestions-summary');
+  const pendingCount = (b.pendingSuggestions || []).filter(function (s) { return s.status === 'pending'; }).length;
+  suggBox.textContent = pendingCount > 0 ? '🔔 有 ' + pendingCount + ' 項待審核的品牌建議' : '目前沒有待審核的品牌建議';
+
+  const usageBox = document.getElementById('bdt-usage');
+  const projects = projectsUsingBrand(b.id);
+  const works = worksUsingBrand(b.id);
+  usageBox.textContent = projects.length + ' 個專案將此設為預設品牌　·　' + works.length + ' 件工作正在使用';
+
+  document.getElementById('bdt-archive-btn').textContent = b.status === '已封存' ? '恢復使用' : '封存';
+
+  // Brand Gate（總策長／CEO 核准，2026-08-05／Blocker 修正 2026-08-06）：門檻沒過時
+  // 顯示提示文字，門檻通過後提示自動消失——按鈕本身一律顯示（不藏功能），這裡只補充說明。
+  document.getElementById('bdt-color-gate-hint').style.display = brandCoreContentReady(b) ? 'none' : 'block';
+  document.getElementById('bdt-logo-gate-hint').style.display = brandVisualReady(b.id) ? 'none' : 'block';
+  renderBrandAssetsSection(b.id);
+}
+function toggleArchiveBrand() {
+  const b = getBrand(activeBrandDetailId);
+  if (b.status === '已封存') unarchiveBrand(b.id); else archiveBrand(b.id);
+  render();
+}
+function copyActiveBrand() {
+  const copy = copyBrand(activeBrandDetailId);
+  if (copy) { activeBrandDetailId = copy.id; showScreen('screen-brand-detail'); }
+}
+function openBrandAdjust() {
+  brandFlowContext = { mode: 'adjust', brandId: activeBrandDetailId, freeText: '' };
+  showScreen('screen-brand-discuss-input');
+}
+// Brand Gate（總策長／CEO 核准，2026-08-05；Blocker 修正 2026-08-06 更名為「品牌配色與
+// 字體參考」，Logo 移到後面獨立的 Logo 共創階段）：品牌核心內容（品牌是誰／怎麼說話／
+// 故事）確認完成前，不開放這一步——真人驗收發現外部 AI 常常太快跳去配色提案，這裡在
+// 「進入這個流程之前」就先擋下來，不是只把按鈕藏起來（品牌詳情頁的按鈕一律顯示，讓
+// 使用者知道這個功能存在，點下去會先看到明確的門檻說明，這是這個 App 一貫的
+// Gate＋Recovery 風格，不是憑空新造一套）。
+function openBrandColorDesign(brandId) {
+  const brand = getBrand(brandId);
+  if (!brand) return;
+  if (!brandCoreContentReady(brand)) {
+    showToast('請先完成品牌語氣與品牌故事，才能開始品牌配色與字體參考');
+    return;
+  }
+  brandFlowContext = { mode: 'colorDesign', brandId: brandId, freeText: '' };
+  brandLastCopyText = buildBrandColorDesignPrompt(brand);
+  showScreen('screen-brand-copy-to-ai');
+}
+function backFromBrandCopyToAi() {
+  const mode = brandFlowContext && brandFlowContext.mode;
+  if (mode === 'colorFixMissing') { showScreen('screen-brand-visual-confirm'); return; }
+  if (mode === 'colorDesign' || mode === 'logoPromptConfirm') { showScreen('screen-brand-detail'); return; }
+  showScreen('screen-brand-discuss-input');
+}
+
+// ═══════════════════════════════════════════════════════════
+// #19 Brand Foundation｜Blocker 修正（總策長／CEO 核准，2026-08-06）：Step 6 Logo 共創
+// ＋ Step 7 Logo Prompt 確認。Gate：品牌配色與字體必須先確認（見 brandVisualReady()），
+// 才開放 Logo 共創；Logo 共創先討論方向（文字），選定方向後才產生正式 Logo 生圖指令，
+// 這一整段完全不叫外部 AI 產圖，圖片留給使用者自己拿 Logo Prompt 去支援生圖的 AI 產生，
+// 產生的圖片回來另外存成 Brand Asset（見 Step 8）。
+// ═══════════════════════════════════════════════════════════
+function brandVisualReady(brandId) {
+  const snap = latestConfirmedBrandSnapshot(brandId);
+  return !!(snap && snap.colors && snap.colors.length > 0 && snap.visualStyle);
+}
+function openBrandLogoDiscuss(brandId) {
+  const brand = getBrand(brandId);
+  if (!brand) return;
+  if (!brandVisualReady(brandId)) {
+    showToast('請先完成品牌配色與字體參考，才能開始 Logo 共創');
+    return;
+  }
+  brandFlowContext = { mode: 'logoDiscuss', brandId: brandId, freeText: '' };
+  showScreen('screen-brand-discuss-input');
+}
+function buildBrandLogoDirectionPrompt(brand, snap, freeText) {
+  const colorLines = ((snap && snap.colors) || []).map(function (c) { return (c.name || c.role) + '　' + (c.hex || ''); }).join('\n');
+  return '# Logo 共創\n\n' +
+    '## 品牌核心內容\n' + BRAND_CORE_CONTENT_FIELD_KEYS.map(function (key) {
+      const f = BRAND_FIELDS.find(function (x) { return x.key === key; });
+      return f.label + '：' + (brand[key] || '（未填）');
+    }).join('\n') + '\n\n' +
+    '## 已確認的品牌配色\n' + (colorLines || '（尚未有配色資料）') + '\n\n' +
+    '## 已確認的視覺風格\n' + ((snap && snap.visualStyle) || '（未填）') + '\n\n' +
+    '## 使用者對 Logo 的想法\n' + freeText + '\n\n' +
+    '## 你的角色\n請你扮演「品牌顧問」，根據上面已確認的品牌內容與配色，協助整理出 2～3 個 Logo 方向。**這一輪不要直接畫出 Logo 圖片**，先用文字整理方向，等使用者選定方向後，才會另外產生正式的 Logo 生圖指令。\n\n' +
+    '## 輸出格式\n請針對每一個方向，用以下重複格式輸出（2～3 個方向，欄位名稱請照抄）：\n\n' +
+    '【Logo方向 A】\n' +
+    '概念名稱：＿＿＿＿＿＿\n核心圖案：＿＿＿＿＿＿\n象徵意義：＿＿＿＿＿＿\n造型風格：＿＿＿＿＿＿\n' +
+    '品牌文字搭配方式：＿＿＿＿＿＿\n配色使用方式：＿＿＿＿＿＿\n小圖示簡化方式：＿＿＿＿＿＿\n避免元素：＿＿＿＿＿＿\n\n' +
+    '【Logo方向 B】\n（同上格式）\n\n' +
+    '（如果有第三個方向，用【Logo方向 C】，同上格式；沒有的話 2 個方向也可以）\n\n' +
+    // Logo 方向回填引導與解析清理（總策長／CEO 核准，2026-08-04）：唯一正式流程是「複製
+    // Prompt → 外部 AI → 使用者取得回覆 → 貼回工作台 → 工作台解析並保存」，AI 這一步只負責
+    // 提出方向，選擇一律由工作台按鈕完成——不需要、也不應該引導使用者「選 A／B／C」或在
+    // AI 對話裡直接做選擇，這些問句只會讓使用者誤以為要在 ChatGPT 裡回答，反而中斷正式流程。
+    '## 不要輸出\n' +
+    '・「請選擇 A、B 或 C」\n' +
+    '・「你比較喜歡哪一版」\n' +
+    '・「告訴我你想選哪個方向」\n' +
+    '・任何要求使用者直接在這段對話裡做選擇的問句\n' +
+    '・額外討論或延伸提問\n\n' +
+    '## 完成後請直接輸出下面這句話，不要再多加其他內容\n「請將以上完整內容貼回 AI 協作工作台。」\n\n' +
+    buildStepBoundaryBlock(
+      'Logo 方向提案（2～3 個）。',
+      ['請選 A／B／C，或問使用者比較喜歡哪一版', '要求使用者直接在這段對話裡做選擇', '額外討論或延伸提問', '產生「正式確認版本」——選擇與確認一律由工作台按鈕完成，不需要 AI 再輸出確認版本', '產生 Logo Prompt 或生圖指令'],
+      '使用者回到工作台，由工作台按鈕直接完成選擇並開始下一個 Step'
+    );
+}
+// 依【Logo方向 A】【Logo方向 B】（【Logo方向 C】）切段，抓固定 8 個欄位——跟
+// parseColorPaletteOptions() 同樣的寬鬆解析手法，抓不到留空，不捏造。
+// Parser 穩健化（2026-08-06）：改用 extractLabeledRowValue()，同時支援單行冒號格式跟
+// 表格列／Markdown 表格格式，跟配色解析用同一套邏輯，不用各自維護一份。
+// Logo 方向回填引導與解析清理（總策長／CEO 核准，2026-08-04）：Prompt 已經明確要求 AI
+// 不要輸出這些引導語，但不能保證 AI 一定完全遵守——如果 AI 把引導語黏在最後一個欄位的同一
+// 行（例如「避免元素：尖銳圖形。請選擇你喜歡的方向：A／B」），extractLabeledRowValue() 是
+// 逐行抓取，會把整行都當成欄位值。這裡是解析階段的最後一道防線：欄位值裡如果混進已知的
+// AI 引導語（含常見的選擇問句措辭），從該處截斷，只保留欄位本身的真實內容，不把引導語
+// 存進 Brand Snapshot。
+const LOGO_DIRECTION_NOISE_MARKERS = ['Step Boundary', '本次工作只完成', '本次 Step', '已確認', '請選擇', '請回覆', '等待使用者', '下一步', 'Logo 生圖', 'Logo Prompt', '生圖指令', '正式確認版', '請將以上', '請複製以上', '請把以上', '你比較喜歡', '你想選', '告訴我你想選'];
+function stripLogoDirectionNoise(value) {
+  if (!value) return value;
+  let cutIndex = value.length;
+  LOGO_DIRECTION_NOISE_MARKERS.forEach(function (marker) {
+    const idx = value.indexOf(marker);
+    if (idx !== -1 && idx < cutIndex) cutIndex = idx;
+  });
+  // 引導語通常另起一句，前面會留下句子結尾的標點（。／，／、等）——連標點一起清掉，
+  // 不然欄位值會留下一個孤立的句號尾巴。
+  return value.slice(0, cutIndex).replace(/[。，、,.\s]+$/, '').trim();
+}
+// 結尾操作引導語（「請將／請複製／請把……貼回……協作工作台」）是給使用者的操作指示，不是
+// Logo 設計內容——這句話「一定」要保留在 AI 的回覆裡（唯一正式流程需要它），但不能讓它被
+// 解析器誤吸收進最後一個方向的欄位值，也不該因為它的存在影響方向數量的判斷。用寬鬆正規表
+// 達式一次涵蓋常見措辭變體，並容錯空白、換行、全形／半形標點差異，不能只靠完全相同的固定
+// 字串比對；不管它出現在獨立段落還是黏在欄位同一行，都要能正確移除，不誤刪 Logo 設計內容。
+const LOGO_CLOSING_INSTRUCTION_PATTERN = /(請將|請複製|請把)[\s　]*以上[\s　]*(完整)?[\s　]*內容[\s　]*[，,、]?[\s　]*貼回[\s　]*(?:AI|Ai|ai)?[\s　]*協作工作台[\s　]*[。.]?/g;
+function stripLogoClosingInstruction(content) {
+  return content.replace(LOGO_CLOSING_INSTRUCTION_PATTERN, '');
+}
+function parseLogoDirectionOptions(rawContent) {
+  const content = stripLogoClosingInstruction(rawContent);
+  const parts = content.split(/【Logo方向\s*([A-Ca-c])】/);
+  const options = [];
+  for (let i = 1; i < parts.length; i += 2) {
+    const label = parts[i].toUpperCase();
+    const block = parts[i + 1] || '';
+    function grab(fieldLabel) { return stripLogoDirectionNoise(extractLabeledRowValue(block, fieldLabel)); }
+    options.push({
+      label: label,
+      conceptName: grab('概念名稱'),
+      coreIcon: grab('核心圖案'),
+      symbolism: grab('象徵意義'),
+      style: grab('造型風格'),
+      textPairing: grab('品牌文字搭配方式'),
+      colorUsage: grab('配色使用方式'),
+      iconSimplify: grab('小圖示簡化方式'),
+      avoid: grab('避免元素')
+    });
+  }
+  return options;
+}
+// Gate：至少 2 個方向，每個方向至少要有概念名稱＋核心圖案，不完整就不能進方向卡片畫面。
+function validateLogoDirectionOptions(options) {
+  if (options.length < 2) {
+    return { valid: false, reason: '需要至少 2 個 Logo 方向，目前只解析到 ' + options.length + ' 個' };
+  }
+  const missing = [];
+  options.forEach(function (opt) {
+    if (!opt.conceptName) missing.push('方向 ' + opt.label + ' 的概念名稱');
+    if (!opt.coreIcon) missing.push('方向 ' + opt.label + ' 的核心圖案');
+  });
+  if (missing.length > 0) {
+    return { valid: false, reason: '以下欄位缺少內容：' + missing.join('、') };
+  }
+  return { valid: true, reason: '' };
+}
+function buildLogoDirectionFixPrompt(reason) {
+  return '# Logo 方向資料不完整，請補齊\n\n## 問題\n' + reason + '\n\n' +
+    '## 你的任務\n請重新輸出至少 2 個完整的 Logo 方向，每個方向都要包含概念名稱、核心圖案、象徵意義、造型風格、品牌文字搭配方式、配色使用方式、小圖示簡化方式、避免元素，欄位名稱請照抄，格式如下：\n\n' +
+    '【Logo方向 A】\n概念名稱：＿＿＿＿＿＿\n核心圖案：＿＿＿＿＿＿\n象徵意義：＿＿＿＿＿＿\n造型風格：＿＿＿＿＿＿\n品牌文字搭配方式：＿＿＿＿＿＿\n配色使用方式：＿＿＿＿＿＿\n小圖示簡化方式：＿＿＿＿＿＿\n避免元素：＿＿＿＿＿＿\n\n【Logo方向 B】\n（同上格式）\n\n' +
+    buildStepBoundaryBlock(
+      '補齊後的 Logo 方向（至少 2 個）。',
+      ['請選 A／B／C', '請回覆 B', '等待使用者選擇', '提醒下一步', '產生「正式確認版本」', '產生 Logo Prompt 或生圖指令'],
+      '使用者回到工作台，由工作台按鈕直接完成選擇並開始下一個 Step'
+    );
+}
+// Recovery Flow：跟色票版本共用同一個貼回畫面的警示區塊（bpb-color-incomplete-warning），
+// 只是這次存的是 Logo 方向專用的重新整理指令——這個警示區塊本來就是通用「格式不完整」
+// 提示，沒有寫死跟顏色綁在一起，直接沿用不用另外新增 DOM。
+function showBrandLogoDirectionIncompleteWarning(reason) {
+  brandColorFixInstructionText = buildLogoDirectionFixPrompt(reason);
+  document.getElementById('bpb-color-incomplete-reason').textContent = reason;
+  document.getElementById('bpb-color-incomplete-warning').style.display = 'block';
+}
+
+let pendingLogoDirectionOptions = null;
+function renderBrandLogoDirectionPreview() {
+  const list = document.getElementById('bldp-list');
+  if (!pendingLogoDirectionOptions) { list.innerHTML = ''; return; }
+  list.innerHTML = pendingLogoDirectionOptions.map(function (opt) {
+    return '<div class="card" style="margin-bottom:14px">' +
+      '<div style="font-size:17px;font-weight:700">方向 ' + escHtml(opt.label) + (opt.conceptName ? '　' + escHtml(opt.conceptName) : '') + '</div>' +
+      '<div class="line" style="margin-top:8px">核心圖案：' + escHtml(opt.coreIcon || '（未填）') + '</div>' +
+      '<div class="line">象徵意義：' + escHtml(opt.symbolism || '（未填）') + '</div>' +
+      '<div class="line">造型風格：' + escHtml(opt.style || '（未填）') + '</div>' +
+      '<div class="line">品牌文字搭配：' + escHtml(opt.textPairing || '（未填）') + '</div>' +
+      '<div class="line">配色使用方式：' + escHtml(opt.colorUsage || '（未填）') + '</div>' +
+      '<div class="line">小圖示簡化：' + escHtml(opt.iconSimplify || '（未填）') + '</div>' +
+      '<div class="line">避免元素：' + escHtml(opt.avoid || '（未填）') + '</div>' +
+      '<button class="btn" style="margin-top:10px" onclick="chooseLogoDirection(\'' + opt.label + '\')">✅ 採用這個方向</button>' +
+      '<button class="btn outline" style="margin-top:8px" onclick="adjustLogoDirection(\'' + opt.label + '\')">✏️ 微調這個方向</button>' +
+      '</div>';
+  }).join('') +
+    '<button class="btn outline" onclick="regenerateLogoDirections()">🔄 都不喜歡，重新產生</button>' +
+    '<button class="btn outline" style="margin-top:10px" onclick="mixLogoDirections()">🔀 混合兩個方向</button>';
+}
+function cancelLogoDirectionPreview() { pendingLogoDirectionOptions = null; showScreen('screen-brand-detail'); }
+// 候選模式（手動點選卡片）與已選定模式（貼回時關鍵字直接判定）共用同一段「進入 Step 7」
+// 邏輯，避免兩條路徑各寫一份、之後改一邊忘了改另一邊。
+function proceedWithLogoDirection(opt) {
+  const brand = getBrand(brandFlowContext.brandId);
+  const snap = latestConfirmedBrandSnapshot(brandFlowContext.brandId);
+  brandFlowContext.selectedLogoDirection = opt;
+  brandFlowContext.mode = 'logoPromptConfirm';
+  brandLastCopyText = buildLogoPromptGenerationPrompt(brand, snap, opt);
+  pendingLogoDirectionOptions = null;
+  showScreen('screen-brand-copy-to-ai');
+}
+function chooseLogoDirection(label) {
+  const opt = pendingLogoDirectionOptions.find(function (o) { return o.label === label; });
+  if (!opt) return;
+  proceedWithLogoDirection(opt);
+}
+function adjustLogoDirection(label) {
+  const opt = pendingLogoDirectionOptions.find(function (o) { return o.label === label; });
+  if (!opt) return;
+  const note = prompt('想怎麼微調「' + (opt.conceptName || ('方向 ' + label)) + '」？可以簡單描述：', '');
+  if (note === null || !note.trim()) return;
+  const brand = getBrand(brandFlowContext.brandId);
+  const snap = latestConfirmedBrandSnapshot(brandFlowContext.brandId);
+  brandLastCopyText = buildBrandLogoDirectionPrompt(brand, snap, '請針對方向「' + (opt.conceptName || label) + '」微調：' + note.trim() + '（保留其他已提供的方向，只調整這一個）');
+  pendingLogoDirectionOptions = null;
+  showScreen('screen-brand-copy-to-ai');
+}
+function regenerateLogoDirections() {
+  const brand = getBrand(brandFlowContext.brandId);
+  const snap = latestConfirmedBrandSnapshot(brandFlowContext.brandId);
+  brandLastCopyText = buildBrandLogoDirectionPrompt(brand, snap, '請提供跟前面完全不同的新 Logo 方向');
+  pendingLogoDirectionOptions = null;
+  showScreen('screen-brand-copy-to-ai');
+}
+function mixLogoDirections() {
+  const pick = prompt('想混合哪兩個方向？可以簡單描述：', '');
+  if (pick === null || !pick.trim()) return;
+  const optionsText = pendingLogoDirectionOptions.map(function (o) {
+    return '【方向 ' + o.label + '】概念名稱：' + o.conceptName + '　核心圖案：' + o.coreIcon + '　造型風格：' + o.style;
+  }).join('\n');
+  brandLastCopyText = '# 混合 Logo 方向\n\n## 原本的方向\n' + optionsText + '\n\n## 使用者想混合的方向\n' + pick.trim() +
+    '\n\n## 你的任務\n請混合出一個新的 Logo 方向，用跟原本一樣的固定格式（【Logo方向 X】＋ 8 個欄位）重新輸出方向，可以放進其中一個方向裡，其餘可以維持原方向或再微調。';
+  pendingLogoDirectionOptions = null;
+  showScreen('screen-brand-copy-to-ai');
+}
+
+// ── Step 7｜Logo Prompt 確認 ─────────────────────────────────────
+function buildLogoPromptGenerationPrompt(brand, snap, direction) {
+  const colorLines = ((snap && snap.colors) || []).map(function (c) { return (c.name || c.role) + '　' + (c.hex || ''); }).join('\n');
+  return '# Logo 圖片生成指令\n\n' +
+    '## 品牌名稱\n' + (brand.name || '') + '\n\n' +
+    '## 品牌定位摘要\n' + (brand.oneLiner || '（未填）') + '\n\n' +
+    '## 選定的 Logo 方向\n' +
+    '概念名稱：' + (direction.conceptName || '') + '\n核心圖案：' + (direction.coreIcon || '') + '\n象徵意義：' + (direction.symbolism || '') + '\n' +
+    '造型風格：' + (direction.style || '') + '\n品牌文字搭配方式：' + (direction.textPairing || '') + '\n配色使用方式：' + (direction.colorUsage || '') + '\n' +
+    '小圖示簡化方式：' + (direction.iconSimplify || '') + '\n避免元素：' + (direction.avoid || '') + '\n\n' +
+    '## 正式品牌色票\n' + (colorLines || '（尚未有配色資料）') + '\n\n' +
+    '## 你的任務\n請直接輸出一段可以貼給支援圖片生成的 AI 使用的「Logo 圖片生成指令」，內容需包含：\n' +
+    '・品牌名稱與定位摘要\n・核心圖案與象徵意義\n・圖形風格\n・字標（文字）呈現方式\n・正式品牌色票與 HEX\n・背景要求（例如：透明背景或指定底色）\n' +
+    '・小尺寸辨識度要求（縮到手機圖示大小仍清楚可辨）\n・應避免的元素\n・不要出現 Mockup 展示框、不要額外裝飾、不要出現錯字、不要出現任何未確認的英文品牌名稱\n\n' +
+    '請只輸出這一段指令本身（純文字，不要加上「以下是生圖指令」之類的前言，也不要輸出其他品牌內容），方便使用者直接複製使用。\n\n' +
+    // Step Boundary Contract V2（總策長／CEO 核准，P0，2026-08-04）：規格文件裡明確指定的
+    // 逐字文案，這裡直接用共用函式產生一模一樣的內容，不是另外手寫一份。
+    buildStepBoundaryBlock('Logo 生圖 Prompt。', ['解釋如何生圖', '建議下一步', '引導保存'], '工作台下一步');
+}
+let pendingLogoPromptDraft = null;
+function renderBrandLogoPromptConfirm() {
+  const box = document.getElementById('blpc-content');
+  if (pendingLogoPromptDraft === null) { box.innerHTML = ''; return; }
+  box.innerHTML = '<div class="section-label">Logo 圖片生成指令</div>' +
+    '<div class="line" style="white-space:pre-wrap;word-break:break-word;margin-top:8px">' + escHtml(pendingLogoPromptDraft) + '</div>' +
+    copyReadyActionsHtml(pendingLogoPromptDraft, '已複製 Logo 生圖指令');
+}
+function editLogoPromptDraft() {
+  const val = prompt('直接修改 Logo 生圖指令：', pendingLogoPromptDraft || '');
+  if (val === null) return;
+  pendingLogoPromptDraft = val.trim();
+  renderBrandLogoPromptConfirm();
+}
+function regenerateLogoPrompt() {
+  const brand = getBrand(brandFlowContext.brandId);
+  const snap = latestConfirmedBrandSnapshot(brandFlowContext.brandId);
+  const direction = brandFlowContext.selectedLogoDirection;
+  if (!direction) { showScreen('screen-brand-detail'); return; }
+  brandLastCopyText = buildLogoPromptGenerationPrompt(brand, snap, direction);
+  pendingLogoPromptDraft = null;
+  showScreen('screen-brand-copy-to-ai');
+}
+// 確認後，Logo Prompt（文字）存進新版 Brand Snapshot（logoPrompt／logoPromptVersion／
+// logoDirection），跟 Step 5C 一樣「先看、再確認、才建立新版本」；Logo 圖片本身留給
+// Step 8（Brand Assets）另外保存，這裡完全不涉及圖片。
+function confirmLogoPromptDraft() {
+  if (pendingLogoPromptDraft === null || !brandFlowContext) return;
+  const brandId = brandFlowContext.brandId;
+  const direction = brandFlowContext.selectedLogoDirection;
+  const baseSnap = brandSnapshotBaseFields(brandId);
+  // 「微調後再生」（adjustLogoPromptAndRegenerate()）這條路徑不會重新設定
+  // selectedLogoDirection，這時候要沿用既有 Snapshot 已經存過的 logoDirection 文字，
+  // 不能直接拿空物件重建成一片空白，會把先前選定的方向資料洗掉。
+  const logoDirectionText = direction
+    ? ['概念名稱：' + (direction.conceptName || ''), '核心圖案：' + (direction.coreIcon || ''), '象徵意義：' + (direction.symbolism || ''), '造型風格：' + (direction.style || ''), '品牌文字搭配方式：' + (direction.textPairing || ''), '配色使用方式：' + (direction.colorUsage || ''), '小圖示簡化方式：' + (direction.iconSimplify || ''), '避免元素：' + (direction.avoid || '')].join('\n')
+    : (baseSnap.logoDirection || '');
+  const fields = Object.assign({}, baseSnap, {
+    logoDirection: logoDirectionText,
+    logoPrompt: pendingLogoPromptDraft,
+    logoPromptVersion: (baseSnap.logoPromptVersion || 0) + 1,
+    logoStatus: 'draft'
+  });
+  bumpBrandVersionForNewSnapshot(brandId);
+  createBrandSnapshot(brandId, fields, 'confirmed');
+  pendingLogoPromptDraft = null;
+  showToast('已確認 Logo Prompt，建立新版 Brand Snapshot');
+  // 真人驗收 UX Blocker 修正（總策長／CEO 核准，2026-08-06）：確認 Logo Prompt 後不要
+  // 直接丟回品牌詳情頁，改進「Logo 成品」畫面，讓使用者可以馬上貼圖預覽、放大查看、
+  // 重新產生、微調或確認採用——不是只有一段 Logo 規格文字就結束。
+  activeBrandDetailId = brandId;
+  // Logo 流程優化 Round 2：每次重新確認 Logo Prompt（含微調／重新整理後再確認），主線
+  // 都要從頭開始，不能沿用上一版走到一半的「保存提醒」畫面狀態。
+  logoCompletionStage = 'prompt';
+  showScreen('screen-brand-logo-asset');
+}
+
+// ── Logo 成品畫面（Logo 流程優化 Round 2，總策長／CEO 核准，2026-08-04）─────────
+// 主線改為純文字引導：複製 Logo 生圖指令 → 使用者自行去外部 AI（ChatGPT／Gemini 等）
+// 產圖 → 提醒自行保存圖片 → 採用／微調／重新產生，全程不要求貼圖片網址、不阻擋在
+// 「上傳圖片」這一步——這是初學者主線。原本 Step 8 的圖片網址貼上／預覽／管理功能
+// 完整保留，但降級為「進階選用」，收在畫面下方的收合區塊裡，不是完成 Logo 的必要條件。
+// logoCompletionStage 是畫面暫時狀態（不寫進 Brand Snapshot），只是用來記住使用者
+// 目前看到的是「複製指令」畫面還是「保存提醒」畫面；真正代表 Logo 是否完成的欄位是
+// Brand Snapshot 的 logoStatus（'draft'／'confirmed'）。
+let logoCompletionStage = 'prompt';
+function markLogoGenerationCompleted() {
+  logoCompletionStage = 'saveReminder';
+  renderBrandLogoAsset();
+}
+// 「已保存，完成 Logo」：不要求已經貼過圖片網址（圖片是選用），只要 logoPrompt 已確認，
+// 使用者按下這顆按鈕就代表 Logo 這一步完成——對齊 Product Principle「圖片是否回填工作台，
+// 不作為流程 Gate」。
+function confirmLogoSavedComplete() {
+  const brandId = activeBrandDetailId;
+  const baseSnap = brandSnapshotBaseFields(brandId);
+  const fields = Object.assign({}, baseSnap, { logoStatus: 'confirmed' });
+  bumpBrandVersionForNewSnapshot(brandId);
+  createBrandSnapshot(brandId, fields, 'confirmed');
+  logoCompletionStage = 'prompt';
+  showToast('Logo 已完成');
+  renderBrandLogoAsset();
+}
+function renderBrandLogoAsset() {
+  const brand = getBrand(activeBrandDetailId);
+  if (!brand) { showScreen('screen-brand-detail'); return; }
+  const snap = latestConfirmedBrandSnapshot(brand.id);
+  const mainBox = document.getElementById('bla-main-flow');
+  if (!snap || !snap.logoPrompt) {
+    mainBox.innerHTML = '<div class="tool-suggest-note">還沒有已確認的 Logo Prompt</div>';
+  } else if (snap.logoStatus === 'confirmed') {
+    mainBox.innerHTML = '<div class="section-label">✅ Logo 已完成</div>' +
+      '<div class="line" style="white-space:pre-wrap;word-break:break-word;margin-top:8px">' + escHtml(snap.logoPrompt) + '</div>' +
+      copyReadyActionsHtml(snap.logoPrompt, '已複製 Logo 生圖指令') +
+      '<button class="btn outline" style="margin-top:10px" onclick="adjustLogoPromptAndRegenerate(' + brand.id + ')">✏️ 想再微調</button>' +
+      '<button class="btn outline" style="margin-top:8px" onclick="regenerateLogoPrompt()">🔄 重新產生</button>';
+  } else if (logoCompletionStage === 'saveReminder') {
+    mainBox.innerHTML = '<div class="section-label">建議保存 Logo 圖片</div>' +
+      '<div class="line" style="margin-top:8px">請先將滿意的 Logo 圖片保存到自己的裝置或雲端，避免之後在生圖 AI 的對話紀錄裡不容易再找到。</div>' +
+      '<div class="secondary-note" style="margin-top:8px">建議保存位置：</div>' +
+      '<div class="line">・手機相簿：建立「品牌 Logo」相簿</div>' +
+      '<div class="line">・Google Drive：品牌名稱／Logo</div>' +
+      '<div class="line">・電腦：品牌資料夾／Logo</div>' +
+      '<button class="btn" style="margin-top:10px" onclick="confirmLogoSavedComplete()">✅ 已保存，完成 Logo</button>' +
+      '<button class="btn outline" style="margin-top:8px" onclick="adjustLogoPromptAndRegenerate(' + brand.id + ')">✏️ 想再微調</button>' +
+      '<button class="btn outline" style="margin-top:8px" onclick="regenerateLogoPrompt()">🔄 重新產生</button>';
+  } else {
+    mainBox.innerHTML = '<div class="section-label">目前確認的 Logo Prompt</div>' +
+      '<div class="line" style="white-space:pre-wrap;word-break:break-word;margin-top:8px">' + escHtml(snap.logoPrompt) + '</div>' +
+      copyReadyActionsHtml(snap.logoPrompt, '已複製 Logo 生圖指令') +
+      '<div class="secondary-note" style="margin-top:10px">請將這段指令貼到支援圖片生成的 AI，例如 ChatGPT、Gemini 或其他生圖工具，生成 Logo 圖片。</div>' +
+      '<button class="btn" style="margin-top:10px" onclick="markLogoGenerationCompleted()">✅ 我已完成生圖</button>' +
+      '<button class="btn outline" style="margin-top:8px" onclick="adjustLogoPromptAndRegenerate(' + brand.id + ')">✏️ 想微調指令</button>' +
+      '<button class="btn outline" style="margin-top:8px" onclick="regenerateLogoPrompt()">🔄 重新整理指令</button>';
+  }
+
+  // 進階選用：圖片網址貼上／預覽／管理，完全沿用既有 Step 8 機制，只是不再是主線必經路徑。
+  const assets = brandAssetsForBrand(brand.id).filter(function (a) { return a.type === 'logo'; }).slice().reverse();
+  const listBox = document.getElementById('bla-asset-list');
+  listBox.innerHTML = assets.map(function (a) {
+    const isImage = /\.(png|jpe?g|webp|gif|svg)(\?|$)/i.test(a.imageRef || '') || /^https?:\/\//i.test(a.imageRef || '');
+    const statusLabel = a.status === 'selected' ? '⭐ 目前採用' : (a.status === 'archived' ? '已封存' : '草稿');
+    return '<div class="card" style="margin-bottom:10px">' +
+      '<div class="tool-name">v' + a.version + '　' + escHtml(statusLabel) + '</div>' +
+      (isImage ? '<img src="' + escAttr(a.imageRef) + '" style="max-width:100%;border-radius:8px;margin-top:8px" onerror="this.style.display=\'none\'">' : '') +
+      '<div class="line" style="margin-top:6px;word-break:break-all;font-size:11.5px;opacity:0.75">' + escHtml(a.imageRef || '') + '</div>' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">' +
+      '<button class="btn outline" style="width:auto;flex:1;padding:8px;font-size:12.5px;margin-top:0" onclick="previewBrandAsset(' + a.id + ')">🔍 放大查看</button>' +
+      '<button class="btn outline" style="width:auto;flex:1;padding:8px;font-size:12.5px;margin-top:0" onclick="regenerateBrandAssetSamePrompt(' + a.id + ')">🔄 重新產生</button>' +
+      '</div>' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:6px">' +
+      '<button class="btn outline" style="width:auto;flex:1;padding:8px;font-size:12.5px;margin-top:0" onclick="adjustLogoPromptAndRegenerate(' + brand.id + ')">✏️ 微調後再生</button>' +
+      (a.status !== 'selected' ? '<button class="btn" style="width:auto;flex:1;padding:8px;font-size:12.5px;margin-top:0" onclick="selectBrandAsset(' + a.id + ');render()">⭐ 確認採用</button>' : '') +
+      (a.status !== 'selected' ? '<button class="tool-delete" onclick="if(removeBrandAsset(' + a.id + '))render()">🗑️</button>' : '') +
+      '</div></div>';
+  }).join('') || '<div class="tool-suggest-note">還沒有任何 Logo 圖片——請先把上面的 Logo Prompt 拿去支援生圖的 AI 產生圖片，再把圖片網址貼上來。</div>';
+}
+// 微調——沿用既有「用已確認內容為基礎，只調整使用者提到的部分」手法（跟品牌配色的
+// requestBrandVisualPartialAdjust() 同一種設計精神），不是重新走一次 Logo 方向討論。
+function buildLogoPromptAdjustPrompt(snap, note) {
+  return '# 微調 Logo 圖片生成指令\n\n' +
+    '## 目前已確認的 Logo Prompt\n' + ((snap && snap.logoPrompt) || '（尚未有目前版本）') + '\n\n' +
+    '## 使用者這次想調整的地方\n' + note + '\n\n' +
+    '## 你的任務\n請直接以上面已確認的 Logo Prompt 為基礎微調，只調整使用者提到的部分，其餘保持不變，輸出完整的新版「Logo 圖片生成指令」。\n\n' +
+    '請只輸出這一段指令本身（純文字，不要加上前言，也不要輸出其他內容），方便使用者直接複製使用。\n\n' +
+    buildStepBoundaryBlock('微調後的 Logo 生圖 Prompt。', ['解釋如何生圖', '建議下一步', '引導保存'], '工作台下一步');
+}
+function adjustLogoPromptAndRegenerate(brandId) {
+  const note = prompt('想怎麼調整這個 Logo？可以簡單描述（例如：想要線條更簡單、想要顏色更亮）：', '');
+  if (note === null || !note.trim()) return;
+  const snap = latestConfirmedBrandSnapshot(brandId);
+  // 不重設 selectedLogoDirection——保留原本選定的方向物件，confirmLogoPromptDraft()
+  // 才知道這一輪沒有新方向，要沿用既有 Snapshot 的 logoDirection，不會被洗成空白。
+  const existingDirection = (brandFlowContext && brandFlowContext.selectedLogoDirection) || null;
+  brandFlowContext = { mode: 'logoPromptConfirm', brandId: brandId, selectedLogoDirection: existingDirection };
+  brandLastCopyText = buildLogoPromptAdjustPrompt(snap, note.trim());
+  showScreen('screen-brand-copy-to-ai');
+}
+
+// ── Step 8｜Brand Assets（總策長／CEO 核准，2026-08-06）─────────────
+// 圖片是品牌資產，不是 Brand Snapshot：這裡只存「參照」（網址或說明文字，這個 App
+// 沒有檔案儲存機制，沿用既有 linkedAssets「只存關聯不存檔案本體」的既定做法），不解析
+// 成結構化欄位、不覆蓋 logoPrompt／logoDirection。
+function renderBrandAssetsSection(brandId) {
+  const box = document.getElementById('bdt-brand-assets-section');
+  const assets = brandAssetsForBrand(brandId).filter(function (a) { return a.type === 'logo'; }).slice().reverse();
+  const listHtml = assets.map(function (a) {
+    const statusLabel = a.status === 'selected' ? '⭐ 目前採用' : (a.status === 'archived' ? '已封存' : '草稿');
+    const isImage = /\.(png|jpe?g|webp|gif|svg)(\?|$)/i.test(a.imageRef || '') || /^https?:\/\//i.test(a.imageRef || '');
+    return '<div class="tool-row" style="flex-direction:column;align-items:flex-start">' +
+      '<div style="display:flex;justify-content:space-between;width:100%;align-items:center">' +
+      '<div class="tool-name">v' + a.version + '　' + escHtml(statusLabel) + '</div>' +
+      '</div>' +
+      '<div class="line" style="margin-top:4px;word-break:break-all">' + escHtml(a.imageRef || '（未填）') + '</div>' +
+      (a.notes ? '<div class="secondary-note">' + escHtml(a.notes) + '</div>' : '') +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;width:100%">' +
+      (isImage ? '<button class="btn outline" style="width:auto;flex:1;padding:8px;font-size:12.5px;margin-top:0" onclick="previewBrandAsset(' + a.id + ')">👁 預覽</button>' : '') +
+      (a.status !== 'selected' ? '<button class="btn outline" style="width:auto;flex:1;padding:8px;font-size:12.5px;margin-top:0" onclick="selectBrandAsset(' + a.id + ');render()">⭐ 設為目前 Logo</button>' : '') +
+      '<button class="btn outline" style="width:auto;flex:1;padding:8px;font-size:12.5px;margin-top:0" onclick="regenerateBrandAssetSamePrompt(' + a.id + ')">🔄 原 Prompt 再生</button>' +
+      (a.status !== 'selected' ? '<button class="tool-delete" onclick="if(removeBrandAsset(' + a.id + '))render()">🗑️</button>' : '') +
+      '</div></div>';
+  }).join('');
+  box.innerHTML =
+    '<div class="section-label" style="margin-top:18px">Logo 圖片（Brand Asset）</div>' +
+    (listHtml || '<div class="tool-suggest-note">還沒有任何 Logo 圖片</div>') +
+    '<button class="btn outline" style="margin-top:8px" onclick="addBrandAssetPrompt(' + brandId + ')">➕ 新增 Logo 圖片</button>';
+}
+// Logo Prompt 確認後才有 promptSnapshotId 可以關聯；還沒確認過 Logo Prompt 時，新增
+// 圖片一樣可以存（imageRef 是使用者自己準備的參照），只是 promptSnapshotId 留空。
+function addBrandAssetPrompt(brandId) {
+  const imageRef = prompt('Logo 圖片網址或參照說明（例如：Google Drive 連結、圖片網址）：', '');
+  if (imageRef === null || !imageRef.trim()) return;
+  const notes = prompt('備註（選填）：', '') || '';
+  const snap = latestConfirmedBrandSnapshot(brandId);
+  createBrandAsset(brandId, { type: 'logo', imageRef: imageRef.trim(), promptSnapshotId: snap ? snap.id : null, notes: notes.trim() });
+  showToast('已新增 Logo 圖片');
+  render();
+}
+function regenerateBrandAssetSamePrompt(assetId) {
+  const asset = getBrandAsset(assetId);
+  if (!asset) return;
+  const imageRef = prompt('用同一組 Logo Prompt 再生一張，貼上新圖片的網址或參照：', '');
+  if (imageRef === null || !imageRef.trim()) return;
+  createBrandAsset(asset.brandId, { type: 'logo', imageRef: imageRef.trim(), promptSnapshotId: asset.promptSnapshotId, notes: asset.notes });
+  showToast('已新增一版 Logo 圖片（同一組 Prompt）');
+  render();
+}
+// 浮動 Dialog 預覽圖片——沿用既有「不跳離目前畫面」的 Dialog 慣例（跟 Brand Summary
+// Dialog／Copy Ready 預覽 Dialog 同一套模式），不是導到新頁面。
+// 浮動 Dialog 預覽圖片——沿用既有「不跳離目前畫面」的 Dialog 慣例（跟 Brand Summary
+// Dialog／Copy Ready 預覽 Dialog／情境參考圖預覽同一套模式），抽成共用函式，Logo Asset
+// 預覽跟情境參考圖預覽都用這個，不各自重寫一份幾乎一樣的 Dialog HTML。
+function previewImageUrlDialog(url, title) {
+  const existing = document.getElementById('image-preview-dialog');
+  if (existing) existing.remove();
+  const overlay = document.createElement('div');
+  overlay.id = 'image-preview-dialog';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:99999;overflow:auto;padding:20px;box-sizing:border-box';
+  overlay.innerHTML = '<div class="card" style="max-width:480px;margin:0 auto">' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">' +
+    '<div class="section-label" style="margin:0">' + escHtml(title || '圖片預覽') + '</div>' +
+    '<button class="tool-delete" onclick="document.getElementById(\'image-preview-dialog\').remove()">✕ 關閉</button></div>' +
+    '<img src="' + escAttr(url) + '" style="max-width:100%;border-radius:8px" onerror="this.style.display=\'none\'">' +
+    '<div class="line" style="margin-top:8px;word-break:break-all">' + escHtml(url) + '</div>' +
+    '</div>';
+  document.body.appendChild(overlay);
+}
+function previewBrandAsset(assetId) {
+  const asset = getBrandAsset(assetId);
+  if (!asset) return;
+  previewImageUrlDialog(asset.imageRef, 'Logo 圖片預覽');
+}
+
+function openBrandSuggestions() { showScreen('screen-brand-suggestions'); }
+function openBrandAssetLink() { showScreen('screen-brand-asset-link'); }
+
+function renderBrandAssetLink() {
+  const b = getBrand(activeBrandDetailId);
+  const list = document.getElementById('bal-result-list');
+  const options = state.results.filter(function (r) { return r.isFinal && !r.isBriefDraft; });
+  if (options.length === 0) {
+    list.innerHTML = '<div class="empty-state"><div class="icon">📚</div><div class="txt">成果庫目前還沒有可以關聯的成果</div></div>';
+    return;
+  }
+  list.innerHTML = options.map(function (r) {
+    return '<div class="result-card" onclick="linkBrandAsset(' + r.id + ')"><h4>' + escHtml(r.title || r.stepName) + '</h4>' +
+      '<div class="meta">' + escHtml(r.workName) + '　·　' + escHtml(r.stepName) + '</div></div>';
+  }).join('');
+}
+function linkBrandAsset(resultId) {
+  const purpose = prompt('這個成果的用途（例如：品牌 Logo 說明、風格參考）：', '');
+  if (purpose === null) return;
+  const b = getBrand(activeBrandDetailId);
+  b.linkedAssets.push({ resultId: resultId, purpose: purpose.trim(), note: '' });
+  saveState();
+  showToast('已關聯');
+  showScreen('screen-brand-detail');
+}
+function unlinkBrandAsset(brandId, resultId, event) {
+  if (event) event.stopPropagation();
+  const b = getBrand(brandId);
+  b.linkedAssets = b.linkedAssets.filter(function (a) { return a.resultId !== resultId; });
+  saveState();
+  render();
+  showToast('已解除關聯（原成果不會被刪除）');
+}
+
+// ── 品牌建議清單（修正指令四：項目／目前內容／AI建議／建議原因／是否採用，逐項勾選＋
+// 最後統一確認更新；「和AI一起調整既有品牌」與「Work完成後校準建議」共用同一套資料
+// 結構與這個畫面，不建立第二套系統）───────────────────────────────
+function renderBrandSuggestions() {
+  const b = getBrand(activeBrandDetailId);
+  const list = document.getElementById('bsg-list');
+  const pending = (b.pendingSuggestions || []).filter(function (s) { return s.status === 'pending'; });
+  if (pending.length === 0) {
+    list.innerHTML = '<div class="empty-state"><div class="icon">✅</div><div class="txt">目前沒有待審核的建議</div></div>';
+    return;
+  }
+  list.innerHTML = pending.map(function (s) {
+    return '<div class="card" style="margin-bottom:10px" data-sugg-id="' + s.id + '">' +
+      '<div class="section-label">' + escHtml(s.fieldLabel || s.field) + '</div>' +
+      '<div class="line" style="margin-top:6px"><b>目前內容：</b>' + escHtml(s.current || '（未填）') + '</div>' +
+      '<div class="line" style="margin-top:4px"><b>AI 建議：</b><span class="bsg-suggested-text">' + escHtml(s.suggested) + '</span></div>' +
+      '<div class="line" style="margin-top:4px;color:var(--text-dim);font-size:12.5px"><b>建議原因：</b>' + escHtml(s.reason || '（無）') + '</div>' +
+      '<div class="line" style="margin-top:4px;color:var(--text-dim);font-size:12.5px"><b>影響範圍：</b>' + escHtml(s.scope || '僅影響之後的新產出') + '</div>' +
+      '<label style="display:flex;align-items:center;gap:8px;margin-top:10px;cursor:pointer">' +
+      '<input type="checkbox" class="bsg-check" data-sugg-id="' + s.id + '"> 是否採用' +
+      '</label>' +
+      '<div style="display:flex;gap:8px;margin-top:8px">' +
+      '<button class="btn outline" style="width:auto;flex:1;padding:9px;font-size:12.5px;margin-top:0" onclick="editBrandSuggestionDraft(' + b.id + ',' + s.id + ')">修改建議後採用</button>' +
+      '<button class="btn outline" style="width:auto;flex:1;padding:9px;font-size:12.5px;margin-top:0" onclick="rejectBrandSuggestion(' + b.id + ',' + s.id + ')">不採用</button>' +
+      '</div></div>';
+  }).join('');
+}
+// 「修改建議後採用」：先把 AI 建議的文字改成使用者要的版本（還沒寫進正式品牌），
+// 同時自動勾選這一項——使用者仍然要按下方「確認更新」才會真正套用，維持
+// 「AI／使用者修改都只是草稿，最後統一確認才真正更新」這個唯一入口。
+function editBrandSuggestionDraft(brandId, suggestionId) {
+  const b = getBrand(brandId);
+  const s = b.pendingSuggestions.find(function (x) { return x.id === suggestionId; });
+  if (!s) return;
+  const val = prompt('修改建議內容（' + (s.fieldLabel || s.field) + '）：', s.suggested);
+  if (val === null) return;
+  s.suggested = val.trim();
+  saveState();
+  renderBrandSuggestions();
+  const cb = document.querySelector('.bsg-check[data-sugg-id="' + suggestionId + '"]');
+  if (cb) cb.checked = true;
+}
+function rejectBrandSuggestion(brandId, suggestionId) {
+  const b = getBrand(brandId);
+  const s = b.pendingSuggestions.find(function (x) { return x.id === suggestionId; });
+  if (!s) return;
+  s.status = 'rejected';
+  saveState();
+  showToast('已標記不採用');
+  render();
+}
+// 「確認更新」：一次套用所有勾選的建議，未勾選的欄位維持原狀不受影響；
+// 多個欄位一次寫入同一次 updateBrandFields()，只產生一個新版本，不是每項各自跳一版。
+function applyCheckedBrandSuggestions() {
+  const b = getBrand(activeBrandDetailId);
+  const checkedIds = Array.from(document.querySelectorAll('.bsg-check:checked')).map(function (el) { return parseInt(el.dataset.suggId, 10); });
+  if (checkedIds.length === 0) { showToast('請先勾選要採用的建議'); return; }
+  const fields = {};
+  const applied = [];
+  checkedIds.forEach(function (id) {
+    const s = b.pendingSuggestions.find(function (x) { return x.id === id && x.status === 'pending'; });
+    if (!s) return;
+    const fieldDef = BRAND_FIELDS.find(function (f) { return f.key === s.field; });
+    if (fieldDef) { fields[fieldDef.key] = s.suggested; }
+    s.status = 'applied';
+    applied.push(s);
+  });
+  if (Object.keys(fields).length > 0) updateBrandFields(b.id, fields);
+  else saveState();
+  showToast('已更新 ' + applied.length + ' 項品牌內容，未勾選的欄位維持原狀');
+  render();
+}
+
+// ── Project 預設品牌設定（規格三-6）───────────────────────────────
+function openProjectBrandPicker() { showScreen('screen-project-brand-picker'); }
+function renderProjectBrandPicker() {
+  const project = getActiveProject();
+  const list = document.getElementById('pbp-list');
+  const brands = activeBrands();
+  let html = '<div class="card" onclick="setProjectDefaultBrand(null)"><h3>不使用預設品牌</h3><div class="tool-suggest-note">新工作使用通用協作設定</div></div>';
+  html += brands.map(function (b) {
+    const sel = project.defaultBrandId === b.id ? '　✓ 目前預設' : '';
+    return '<div class="card" onclick="setProjectDefaultBrand(' + b.id + ')"><h3>🏷️ ' + escHtml(b.name) + sel + '</h3><div class="tool-suggest-note">' + escHtml(b.oneLiner || '') + '</div></div>';
+  }).join('');
+  list.innerHTML = html;
+}
+function setProjectDefaultBrand(brandId) {
+  const project = getActiveProject();
+  project.defaultBrandId = brandId;
+  saveState();
+  showToast(brandId ? '已設定這個專案的預設品牌' : '已改為不使用預設品牌');
+  showScreen('screen-project');
+}
+
+// ── Work 品牌顯示（work-detail 區塊）與切換入口 ────────────────────
+// Phase 3｜Official Brand Selector（總策長／CEO 核准，2026-08-05）：這個「套用目前品牌／
+// 自由設計」的可逆切換卡片，原本只給海報 Work 用（#20 真人驗收 Bug 修正，2026-08-02），
+// 現在正式推廣成全部 Flow 共用的 Official Brand Selector，不再限定海報。DOM id
+// （wd-poster-brand-setting 等）沿用舊名稱，避免動到既有畫面結構跟一批既有測試，
+// 但功能上已經是所有 Flow 共用同一份實作，不是海報專屬、也不需要各 Flow 各自維護一份。
+function renderWorkBrandSection(work) {
+  const box = document.getElementById('wd-brand-box');
+  const updateBox = document.getElementById('wd-brand-update-notice');
+  const posterBox = document.getElementById('wd-poster-brand-setting');
+  box.style.display = 'none';
+  posterBox.style.display = 'block';
+  renderOfficialBrandSelector(work, updateBox);
+}
+
+// Official Brand Selector 本體：只有兩態——套用「Project 目前的預設品牌」／自由設計，
+// 不是完整多品牌選單（多品牌選擇是另一個需求，超出本輪範圍，見既有 openBrandSwitcherForWork()／
+// screen-brand-switch，本輪保留不動，暫不接進這個共用元件）。
+// Phase 3.1（總策長／CEO 核准，2026-08-05）：正式改為三種模式的單選（不是兩個按鈕＋一個
+// 次要連結）——套用目前品牌／選擇其他品牌／本次不套用品牌，三者互斥、地位相同。
+// 「選擇其他品牌」底層仍沿用既有、完全沒被動過的 screen-brand-switch，只是入口從一個小
+// 連結，正式升級成主要三選一裡的一個選項。
+function renderOfficialBrandSelector(work, updateBox) {
+  const body = document.getElementById('wd-poster-brand-setting-body');
+  document.getElementById('wd-poster-brand-recovery').style.display = 'none';
+  const project = getProject(work.projectId);
+  const isDefaultBrandMode = !!(work.brandId && project.defaultBrandId === work.brandId);
+  const isOtherBrandMode = !!(work.brandId && project.defaultBrandId !== work.brandId);
+  const isFreeDesignMode = !work.brandId;
+
+  let statusLine;
+  if (work.brandId && work.brandSnapshot) {
+    const brand = getBrand(work.brandId);
+    const nameLabel = work.brandSnapshot.brandName + (brand && brand.status === '已封存' ? '（已封存）' : (!brand ? '（此品牌已不存在，仍使用建立當時的內容）' : ''));
+    statusLine = '<div class="line" style="margin-bottom:10px">🏷️ 已套用品牌：<b>' + escHtml(nameLabel) + '</b></div>';
+  } else {
+    statusLine = '<div class="line" style="margin-bottom:10px">🎨 自由設計模式</div>';
+  }
+
+  function radioRow(checked, onclick, label) {
+    return '<label style="display:flex;align-items:center;gap:8px;margin:6px 0;cursor:pointer;color:var(--text-mid);font-size:14px;font-weight:400">' +
+      '<input type="radio" name="wd-brand-selector-mode"' + (checked ? ' checked' : '') + ' onclick="' + onclick + '"> ' + escHtml(label) + '</label>';
+  }
+  body.innerHTML = statusLine +
+    radioRow(isDefaultBrandMode, 'switchWorkToBrandMode()', '套用目前品牌') +
+    radioRow(isOtherBrandMode, 'openBrandSwitcherForWork()', '選擇其他品牌') +
+    radioRow(isFreeDesignMode, 'switchWorkToFreeDesign()', '本次不套用品牌');
+
+  if (work.brandId && workBrandUpdateAvailable(work)) {
+    updateBox.style.display = 'block';
+    updateBox.innerHTML = '<div class="line">這個品牌已有更新。你目前的工作仍使用原本設定。</div>' +
+      '<div style="display:flex;gap:8px;margin-top:8px">' +
+      '<button class="btn outline" style="width:auto;flex:1;padding:9px;font-size:12.5px;margin-top:0" onclick="acknowledgeBrandUpdate()">繼續使用原設定</button>' +
+      '<button class="btn outline" style="width:auto;flex:1;padding:9px;font-size:12.5px;margin-top:0" onclick="adoptLatestBrandVersion()">改用最新版</button>' +
+      '</div>' +
+      '<button class="btn outline" style="margin-top:8px;font-size:12.5px" onclick="showBrandUpdateDiff()">查看更新內容</button>';
+  } else {
+    updateBox.style.display = 'none';
+  }
+
+  renderBrandSummaryCard(work);
+  renderSmartCardOutputCard(work);
+}
+
+function switchWorkToBrandMode() {
+  const work = getActiveWork();
+  const project = getProject(work.projectId);
+  const brand = project.defaultBrandId ? activeBrands().find(function (b) { return b.id === project.defaultBrandId; }) : null;
+  if (!brand) {
+    document.getElementById('wd-poster-brand-recovery').style.display = 'block';
+    return;
+  }
+  if (workHasAnyContent(work)) {
+    if (!confirm('切換品牌模式後，之後產生的內容會使用新的設定；已完成的成果不會自動變更。確定要套用嗎？')) return;
+  }
+  applyBrandToWork(work, brand);
+  showToast('已套用品牌「' + brand.name + '」');
+  renderWorkBrandSection(work);
+}
+
+function switchWorkToFreeDesign() {
+  const work = getActiveWork();
+  if (workHasAnyContent(work)) {
+    if (!confirm('切換品牌模式後，之後產生的內容會使用新的設定；已完成的成果不會自動變更。確定要切換嗎？')) return;
+  }
+  applyBrandToWork(work, null);
+  showToast('已切換為自由設計模式');
+  renderWorkBrandSection(work);
+}
+
+function dismissBrandSelectorRecovery() {
+  document.getElementById('wd-poster-brand-recovery').style.display = 'none';
+}
+function goToBrandCenterFromWorkDetail() {
+  showScreen('screen-brand-center');
+}
+
+// ═══════════════════════════════════════════════════════════
+// Phase 4｜Brand Summary Card（總策長／CEO 核准，2026-08-05）：Official Brand Selector
+// 下方的品牌摘要，正式列為 Brand Foundation 四大共用元件之一（Brand Snapshot／Official
+// Brand Selector／Brand Summary Card／Copy Ready）。只從 Brand Snapshot（Phase 2 資料層）
+// 讀取，不重新問使用者一次、不重複維護第二份品牌內容。
+// ═══════════════════════════════════════════════════════════
+
+// 摘要要顯示「目前正式代表這個品牌的版本」：優先用已正式發布的版本，還沒有發布過的
+// 品牌（目前幾乎所有既有品牌都是這個情況，因為發布這個動作要到 Phase 5 以後才有真正
+// 的操作入口）就退回「最新已確認版本」，讓摘要卡在 Phase 5 之前也能正常顯示內容，
+// 而不是要求使用者先做一個目前還做不到的動作。
+function getBrandSummarySourceSnapshot(brandId) {
+  return publishedBrandSnapshot(brandId) || latestConfirmedBrandSnapshot(brandId) || null;
+}
+function truncateForSummary(text, maxLen) {
+  if (!text) return '';
+  return text.length > maxLen ? text.slice(0, maxLen) + '…' : text;
+}
+function renderBrandSummaryCard(work) {
+  const container = document.getElementById('wd-brand-summary-card');
+  if (!work.brandId) { container.style.display = 'none'; return; }
+  const snap = getBrandSummarySourceSnapshot(work.brandId);
+  if (!snap) { container.style.display = 'none'; return; }
+  container.style.display = 'block';
+  const percent = brandSnapshotCompletionPercent(snap);
+  const colorSwatches = (snap.colors || []).map(function (c) {
+    return colorSwatchHtml(c.hex || c.name || '');
+  }).join('');
+  function row(label, value) {
+    return value ? '<div class="line" style="margin-top:6px"><b>' + escHtml(label) + '</b><br>' + escHtml(value) + '</div>' : '';
+  }
+  container.innerHTML =
+    '<div class="section-label">🏷️ ' + escHtml(snap.name || work.brandSnapshot.brandName) + '</div>' +
+    '<div class="line" style="margin-top:6px;color:var(--text-dim);font-size:12.5px">Brand Snapshot v' + snap.version + '　·　完成度 ' + percent + '%</div>' +
+    row('品牌定位', snap.positioning) +
+    row('品牌語氣', snap.tone) +
+    row('品牌 Slogan', snap.slogan) +
+    (colorSwatches ? '<div class="line" style="margin-top:6px"><b>品牌色彩</b><br>' + colorSwatches + '</div>' : '') +
+    row('Logo 方向', snap.logoDirection) +
+    row('品牌故事', truncateForSummary(snap.story, 60)) +
+    '<button class="btn outline" style="margin-top:10px" onclick="openBrandSummaryDialog()">👁 查看完整摘要</button>';
+}
+
+// 查看完整摘要用浮動 Dialog 呈現，不透過 showScreen()／不離開目前的工作詳情頁——
+// 符合「查看摘要不得跳離目前工作流程」的明確要求。
+function openBrandSummaryDialog() {
+  closeBrandSummaryDialog();
+  const work = getActiveWork();
+  if (!work || !work.brandId) return;
+  const snap = getBrandSummarySourceSnapshot(work.brandId);
+  if (!snap) return;
+  const percent = brandSnapshotCompletionPercent(snap);
+  function row(label, value) {
+    return value ? '<div class="line" style="margin-bottom:8px;white-space:pre-wrap;word-break:break-word"><b>' + escHtml(label) + '</b><br>' + escHtml(value) + '</div>' : '';
+  }
+  const colorRows = (snap.colors || []).map(function (c) {
+    return '<div class="line" style="margin-bottom:6px">' + colorSwatchHtml(c.hex || '') + escHtml((c.name || '') + (c.hex ? '　' + c.hex : ''));
+  }).join('');
+  const overlay = document.createElement('div');
+  overlay.id = 'brand-summary-dialog';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:99999;overflow:auto;padding:20px;box-sizing:border-box';
+  overlay.innerHTML = '<div class="card" style="max-width:480px;margin:0 auto">' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">' +
+    '<div class="section-label" style="margin:0">品牌完整摘要</div>' +
+    '<button class="tool-delete" onclick="closeBrandSummaryDialog()">✕ 關閉</button></div>' +
+    '<div class="line" style="margin-bottom:10px;color:var(--text-dim);font-size:12.5px">Brand Snapshot v' + snap.version + '　·　完成度 ' + percent + '%</div>' +
+    row('品牌名稱', snap.name) +
+    row('品牌定位', snap.positioning) +
+    row('主要服務對象', snap.targetAudience) +
+    row('品牌語氣', snap.tone) +
+    row('品牌 Slogan', snap.slogan) +
+    row('品牌故事', snap.story) +
+    row('Logo 方向', snap.logoDirection) +
+    row('視覺風格', snap.visualStyle) +
+    (colorRows ? '<div class="line" style="margin-bottom:6px"><b>品牌色彩</b></div>' + colorRows : '') +
+    '</div>';
+  document.body.appendChild(overlay);
+}
+function closeBrandSummaryDialog() {
+  const existing = document.getElementById('brand-summary-dialog');
+  if (existing) existing.remove();
+}
+
+// ═══════════════════════════════════════════════════════════
+// Brand Foundation｜Official Copy Ready Component（總策長／CEO 核准，2026-08-05）
+// 全系統唯一的「產生乾淨版本＋複製＋按鈕短暫顯示已複製」實作。Brand Summary Card、
+// Smart Card Output Card，以及未來商品／社群等任何需要「複製乾淨版本」的卡片，
+// 一律呼叫這裡，不得各自寫一份清理／複製邏輯。
+// ═══════════════════════════════════════════════════════════
+function buildCopyReadyText(rawText) {
+  if (!rawText) return '';
+  let cleaned = rawText;
+  cleaned = cleaned.replace(/^#{1,6}\s*/gm, ''); // 去標題井字號
+  cleaned = cleaned.replace(/\*\*(.*?)\*\*/g, '$1'); // 去粗體記號
+  cleaned = cleaned.replace(/__(.*?)__/g, '$1'); // 去底線強調記號
+  cleaned = cleaned.replace(/`{1,3}([^`]*)`{1,3}/g, '$1'); // 去 code 標記
+  // 去常見的 AI 前言句（「以下是為你整理的…」這類，不是使用者要的內容本身）
+  cleaned = cleaned.replace(/^(以下是|這是|為你整理|我幫你整理|根據你提供的內容)[^\n]*[:：]?\s*$/gim, '');
+  cleaned = cleaned.replace(/\n{3,}/g, '\n\n').trim(); // 去多餘空行，保留真正的換行分段
+  return cleaned;
+}
+// event 是可選的原生 click event（inline onclick 裡可以直接傳 event），用來找到觸發的
+// 按鈕元素、短暫顯示「✅ 已複製」再恢復原文字；沒有 event 就只複製＋跳 toast，不強求
+// 一定要有按鈕可以改文字（例如未來從非按鈕情境呼叫）。
+function copyReady(rawText, toastMessage, event) {
+  const cleanText = buildCopyReadyText(rawText);
+  function onCopied() {
+    showToast(toastMessage || '已複製');
+    const btn = event && event.target ? event.target.closest('button') : null;
+    if (btn && !btn.dataset.copyReadyBusy) {
+      const original = btn.textContent;
+      btn.dataset.copyReadyBusy = '1';
+      btn.textContent = '✅ 已複製';
+      setTimeout(function () { btn.textContent = original; delete btn.dataset.copyReadyBusy; }, 1500);
+    }
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(cleanText).then(onCopied).catch(function () { fallbackCopy(cleanText); onCopied(); });
+  } else {
+    fallbackCopy(cleanText); onCopied();
+  }
+}
+// Phase 5.1（總策長／CEO 核准，2026-08-05）：Copy Ready 正式升級為三個動作（複製／預覽／
+// 匯出 TXT），不只是複製。「預覽」用浮動 Dialog 顯示清理過的乾淨版本內容（不離開目前畫面，
+// 跟品牌摘要的 Dialog 同一套模式）；「匯出 TXT」用瀏覽器原生下載，不牽涉任何伺服器或 API。
+function previewCopyReadyText(rawText) {
+  closePreviewCopyReadyDialog();
+  const cleanText = buildCopyReadyText(rawText);
+  const overlay = document.createElement('div');
+  overlay.id = 'copy-ready-preview-dialog';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:99999;overflow:auto;padding:20px;box-sizing:border-box';
+  overlay.innerHTML = '<div class="card" style="max-width:480px;margin:0 auto">' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">' +
+    '<div class="section-label" style="margin:0">預覽（複製後的乾淨版本）</div>' +
+    '<button class="tool-delete" onclick="closePreviewCopyReadyDialog()">✕ 關閉</button></div>' +
+    '<div class="line" style="white-space:pre-wrap;word-break:break-word">' + escHtml(cleanText) + '</div>' +
+    '</div>';
+  document.body.appendChild(overlay);
+}
+function closePreviewCopyReadyDialog() {
+  const existing = document.getElementById('copy-ready-preview-dialog');
+  if (existing) existing.remove();
+}
+function exportCopyReadyTextAsTxt(rawText) {
+  const cleanText = buildCopyReadyText(rawText);
+  const blob = new Blob([cleanText], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = '品牌內容_' + Date.now() + '.txt';
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('已匯出 TXT 檔案');
+}
+// 全系統統一的「複製／預覽／匯出 TXT」三動作按鈕列，取代原本只有單一「複製乾淨版本」
+// 按鈕的版本——data-copy-text／data-copy-toast 放在外層容器上，三個按鈕共用同一份資料，
+// 一樣不把文字直接拼進 onclick 的 JS 字串字面值。
+function copyReadyActionsHtml(text, toastMessage, extraStyle) {
+  return '<div style="display:flex;gap:6px;margin-top:6px' + (extraStyle || '') + '" data-copy-text="' + escAttr(text) + '" data-copy-toast="' + escAttr(toastMessage) + '">' +
+    '<button class="btn outline" style="width:auto;flex:1;padding:9px;font-size:12.5px;margin-top:0" onclick="copyReady(this.parentElement.dataset.copyText,this.parentElement.dataset.copyToast,event)">📋 複製</button>' +
+    '<button class="btn outline" style="width:auto;flex:1;padding:9px;font-size:12.5px;margin-top:0" onclick="previewCopyReadyText(this.parentElement.dataset.copyText)">👁 預覽</button>' +
+    '<button class="btn outline" style="width:auto;flex:1;padding:9px;font-size:12.5px;margin-top:0" onclick="exportCopyReadyTextAsTxt(this.parentElement.dataset.copyText)">⬇ 匯出 TXT</button>' +
+    '</div>';
+}
+
+// ═══════════════════════════════════════════════════════════
+// Phase 5｜Smart Card Output Card（總策長／CEO 核准，2026-08-05）：跟 Brand Summary Card
+// 定位不同——Summary 負責「查看品牌」，這裡負責「可直接使用」。四個區塊：一句話 Slogan／
+// 服務項目／品牌故事（三版本）／跑馬燈，全部資料存在 Brand Snapshot 的 smartCardOutput，
+// 全系統唯一一份，不另外維護第二份。所有複製動作都透過上面的 Official Copy Ready
+// Component（copyReady()），沒有另外寫清理／複製邏輯。
+//
+// Brand Snapshot Lock：只要來源 snapshot 是 published，一律不提供修改／新增／刪除／
+// 排序，只留複製——這是「published 不得由其他地方直接修改」規則在這裡的具體落地
+// （即使現在還沒有其他 Flow 會編輯品牌內容，這張卡片本身也遵守同一條規則）。
+// ═══════════════════════════════════════════════════════════
+
+function updateSmartCardOutputField(snapshotId, key, value) {
+  const snap = getBrandSnapshot(snapshotId);
+  if (!snap || snap.status === 'published') return false;
+  snap.smartCardOutput[key] = value;
+  snap.updatedAt = new Date().toISOString();
+  saveState();
+  return true;
+}
+function updateSmartCardStoryVersion(snapshotId, tier, value) {
+  const snap = getBrandSnapshot(snapshotId);
+  if (!snap || snap.status === 'published') return false;
+  snap.smartCardOutput.story[tier] = value;
+  snap.updatedAt = new Date().toISOString();
+  saveState();
+  return true;
+}
+function reorderArrayItem(arr, index, direction) {
+  const newIndex = index + direction;
+  if (newIndex < 0 || newIndex >= arr.length) return false;
+  const tmp = arr[index]; arr[index] = arr[newIndex]; arr[newIndex] = tmp;
+  return true;
+}
+
+function editSmartCardSlogan(snapshotId, isRegenerate) {
+  const snap = getBrandSnapshot(snapshotId);
+  if (!snap || snap.status === 'published') return;
+  const val = prompt('一句話 Slogan（建議含標點不超過 14 字，可直接貼上外部 AI 產出的內容）：', isRegenerate ? '' : (snap.smartCardOutput.slogan || ''));
+  if (val === null) return;
+  updateSmartCardOutputField(snapshotId, 'slogan', val.trim());
+  renderWorkBrandSection(getActiveWork());
+}
+function addSmartCardService(snapshotId) {
+  const snap = getBrandSnapshot(snapshotId);
+  if (!snap || snap.status === 'published') return;
+  const val = prompt('新增一項服務項目：', '');
+  if (!val || !val.trim()) return;
+  snap.smartCardOutput.services.push(val.trim());
+  saveState();
+  renderWorkBrandSection(getActiveWork());
+}
+function editSmartCardService(snapshotId, index) {
+  const snap = getBrandSnapshot(snapshotId);
+  if (!snap || snap.status === 'published') return;
+  const val = prompt('修改服務項目：', snap.smartCardOutput.services[index] || '');
+  if (val === null) return;
+  if (!val.trim()) { snap.smartCardOutput.services.splice(index, 1); }
+  else { snap.smartCardOutput.services[index] = val.trim(); }
+  saveState();
+  renderWorkBrandSection(getActiveWork());
+}
+function removeSmartCardService(snapshotId, index) {
+  const snap = getBrandSnapshot(snapshotId);
+  if (!snap || snap.status === 'published') return;
+  snap.smartCardOutput.services.splice(index, 1);
+  saveState();
+  renderWorkBrandSection(getActiveWork());
+}
+function moveSmartCardService(snapshotId, index, direction) {
+  const snap = getBrandSnapshot(snapshotId);
+  if (!snap || snap.status === 'published') return;
+  if (reorderArrayItem(snap.smartCardOutput.services, index, direction)) { saveState(); renderWorkBrandSection(getActiveWork()); }
+}
+function editSmartCardStory(snapshotId, tier, isRegenerate) {
+  const snap = getBrandSnapshot(snapshotId);
+  if (!snap || snap.status === 'published') return;
+  const tierLabel = { card: '智慧名片版（建議約 120～200 字）', standard: '標準版（建議約 250～400 字）', full: '完整版（建議約 500～800 字）' }[tier];
+  const val = prompt('品牌故事｜' + tierLabel + '：', isRegenerate ? '' : (snap.smartCardOutput.story[tier] || ''));
+  if (val === null) return;
+  updateSmartCardStoryVersion(snapshotId, tier, val.trim());
+  // Phase 5.1（總策長／CEO 核准，2026-08-05）：標記這個版本是「使用者修改」，供畫面顯示
+  // AI 建議／使用者修改標示，避免不知道目前這段文字是誰改的。這裡只記真正發生過的動作
+  // （使用者透過這個編輯入口確認過），不會憑空標成 ai_generated。
+  if (!snap.source) snap.source = {};
+  snap.source['smartCardOutput.story.' + tier] = val.trim() ? 'edited' : undefined;
+  if (!val.trim()) delete snap.source['smartCardOutput.story.' + tier];
+  saveState();
+  renderWorkBrandSection(getActiveWork());
+}
+// AI建議／使用者修改標示：讀取 snap.source 裡對應欄位的紀錄，沒有紀錄就不顯示任何標示
+// （不臆測「這應該是AI建議」），只有這張卡片自己編輯過的欄位才會標「使用者修改」。
+function smartCardFieldSourceLabel(snap, sourceKey) {
+  const src = snap.source && snap.source[sourceKey];
+  if (src === 'ai_generated') return '<span class="secondary-note" style="margin:0">🤖 AI 建議</span>';
+  if (src === 'edited' || src === 'user_confirmed') return '<span class="secondary-note" style="margin:0">✏️ 使用者修改</span>';
+  return '';
+}
+function addSmartCardTickerItem(snapshotId) {
+  const snap = getBrandSnapshot(snapshotId);
+  if (!snap || snap.status === 'published') return;
+  const val = prompt('新增一則跑馬燈內容（建議約 10～30 字，不得包含未確認的活動、優惠或日期）：', '');
+  if (!val || !val.trim()) return;
+  snap.smartCardOutput.tickerItems.push({ text: val.trim(), enabled: true });
+  saveState();
+  renderWorkBrandSection(getActiveWork());
+}
+function editSmartCardTickerItem(snapshotId, index) {
+  const snap = getBrandSnapshot(snapshotId);
+  if (!snap || snap.status === 'published') return;
+  const item = snap.smartCardOutput.tickerItems[index];
+  const val = prompt('修改跑馬燈內容：', item ? item.text : '');
+  if (val === null) return;
+  if (!val.trim()) { snap.smartCardOutput.tickerItems.splice(index, 1); }
+  else { item.text = val.trim(); }
+  saveState();
+  renderWorkBrandSection(getActiveWork());
+}
+function removeSmartCardTickerItem(snapshotId, index) {
+  const snap = getBrandSnapshot(snapshotId);
+  if (!snap || snap.status === 'published') return;
+  snap.smartCardOutput.tickerItems.splice(index, 1);
+  saveState();
+  renderWorkBrandSection(getActiveWork());
+}
+function toggleSmartCardTickerItem(snapshotId, index) {
+  const snap = getBrandSnapshot(snapshotId);
+  if (!snap || snap.status === 'published') return;
+  snap.smartCardOutput.tickerItems[index].enabled = !snap.smartCardOutput.tickerItems[index].enabled;
+  saveState();
+  renderWorkBrandSection(getActiveWork());
+}
+function moveSmartCardTickerItem(snapshotId, index, direction) {
+  const snap = getBrandSnapshot(snapshotId);
+  if (!snap || snap.status === 'published') return;
+  if (reorderArrayItem(snap.smartCardOutput.tickerItems, index, direction)) { saveState(); renderWorkBrandSection(getActiveWork()); }
+}
+
+// Phase 5.1（總策長／CEO 核准，2026-08-05）：Brand Foundation 第五個共用元件，正式
+// 定名 Brand Output Library（原名 Smart Card Output Card，正式升級為可擴充多平台的
+// 品牌輸出圖書館，不是智慧名片專屬）。目前只有「智慧名片」分類有實際內容，其餘三個
+// 分類（官網／社群／Email）先保留分類入口、顯示「即將推出」，不憑空生內容。
+const BRAND_OUTPUT_LIBRARY_CATEGORIES = [
+  { id: 'smartcard', emoji: '📇', label: '智慧名片', ready: true },
+  { id: 'website', emoji: '🌐', label: '官網', ready: false },
+  { id: 'social', emoji: '📱', label: '社群', ready: false },
+  { id: 'email', emoji: '📧', label: 'Email', ready: false }
+];
+let activeBrandOutputCategory = 'smartcard';
+function setBrandOutputCategory(category) {
+  activeBrandOutputCategory = category;
+  renderWorkBrandSection(getActiveWork());
+}
+function renderBrandOutputLibrary(work) {
+  const container = document.getElementById('wd-smart-card-output');
+  if (!work.brandId) { container.style.display = 'none'; return; }
+  const snap = getBrandSummarySourceSnapshot(work.brandId);
+  if (!snap) { container.style.display = 'none'; return; }
+  container.style.display = 'block';
+  const locked = snap.status === 'published';
+  const sc = snap.smartCardOutput;
+  const lockNote = locked ? '<div class="secondary-note">🔒 這是正式發布的版本，如需修改請先到品牌中心建立新版本。</div>' : '';
+
+  const tabsHtml = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">' +
+    BRAND_OUTPUT_LIBRARY_CATEGORIES.map(function (c) {
+      const isActive = activeBrandOutputCategory === c.id;
+      return '<button class="btn outline" style="width:auto;padding:8px 10px;font-size:12.5px;margin-top:0' + (isActive ? ';background:var(--gold-pale)' : '') + '" onclick="setBrandOutputCategory(\'' + c.id + '\')">' + c.emoji + ' ' + escHtml(c.label) + '</button>';
+    }).join('') + '</div>';
+
+  if (activeBrandOutputCategory !== 'smartcard') {
+    const cat = BRAND_OUTPUT_LIBRARY_CATEGORIES.find(function (c) { return c.id === activeBrandOutputCategory; });
+    container.innerHTML = '<div class="section-label">📚 品牌可直接使用內容</div>' + tabsHtml +
+      '<div class="line" style="opacity:0.5;margin-top:12px">' + cat.emoji + ' ' + escHtml(cat.label) + '　即將推出，敬請期待</div>';
+    return;
+  }
+
+  // 💬 一句話 Slogan
+  const sloganLen = (sc.slogan || '').length;
+  const sloganWarning = sloganLen > 14 ? '<span style="color:var(--gold-dark,#B8860B)">（超過建議的 14 字）</span>' : '';
+  const sloganHtml = '<div class="section-label" style="margin-top:16px">💬 一句話 Slogan</div>' +
+    (sc.slogan ? '<div class="line" style="margin-top:6px">' + escHtml(sc.slogan) + '</div>' : '<div class="line" style="opacity:0.5;margin-top:6px">尚未填寫</div>') +
+    '<div class="secondary-note">目前字數：' + sloganLen + ' / 14' + sloganWarning + '</div>' +
+    (sc.slogan ? copyReadyActionsHtml(sc.slogan, '已複製 Slogan') : '') +
+    (locked ? '' :
+      '<button class="btn outline" style="margin-top:6px" onclick="editSmartCardSlogan(' + snap.id + ',false)">✏️ 修改</button>' +
+      '<button class="btn outline" style="margin-top:6px" onclick="editSmartCardSlogan(' + snap.id + ',true)">🔄 再產生</button>');
+
+  // 🧰 服務項目
+  const servicesLines = (sc.services || []).map(function (s, i) {
+    return '<div class="line" style="display:flex;align-items:center;gap:6px;margin-top:4px">' +
+      '<span style="flex:1">・' + escHtml(s) + '</span>' +
+      (locked ? '' :
+        '<button class="tool-delete" onclick="moveSmartCardService(' + snap.id + ',' + i + ',-1)">↑</button>' +
+        '<button class="tool-delete" onclick="moveSmartCardService(' + snap.id + ',' + i + ',1)">↓</button>' +
+        '<button class="tool-delete" onclick="editSmartCardService(' + snap.id + ',' + i + ')">✏️</button>' +
+        '<button class="tool-delete" onclick="removeSmartCardService(' + snap.id + ',' + i + ')">🗑️</button>') +
+      '</div>';
+  }).join('');
+  const servicesLineBreakText = (sc.services || []).join('\n');
+  const servicesOneLineText = (sc.services || []).join('｜');
+  const servicesHtml = '<div class="section-label" style="margin-top:16px">🧰 服務項目</div>' +
+    (servicesLines || '<div class="line" style="opacity:0.5;margin-top:6px">尚未填寫</div>') +
+    (locked ? '' : '<button class="btn outline" style="margin-top:8px" onclick="addSmartCardService(' + snap.id + ')">➕ 新增</button>') +
+    ((sc.services || []).length > 0 ?
+      '<div class="secondary-note" style="margin-top:8px">分行版</div>' + copyReadyActionsHtml(servicesLineBreakText, '已複製服務項目（分行版）') +
+      '<div class="secondary-note" style="margin-top:6px">一行版</div>' + copyReadyActionsHtml(servicesOneLineText, '已複製服務項目（一行版）') : '');
+
+  // ❤️ 品牌故事（三版本，各自標示 AI 建議／使用者修改）
+  const storyTiers = [
+    { key: 'card', label: '智慧名片版' },
+    { key: 'standard', label: '標準版' },
+    { key: 'full', label: '完整版' }
+  ];
+  const storyHtml = '<div class="section-label" style="margin-top:16px">❤️ 品牌故事</div>' +
+    storyTiers.map(function (t) {
+      const text = sc.story[t.key];
+      const sourceLabel = smartCardFieldSourceLabel(snap, 'smartCardOutput.story.' + t.key);
+      return '<div class="line" style="margin-top:8px;display:flex;justify-content:space-between;align-items:baseline"><b>' + escHtml(t.label) + '</b>' + sourceLabel + '</div>' +
+        '<div class="line">' + (text ? escHtml(text) : '<span style="opacity:0.5">尚未填寫</span>') + '</div>' +
+        (text ? copyReadyActionsHtml(text, '已複製品牌故事（' + t.label + '）', ';font-size:12.5px') : '') +
+        (locked ? '' : '<button class="btn outline" style="margin-top:4px;font-size:12.5px" onclick="editSmartCardStory(' + snap.id + ',\'' + t.key + '\',false)">✏️ 修改</button>');
+    }).join('');
+
+  // 📢 跑馬燈
+  const tickerLines = (sc.tickerItems || []).map(function (t, i) {
+    return '<div class="line" style="display:flex;align-items:center;gap:6px;margin-top:4px">' +
+      (locked ? '' : '<input type="checkbox" ' + (t.enabled ? 'checked' : '') + ' onclick="toggleSmartCardTickerItem(' + snap.id + ',' + i + ')">') +
+      '<span style="flex:1;' + (t.enabled ? '' : 'opacity:0.5;text-decoration:line-through') + '">' + escHtml(t.text) + '</span>' +
+      '<button class="tool-delete" data-copy-text="' + escAttr(t.text) + '" data-copy-toast="已複製跑馬燈內容" onclick="copyReady(this.dataset.copyText,this.dataset.copyToast,event)">📋</button>' +
+      (locked ? '' :
+        '<button class="tool-delete" onclick="moveSmartCardTickerItem(' + snap.id + ',' + i + ',-1)">↑</button>' +
+        '<button class="tool-delete" onclick="moveSmartCardTickerItem(' + snap.id + ',' + i + ',1)">↓</button>' +
+        '<button class="tool-delete" onclick="editSmartCardTickerItem(' + snap.id + ',' + i + ')">✏️</button>' +
+        '<button class="tool-delete" onclick="removeSmartCardTickerItem(' + snap.id + ',' + i + ')">🗑️</button>') +
+      '</div>';
+  }).join('');
+  const allTickerText = (sc.tickerItems || []).filter(function (t) { return t.enabled; }).map(function (t) { return t.text; }).join('\n');
+  const tickerHtml = '<div class="section-label" style="margin-top:16px">📢 跑馬燈</div>' +
+    (tickerLines || '<div class="line" style="opacity:0.5;margin-top:6px">尚未填寫</div>') +
+    (locked ? '' : '<button class="btn outline" style="margin-top:8px" onclick="addSmartCardTickerItem(' + snap.id + ')">➕ 新增</button>') +
+    ((sc.tickerItems || []).some(function (t) { return t.enabled; }) ?
+      copyReadyActionsHtml(allTickerText, '已複製全部跑馬燈內容') : '');
+
+  container.innerHTML = '<div class="section-label">📚 品牌可直接使用內容</div>' + tabsHtml + lockNote + sloganHtml + servicesHtml + storyHtml + tickerHtml;
+}
+// 相容別名：舊名稱 renderSmartCardOutputCard 直接委派給新的 renderBrandOutputLibrary，
+// 避免破壞既有測試／呼叫端；新程式碼一律使用新名稱。
+function renderSmartCardOutputCard(work) { return renderBrandOutputLibrary(work); }
+
+// 相容別名（Phase 3 抽離重構）：舊的海報專屬函式名稱直接委派給新的 Official Brand Selector
+// 實作，避免一次破壞既有測試／既有呼叫端；新程式碼一律使用上面的新名稱，不要再新增
+// 呼叫這幾個舊名稱的地方。
+function renderPosterBrandSetting(work, updateBox) { return renderOfficialBrandSelector(work, updateBox); }
+function switchPosterWorkToBrandMode() { return switchWorkToBrandMode(); }
+function switchPosterWorkToFreeDesign() { return switchWorkToFreeDesign(); }
+function dismissPosterBrandRecovery() { return dismissBrandSelectorRecovery(); }
+function showBrandUpdateDiff() {
+  const work = getActiveWork();
+  const brand = getBrand(work.brandId);
+  if (!brand) return;
+  const diffs = BRAND_FIELDS.filter(function (f) { return (work.brandSnapshot[f.key] || '') !== (brand[f.key] || ''); })
+    .map(function (f) { return f.label + '：\n舊　「' + (work.brandSnapshot[f.key] || '（無）') + '」\n新　「' + (brand[f.key] || '（無）') + '」'; });
+  alert(diffs.length > 0 ? '主要差異：\n\n' + diffs.join('\n\n') : '目前版本跟你的工作用的內容沒有欄位差異。');
+}
+function openBrandSwitcherForWork() { showScreen('screen-brand-switch'); }
+function renderBrandSwitch() {
+  const work = getActiveWork();
+  const list = document.getElementById('bsw-list');
+  let html = '<div class="card" onclick="switchWorkBrand(null)"><h3>不套用品牌</h3><div class="tool-suggest-note">使用通用協作設定</div></div>';
+  html += activeBrands().map(function (b) {
+    const sel = work.brandId === b.id ? '　✓ 目前使用' : '';
+    return '<div class="card" onclick="switchWorkBrand(' + b.id + ')"><h3>🏷️ ' + escHtml(b.name) + sel + '</h3><div class="tool-suggest-note">' + escHtml(b.oneLiner || '') + '</div></div>';
+  }).join('');
+  list.innerHTML = html;
+}
+
+// ── 完成工作後的品牌校準建議（規格五＋補充修正指令二：非阻擋式，Work 已經標記完成、
+// 成果已經存進成果庫之後才會出現；同一件事只問一次，使用者做出任何選擇後就不再重複問）──
+//
+// 「一般 Official Flow」（satisfactionGood()）沿用既有的全畫面提示（screen-brand-calibration-prompt），
+// 因為那條路徑原本就沒有專屬的完成畫面可以附加。歌曲／影片／海報三個有專屬完成畫面
+// （screen-song-next／screen-video-complete／screen-poster-complete）改用這裡的共用「行內橫幅」
+// ──不整頁跳轉、不擋住畫面上原本就有的下一步操作（例如「製作影片」「返回專案」），
+// 三個完成畫面只各自呼叫 renderBrandCalibrationBanner(work, containerId) 一行，沒有各自重寫一套邏輯。
+// 兩種入口最終都走同一個 requestBrandCalibration_ 產生指令、同一個 brand.pendingSuggestions
+// 資料結構、同一個 screen-brand-suggestions 確認畫面，只是「怎麼被喚起」不同。
+function currentActiveScreenId() {
+  const el = document.querySelector('.screen.active');
+  return el ? el.id : 'screen-project';
+}
+
+function renderBrandCalibrationBanner(work, containerId) {
+  const box = document.getElementById(containerId);
+  if (!box) return;
+  if (!work || !work.brandId || !getBrand(work.brandId) || work.brandCalibrationOffered) {
+    box.style.display = 'none';
+    box.innerHTML = '';
+    return;
+  }
+  box.style.display = 'block';
+  box.innerHTML =
+    '<div class="section-label">🏷️ 品牌校準（選填）</div>' +
+    '<div class="line" style="margin-top:6px">這次工作是否有值得保存成品牌規則的新發現？</div>' +
+    '<div style="display:flex;gap:8px;margin-top:10px">' +
+    '<button class="btn gold" style="width:auto;flex:1;padding:9px;font-size:12.5px;margin-top:0" onclick="requestBrandCalibrationInline(' + work.id + ')">提出品牌建議</button>' +
+    '<button class="btn outline" style="width:auto;flex:1;padding:9px;font-size:12.5px;margin-top:0" onclick="dismissBrandCalibrationInline(' + work.id + ')">暫時不要</button>' +
+    '</div>';
+}
+function dismissBrandCalibrationInline(workId) {
+  const work = getWork(workId);
+  if (!work) return;
+  work.brandCalibrationOffered = true;
+  saveState();
+  render();
+}
+function requestBrandCalibrationInline(workId) {
+  const work = getWork(workId);
+  const brand = work ? getBrand(work.brandId) : null;
+  if (!work || !brand) return;
+  work.brandCalibrationOffered = true;
+  saveState();
+  startBrandCalibration_(work, brand, currentActiveScreenId());
+}
+
+// 一般 Official Flow 專用的全畫面提示（沒有專屬完成畫面可以附加行內橫幅時使用）
+function openBrandCalibrationPrompt(work) {
+  pendingCalibrationWorkId = work.id;
+  showScreen('screen-brand-calibration-prompt');
+}
+let pendingCalibrationWorkId = null;
+function renderBrandCalibrationPrompt() {
+  const work = getWork(pendingCalibrationWorkId);
+  document.getElementById('bcp-work-name').textContent = work ? work.name : '';
+}
+function declineBrandCalibration() {
+  const work = getWork(pendingCalibrationWorkId);
+  if (work) { work.brandCalibrationOffered = true; saveState(); }
+  showScreen('screen-project');
+}
+function requestBrandCalibration() {
+  const work = getWork(pendingCalibrationWorkId);
+  const brand = work ? getBrand(work.brandId) : null;
+  if (!work || !brand) { showScreen('screen-project'); return; }
+  work.brandCalibrationOffered = true;
+  saveState();
+  startBrandCalibration_(work, brand, 'screen-project');
+}
+
+// 兩種入口（全畫面提示／行內橫幅）共用同一段：組出指令、記住「送出後要回到哪一頁」
+function startBrandCalibration_(work, brand, returnScreen) {
+  brandFlowContext = { mode: 'calibrate', brandId: brand.id, workId: work.id, returnScreen: returnScreen };
+  brandLastCopyText = buildBrandCalibratePrompt(work, brand);
+  showScreen('screen-brand-copy-to-ai');
 }
 
 // ── 我的工具 ──────────────────────────────────────────────────
@@ -6189,6 +10413,12 @@ function formatRelativeTime(iso) {
   return diffDay + ' 天前';
 }
 function escHtml(s) { return String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+// Phase 5：專門給雙引號屬性值（例如 data-* 屬性）用的跳脫——escHtml 本來就沒有跳脫雙引號
+// （放在標籤內容裡不需要），但塞進 data-xxx="..." 屬性值時，內容本身若含雙引號會提前
+// 截斷屬性。用 data 屬性＋讀 dataset 的方式傳可能含換行／引號的任意文字給 onclick 處理式，
+// 比直接把文字拼進 onclick="fn('...')" 的 JS 字串字面值安全（後者遇到換行或單引號會直接
+// 語法錯誤，不是跳脫不跳脫的問題，是整段 inline handler 直接壞掉）。
+function escAttr(s) { return escHtml(s).replace(/"/g, '&quot;'); }
 
 // ── 啟動 ──────────────────────────────────────────────────────
 // 先載入工具資料（官方工具清單／合作模板），確保 loadState() 建立預設狀態時 TOOLS_CATALOG 已經就緒
@@ -6215,10 +10445,19 @@ function acknowledgeDataSafetyOnboarding(goBackup) {
   if (goBackup) { showScreen('screen-home'); exportData(); return; }
   showScreen('screen-home');
 }
-loadToolData().then(function () {
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', startApp);
-  } else {
-    startApp();
-  }
-});
+// #19 Platform Size Registry｜本機驗收頁補正（總策長／CEO 核准，2026-08-05）：
+// dev/platform-size-registry.html 需要載入這支 app.js 才能拿到 Registry／Adapter／
+// Prompt Builder 這幾個函式定義（避免另外複製一份 Registry 資料），但那個頁面完全沒有
+// screen-home 等任何一個正式畫面的 DOM 結構——如果沒有這道防呆，loadToolData().then(startApp)
+// 會照樣執行，loadState() 會直接寫 localStorage、showScreen() 會對不存在的元素操作而出錯。
+// 正式 index.html 一定有 screen-home，這個判斷式對正式 App 完全沒有行為改變；只有像
+// dev 驗收頁這種「只要函式定義、不要整個 App 開機」的情境，才會被這裡擋下來。
+if (document.getElementById('screen-home')) {
+  loadToolData().then(function () {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', startApp);
+    } else {
+      startApp();
+    }
+  });
+}
