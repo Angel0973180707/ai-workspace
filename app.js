@@ -2811,7 +2811,12 @@ function blankBrandSnapshotDraft() {
     // （card／standard／full），對應智慧名片版／標準版／完整版；tickerItems 改成
     // {text,enabled} 結構，支援單則啟用／停用。這個欄位截至目前為止沒有任何既有
     // 消費端會讀寫（Phase 2 建立時就是空的，從未被填過），改形狀不影響任何既有資料。
-    smartCardOutput: { slogan: '', services: [], story: { card: '', standard: '', full: '' }, tickerItems: [] },
+    // Brand Assets Phase 2（總策長／CEO 核准，2026-08-04）：Brand Output Library 正式
+    // 升級定位為 Brand Assets（品牌資產庫）——品牌中心所有下游（商品／社群／官網／
+    // 電子書／智慧名片）唯一的品牌文字資產來源。新增 intro／description／mission／
+    // vision／keywords 5 個欄位，不新建第二套 UI，直接擴充既有 smartCardOutput 形狀；
+    // slogan／services／story／tickerItems 既有欄位與既有手動編輯機制完全不動。
+    smartCardOutput: { slogan: '', services: [], story: { card: '', standard: '', full: '' }, tickerItems: [], intro: '', description: '', mission: '', vision: '', keywords: '' },
     // Phase 2.1（總策長／CEO 核准，2026-08-05）：完成度一律用 computeBrandSnapshotCompletion()
     // 從實際內容算出來，這裡只是初始佔位；發布相關的 metadata 預設空，只有真的呼叫
     // publishBrandSnapshot() 才會填；source 記錄每個欄位的來源（user_confirmed／
@@ -8997,6 +9002,7 @@ function renderBrandDetail() {
   document.getElementById('bdt-color-gate-hint').style.display = brandCoreContentReady(b) ? 'none' : 'block';
   document.getElementById('bdt-logo-gate-hint').style.display = brandVisualReady(b.id) ? 'none' : 'block';
   renderBrandAssetsSection(b.id);
+  renderBrandOutputLibrary(b.id, 'bdt-brand-output-library');
 }
 function toggleArchiveBrand() {
   const b = getBrand(activeBrandDetailId);
@@ -9924,13 +9930,172 @@ function reorderArrayItem(arr, index, direction) {
   return true;
 }
 
+// Brand Assets Phase 2（總策長／CEO 核准，2026-08-04）：這是「格式化」，不是「重新生成」——
+// 純 JS 樣板組合既有已確認的 BRAND_FIELDS 內容（name／oneLiner／targetAudience／tone／
+// coreMessages／preferredWords／brandStory），完全沒有呼叫任何 AI、沒有另開一輪對話、
+// 沒有詢問使用者任何問題。品牌故事三版本（card／standard／full）從既有 brand.brandStory
+// 這一份真實內容切出不同長度的預設版本，不是三份各自獨立捏造的內容。所有欄位都只是
+// 「起始草稿」，使用者仍然可以透過既有的 ✏️ 修改流程調整成自己想要的版本。
+function truncateAtSentenceBoundary(text, maxLen) {
+  if (!text || text.length <= maxLen) return text || '';
+  const cut = text.slice(0, maxLen);
+  const lastPunct = Math.max(cut.lastIndexOf('。'), cut.lastIndexOf('！'), cut.lastIndexOf('？'), cut.lastIndexOf('，'));
+  return (lastPunct > maxLen * 0.5 ? cut.slice(0, lastPunct + 1) : cut) + '……';
+}
+// 品牌故事完整版結構化（總策長／CEO 核准，2026-08-04）：完整版不要只是把 brandStory
+// 整段字數截短，改用固定結構（品牌起點／品牌故事／品牌理念／想帶給大家什麼／未來願景）
+// 呈現，方便官網／電子書／品牌影片直接引用對應段落。誠實限制：BRAND_FIELDS 目前只有
+// brandStory（對應「品牌故事」）跟 coreMessages（最接近「品牌理念」）兩個真實欄位，
+// 其餘三段（起點／想帶給大家什麼／未來願景）沒有對應的既有資料來源——「資料不足時維持
+// 原文」不是整段放棄結構化，而是每一段誠實顯示「有真實內容就放、沒有就標示可自行補充」，
+// 不把 brandStory 硬切三段假裝是三個不同答案，那樣看起來結構化、實際上是捏造內容。
+const BRAND_STORY_STRUCTURE = [
+  { key: 'origin', label: '品牌起點', hint: '品牌是怎麼開始的' },
+  { key: 'story', label: '品牌故事', hint: '' },
+  { key: 'philosophy', label: '品牌理念', hint: '品牌最重視的理念與堅持' },
+  { key: 'value', label: '想帶給大家什麼', hint: '完成後想帶給使用者什麼樣的感受或改變' },
+  { key: 'vision', label: '未來願景', hint: '品牌未來想成為什麼樣子' }
+];
+// 結構化補強（總策長／CEO 核准，2026-08-05）：先盡量利用既有 Brand Snapshot 內容整理出
+// 這三段，不是生出「新事實」，是把既有內容換句話說、換個用途呈現；真的完全沒有可用資料
+// （沒有 brandStory 也沒有 oneLiner／coreMessages）才顯示「可自行補充」——「先整理，沒
+// 資料才補充」，不是一開始就大片顯示提示語。
+function appendPeriodIfNeeded(text) { return /[。！？…]$/.test(text) ? text : text + '。'; }
+// 品牌故事通常照時間順序敘述，第一句最常描述起點／初心——這裡是引用既有內容重新呈現，
+// 不是杜撰新的起點；沒有品牌故事就退而用一句話定位，都沒有才真的沒資料可整理。
+function deriveOriginSection(brand) {
+  const brandStory = brand.brandStory || '';
+  if (brandStory) {
+    const excerpt = truncateAtSentenceBoundary(brandStory, 100).replace(/……$/, '').replace(/[。！？，、]+$/, '');
+    if (excerpt) return '根據目前品牌資料整理：\n\n品牌從「' + excerpt + '」這個初心出發。\n\n（如需更完整的創立故事，可再自行補充。）';
+  }
+  if (brand.oneLiner) return '根據目前品牌資料整理：\n\n品牌從「' + brand.oneLiner + '」這個定位出發。\n\n（如需更完整的創立故事，可再自行補充。）';
+  return '';
+}
+// 核心訊息是最接近「想帶給大家什麼」的既有欄位，沒填核心訊息就退而用一句話定位；
+// 已經是「希望／致力／期待」開頭的句子就不重複加，避免疊出「希望希望……」。
+function deriveValueSection(brand) {
+  const source = brand.coreMessages || brand.oneLiner || '';
+  if (!source) return '';
+  return appendPeriodIfNeeded(/^(希望|致力|期待|想要|立志)/.test(source) ? source : '希望' + source);
+}
+// 跟「想帶給大家什麼」同樣的資料來源，但用「持續」框成未來式，兩段內容會相近是誠實的
+// 限制（BRAND_FIELDS 目前只有一個核心訊息欄位可用），不是刻意灌水。
+function deriveVisionSection(brand) {
+  const source = brand.coreMessages || brand.oneLiner || '';
+  if (!source) return '';
+  return appendPeriodIfNeeded(/^(持續|未來|希望持續)/.test(source) ? source : '持續' + source);
+}
+function buildStructuredBrandStory(brand) {
+  const brandStory = brand.brandStory || '';
+  if (!brandStory) return '';
+  const coreMessages = brand.coreMessages || '';
+  const sectionValues = {
+    origin: deriveOriginSection(brand),
+    story: brandStory,
+    philosophy: coreMessages,
+    value: deriveValueSection(brand),
+    vision: deriveVisionSection(brand)
+  };
+  return BRAND_STORY_STRUCTURE.map(function (s) {
+    const val = sectionValues[s.key];
+    return '【' + s.label + '】\n' + (val || ('（可自行補充：' + s.hint + '）'));
+  }).join('\n\n');
+}
+function computeBrandAssetDefaults(brand) {
+  const name = brand.name || '';
+  const oneLiner = brand.oneLiner || '';
+  const targetAudience = brand.targetAudience || '';
+  const coreMessages = brand.coreMessages || '';
+  const preferredWords = brand.preferredWords || '';
+  const brandStory = brand.brandStory || '';
+  const introParts = [name, oneLiner].filter(Boolean);
+  const descriptionParts = [oneLiner, coreMessages ? coreMessages + '。' : '', targetAudience ? '服務對象：' + targetAudience + '。' : ''].filter(Boolean);
+  return {
+    intro: introParts.join('，'),
+    description: descriptionParts.join(''),
+    // 品牌使命／願景目前沒有各自獨立的既有欄位（BRAND_FIELDS 沒有 mission／vision），
+    // 兩者都先用「核心訊息」這個最接近「品牌理念」的既有欄位當起始草稿（沒填核心訊息
+    // 就退而用一句話定位），使用者再各自編輯成真正的使命／願景措辭，不是憑空生成兩段
+    // 看起來不一樣但其實沒有真實差異的內容。
+    mission: coreMessages || oneLiner,
+    vision: coreMessages || oneLiner,
+    keywords: preferredWords ? preferredWords.split(/[,，、|｜\/]/).map(function (w) { return w.trim(); }).filter(Boolean).join('｜') : '',
+    // 完整版改用結構化版本（見 buildStructuredBrandStory），標準版／智慧名片版仍然是
+    // 短版預覽，不適合套用五段式結構，維持既有的字數截短邏輯。
+    storyFull: buildStructuredBrandStory(brand),
+    storyStandard: truncateAtSentenceBoundary(brandStory, 400),
+    storyCard: truncateAtSentenceBoundary(brandStory, 200)
+  };
+}
+// 只補空欄位，絕對不覆寫使用者已經編輯過、或前一版就已經有內容的欄位——「Snapshot→預設
+// Brand Assets→使用者可微調→儲存」，不是每次重新覆蓋。回傳是否真的有欄位被補上（供呼叫端
+// 決定要不要 saveState()）。
+function ensureBrandAssetDefaults(snap, brand) {
+  if (!snap || !brand || snap.status === 'published') return false;
+  const sc = snap.smartCardOutput;
+  const d = computeBrandAssetDefaults(brand);
+  let changed = false;
+  if (!sc.intro && d.intro) { sc.intro = d.intro; changed = true; }
+  if (!sc.description && d.description) { sc.description = d.description; changed = true; }
+  if (!sc.mission && d.mission) { sc.mission = d.mission; changed = true; }
+  if (!sc.vision && d.vision) { sc.vision = d.vision; changed = true; }
+  if (!sc.keywords && d.keywords) { sc.keywords = d.keywords; changed = true; }
+  if (!sc.story.full && d.storyFull) { sc.story.full = d.storyFull; changed = true; }
+  if (!sc.story.standard && d.storyStandard) { sc.story.standard = d.storyStandard; changed = true; }
+  if (!sc.story.card && d.storyCard) { sc.story.card = d.storyCard; changed = true; }
+  return changed;
+}
+
 function editSmartCardSlogan(snapshotId, isRegenerate) {
   const snap = getBrandSnapshot(snapshotId);
   if (!snap || snap.status === 'published') return;
   const val = prompt('一句話 Slogan（建議含標點不超過 14 字，可直接貼上外部 AI 產出的內容）：', isRegenerate ? '' : (snap.smartCardOutput.slogan || ''));
   if (val === null) return;
   updateSmartCardOutputField(snapshotId, 'slogan', val.trim());
-  renderWorkBrandSection(getActiveWork());
+  refreshActiveBrandOutputLibraryDisplay();
+}
+// Brand Assets Phase 2：這 5 個欄位跟既有 Slogan 用同一套「prompt() 直接編輯＋沿用
+// updateSmartCardOutputField()」機制，不另外寫一套編輯邏輯。
+function editSmartCardIntro(snapshotId) {
+  const snap = getBrandSnapshot(snapshotId);
+  if (!snap || snap.status === 'published') return;
+  const val = prompt('一句話介紹（建議約 30～50 字，適用 LINE／IG／Google 商家／名片／Banner）：', snap.smartCardOutput.intro || '');
+  if (val === null) return;
+  updateSmartCardOutputField(snapshotId, 'intro', val.trim());
+  refreshActiveBrandOutputLibraryDisplay();
+}
+function editSmartCardDescription(snapshotId) {
+  const snap = getBrandSnapshot(snapshotId);
+  if (!snap || snap.status === 'published') return;
+  const val = prompt('品牌介紹（建議約 100～150 字，適用 FB／官網首頁／智慧名片首頁／商品介紹）：', snap.smartCardOutput.description || '');
+  if (val === null) return;
+  updateSmartCardOutputField(snapshotId, 'description', val.trim());
+  refreshActiveBrandOutputLibraryDisplay();
+}
+function editSmartCardMission(snapshotId) {
+  const snap = getBrandSnapshot(snapshotId);
+  if (!snap || snap.status === 'published') return;
+  const val = prompt('品牌使命（一句話描述品牌存在的目的）：', snap.smartCardOutput.mission || '');
+  if (val === null) return;
+  updateSmartCardOutputField(snapshotId, 'mission', val.trim());
+  refreshActiveBrandOutputLibraryDisplay();
+}
+function editSmartCardVision(snapshotId) {
+  const snap = getBrandSnapshot(snapshotId);
+  if (!snap || snap.status === 'published') return;
+  const val = prompt('品牌願景（一句話描述品牌未來希望成為什麼）：', snap.smartCardOutput.vision || '');
+  if (val === null) return;
+  updateSmartCardOutputField(snapshotId, 'vision', val.trim());
+  refreshActiveBrandOutputLibraryDisplay();
+}
+function editSmartCardKeywords(snapshotId) {
+  const snap = getBrandSnapshot(snapshotId);
+  if (!snap || snap.status === 'published') return;
+  const val = prompt('品牌關鍵字（用「｜」分隔，供 SEO／Hashtag／AI 引用）：', snap.smartCardOutput.keywords || '');
+  if (val === null) return;
+  updateSmartCardOutputField(snapshotId, 'keywords', val.trim());
+  refreshActiveBrandOutputLibraryDisplay();
 }
 function addSmartCardService(snapshotId) {
   const snap = getBrandSnapshot(snapshotId);
@@ -9939,7 +10104,7 @@ function addSmartCardService(snapshotId) {
   if (!val || !val.trim()) return;
   snap.smartCardOutput.services.push(val.trim());
   saveState();
-  renderWorkBrandSection(getActiveWork());
+  refreshActiveBrandOutputLibraryDisplay();
 }
 function editSmartCardService(snapshotId, index) {
   const snap = getBrandSnapshot(snapshotId);
@@ -9949,19 +10114,19 @@ function editSmartCardService(snapshotId, index) {
   if (!val.trim()) { snap.smartCardOutput.services.splice(index, 1); }
   else { snap.smartCardOutput.services[index] = val.trim(); }
   saveState();
-  renderWorkBrandSection(getActiveWork());
+  refreshActiveBrandOutputLibraryDisplay();
 }
 function removeSmartCardService(snapshotId, index) {
   const snap = getBrandSnapshot(snapshotId);
   if (!snap || snap.status === 'published') return;
   snap.smartCardOutput.services.splice(index, 1);
   saveState();
-  renderWorkBrandSection(getActiveWork());
+  refreshActiveBrandOutputLibraryDisplay();
 }
 function moveSmartCardService(snapshotId, index, direction) {
   const snap = getBrandSnapshot(snapshotId);
   if (!snap || snap.status === 'published') return;
-  if (reorderArrayItem(snap.smartCardOutput.services, index, direction)) { saveState(); renderWorkBrandSection(getActiveWork()); }
+  if (reorderArrayItem(snap.smartCardOutput.services, index, direction)) { saveState(); refreshActiveBrandOutputLibraryDisplay(); }
 }
 function editSmartCardStory(snapshotId, tier, isRegenerate) {
   const snap = getBrandSnapshot(snapshotId);
@@ -9977,7 +10142,7 @@ function editSmartCardStory(snapshotId, tier, isRegenerate) {
   snap.source['smartCardOutput.story.' + tier] = val.trim() ? 'edited' : undefined;
   if (!val.trim()) delete snap.source['smartCardOutput.story.' + tier];
   saveState();
-  renderWorkBrandSection(getActiveWork());
+  refreshActiveBrandOutputLibraryDisplay();
 }
 // AI建議／使用者修改標示：讀取 snap.source 裡對應欄位的紀錄，沒有紀錄就不顯示任何標示
 // （不臆測「這應該是AI建議」），只有這張卡片自己編輯過的欄位才會標「使用者修改」。
@@ -9994,7 +10159,7 @@ function addSmartCardTickerItem(snapshotId) {
   if (!val || !val.trim()) return;
   snap.smartCardOutput.tickerItems.push({ text: val.trim(), enabled: true });
   saveState();
-  renderWorkBrandSection(getActiveWork());
+  refreshActiveBrandOutputLibraryDisplay();
 }
 function editSmartCardTickerItem(snapshotId, index) {
   const snap = getBrandSnapshot(snapshotId);
@@ -10005,32 +10170,38 @@ function editSmartCardTickerItem(snapshotId, index) {
   if (!val.trim()) { snap.smartCardOutput.tickerItems.splice(index, 1); }
   else { item.text = val.trim(); }
   saveState();
-  renderWorkBrandSection(getActiveWork());
+  refreshActiveBrandOutputLibraryDisplay();
 }
 function removeSmartCardTickerItem(snapshotId, index) {
   const snap = getBrandSnapshot(snapshotId);
   if (!snap || snap.status === 'published') return;
   snap.smartCardOutput.tickerItems.splice(index, 1);
   saveState();
-  renderWorkBrandSection(getActiveWork());
+  refreshActiveBrandOutputLibraryDisplay();
 }
 function toggleSmartCardTickerItem(snapshotId, index) {
   const snap = getBrandSnapshot(snapshotId);
   if (!snap || snap.status === 'published') return;
   snap.smartCardOutput.tickerItems[index].enabled = !snap.smartCardOutput.tickerItems[index].enabled;
   saveState();
-  renderWorkBrandSection(getActiveWork());
+  refreshActiveBrandOutputLibraryDisplay();
 }
 function moveSmartCardTickerItem(snapshotId, index, direction) {
   const snap = getBrandSnapshot(snapshotId);
   if (!snap || snap.status === 'published') return;
-  if (reorderArrayItem(snap.smartCardOutput.tickerItems, index, direction)) { saveState(); renderWorkBrandSection(getActiveWork()); }
+  if (reorderArrayItem(snap.smartCardOutput.tickerItems, index, direction)) { saveState(); refreshActiveBrandOutputLibraryDisplay(); }
 }
 
 // Phase 5.1（總策長／CEO 核准，2026-08-05）：Brand Foundation 第五個共用元件，正式
 // 定名 Brand Output Library（原名 Smart Card Output Card，正式升級為可擴充多平台的
 // 品牌輸出圖書館，不是智慧名片專屬）。目前只有「智慧名片」分類有實際內容，其餘三個
 // 分類（官網／社群／Email）先保留分類入口、顯示「即將推出」，不憑空生內容。
+// Brand Assets Phase 2（總策長／CEO 核准，2026-08-04）：正式定位再升級為「Brand Assets
+// （品牌資產庫）」——不是智慧名片專用，是品牌中心唯一的品牌資產來源（Single Source of
+// Truth），未來商品行銷中心／社群建置中心／官網／電子書／AI 工作台其他流程都直接引用
+// 這裡，不再各自重新整理品牌內容。這裡只調整定位說明與畫面標題文字，函式名稱／資料欄位
+// 名稱（renderBrandOutputLibrary／smartCardOutput／BRAND_OUTPUT_LIBRARY_CATEGORIES）
+// 保持不變，避免不必要的大範圍改名風險——沿用既有「相容別名」慣例。
 const BRAND_OUTPUT_LIBRARY_CATEGORIES = [
   { id: 'smartcard', emoji: '📇', label: '智慧名片', ready: true },
   { id: 'website', emoji: '🌐', label: '官網', ready: false },
@@ -10038,18 +10209,44 @@ const BRAND_OUTPUT_LIBRARY_CATEGORIES = [
   { id: 'email', emoji: '📧', label: 'Email', ready: false }
 ];
 let activeBrandOutputCategory = 'smartcard';
+// 真人驗收 Blocker 修正（總策長／CEO 核准，2026-08-05）：CEO 反映品牌管理頁（品牌中心的
+// 品牌詳情頁，screen-brand-detail）完全看不到 Brand Assets——追查後發現這個區塊過去只
+// 接在 Work Detail 頁（screen-work-detail），只有「使用者建立了一個掛著這個品牌的
+// Work」才看得到，Brand Center 自己的品牌詳情頁從來沒有這個入口，跟「Brand Assets 是
+// 品牌中心唯一品牌資產來源」這個定位完全矛盾。修正方式：renderBrandOutputLibrary() 改成
+// 直接吃 brandId／containerId，兩個畫面（Work Detail／Brand Detail）各自傳自己的
+// container id，不用再綁死只能給 Work 用；所有編輯動作觸發的重新渲染改成
+// refreshActiveBrandOutputLibraryDisplay()，依「目前真的在哪個畫面」決定要刷新哪一份
+// 顯示，不是寫死只刷新 Work Detail。
+function refreshActiveBrandOutputLibraryDisplay() {
+  if (document.getElementById('screen-brand-detail').classList.contains('active') && activeBrandDetailId) {
+    renderBrandOutputLibrary(activeBrandDetailId, 'bdt-brand-output-library');
+    return;
+  }
+  const work = getActiveWork();
+  if (work && document.getElementById('screen-work-detail').classList.contains('active')) {
+    renderWorkBrandSection(work);
+  }
+}
 function setBrandOutputCategory(category) {
   activeBrandOutputCategory = category;
-  renderWorkBrandSection(getActiveWork());
+  refreshActiveBrandOutputLibraryDisplay();
 }
-function renderBrandOutputLibrary(work) {
-  const container = document.getElementById('wd-smart-card-output');
-  if (!work.brandId) { container.style.display = 'none'; return; }
-  const snap = getBrandSummarySourceSnapshot(work.brandId);
+function renderBrandOutputLibrary(brandId, containerId) {
+  const container = document.getElementById(containerId);
+  if (!brandId) { container.style.display = 'none'; return; }
+  const snap = getBrandSummarySourceSnapshot(brandId);
   if (!snap) { container.style.display = 'none'; return; }
   container.style.display = 'block';
   const locked = snap.status === 'published';
   const sc = snap.smartCardOutput;
+  // Brand Assets Phase 2：Snapshot → 預設 Brand Assets → 使用者可微調 → 儲存，只在第一次
+  // 開啟時把空欄位補上格式化後的預設值，已經有內容（不管是預設值本身還是使用者編輯過）
+  // 一律不重新覆蓋。
+  if (!locked && ensureBrandAssetDefaults(snap, getBrand(brandId))) {
+    snap.updatedAt = new Date().toISOString();
+    saveState();
+  }
   const lockNote = locked ? '<div class="secondary-note">🔒 這是正式發布的版本，如需修改請先到品牌中心建立新版本。</div>' : '';
 
   const tabsHtml = '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px">' +
@@ -10060,7 +10257,7 @@ function renderBrandOutputLibrary(work) {
 
   if (activeBrandOutputCategory !== 'smartcard') {
     const cat = BRAND_OUTPUT_LIBRARY_CATEGORIES.find(function (c) { return c.id === activeBrandOutputCategory; });
-    container.innerHTML = '<div class="section-label">📚 品牌可直接使用內容</div>' + tabsHtml +
+    container.innerHTML = '<div class="section-label">📚 Brand Assets｜品牌資產庫</div>' + tabsHtml +
       '<div class="line" style="opacity:0.5;margin-top:12px">' + cat.emoji + ' ' + escHtml(cat.label) + '　即將推出，敬請期待</div>';
     return;
   }
@@ -10075,6 +10272,20 @@ function renderBrandOutputLibrary(work) {
     (locked ? '' :
       '<button class="btn outline" style="margin-top:6px" onclick="editSmartCardSlogan(' + snap.id + ',false)">✏️ 修改</button>' +
       '<button class="btn outline" style="margin-top:6px" onclick="editSmartCardSlogan(' + snap.id + ',true)">🔄 再產生</button>');
+
+  // Brand Assets Phase 2：一句話介紹／品牌介紹／品牌使命／品牌願景／品牌關鍵字，
+  // 共用同一種簡單文字欄位版型（顯示內容＋複製＋修改），只有標題／欄位鍵／編輯函式不同。
+  function simpleAssetFieldHtml(emoji, label, value, editFnName) {
+    return '<div class="section-label" style="margin-top:16px">' + emoji + ' ' + label + '</div>' +
+      (value ? '<div class="line" style="margin-top:6px">' + escHtml(value) + '</div>' : '<div class="line" style="opacity:0.5;margin-top:6px">尚未填寫</div>') +
+      (value ? copyReadyActionsHtml(value, '已複製' + label) : '') +
+      (locked ? '' : '<button class="btn outline" style="margin-top:6px" onclick="' + editFnName + '(' + snap.id + ')">✏️ 修改</button>');
+  }
+  const introHtml = simpleAssetFieldHtml('📋', '一句話介紹', sc.intro, 'editSmartCardIntro');
+  const descriptionHtml = simpleAssetFieldHtml('📋', '品牌介紹', sc.description, 'editSmartCardDescription');
+  const missionHtml = simpleAssetFieldHtml('📋', '品牌使命', sc.mission, 'editSmartCardMission');
+  const visionHtml = simpleAssetFieldHtml('📋', '品牌願景', sc.vision, 'editSmartCardVision');
+  const keywordsHtml = simpleAssetFieldHtml('📋', '品牌關鍵字', sc.keywords, 'editSmartCardKeywords');
 
   // 🧰 服務項目
   const servicesLines = (sc.services || []).map(function (s, i) {
@@ -10132,11 +10343,12 @@ function renderBrandOutputLibrary(work) {
     ((sc.tickerItems || []).some(function (t) { return t.enabled; }) ?
       copyReadyActionsHtml(allTickerText, '已複製全部跑馬燈內容') : '');
 
-  container.innerHTML = '<div class="section-label">📚 品牌可直接使用內容</div>' + tabsHtml + lockNote + sloganHtml + servicesHtml + storyHtml + tickerHtml;
+  container.innerHTML = '<div class="section-label">📚 Brand Assets｜品牌資產庫</div>' + tabsHtml + lockNote +
+    introHtml + descriptionHtml + sloganHtml + servicesHtml + storyHtml + tickerHtml + missionHtml + visionHtml + keywordsHtml;
 }
 // 相容別名：舊名稱 renderSmartCardOutputCard 直接委派給新的 renderBrandOutputLibrary，
 // 避免破壞既有測試／呼叫端；新程式碼一律使用新名稱。
-function renderSmartCardOutputCard(work) { return renderBrandOutputLibrary(work); }
+function renderSmartCardOutputCard(work) { return renderBrandOutputLibrary(work.brandId, 'wd-smart-card-output'); }
 
 // 相容別名（Phase 3 抽離重構）：舊的海報專屬函式名稱直接委派給新的 Official Brand Selector
 // 實作，避免一次破壞既有測試／既有呼叫端；新程式碼一律使用上面的新名稱，不要再新增

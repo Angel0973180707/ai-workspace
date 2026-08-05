@@ -1544,6 +1544,10 @@
       <button class="btn outline" style="margin-top:10px" onclick="openBrandLogoDiscuss(activeBrandDetailId)">✨ 開始 Logo 共創</button>
       <div class="secondary-note" id="bdt-logo-gate-hint" style="display:none">品牌配色與字體確認後，才能開始 Logo 共創。</div>
       <div id="bdt-brand-assets-section"></div>
+      <!-- 真人驗收 Blocker 修正（總策長／CEO 核准，2026-08-05）：Brand Assets（品牌資產庫）
+           過去只接在 Work Detail 頁，品牌中心自己的品牌詳情頁完全沒有入口，跟「Brand
+           Assets 是品牌中心唯一品牌資產來源」的定位矛盾——這裡補上正式入口。 -->
+      <div class="card" id="bdt-brand-output-library" style="display:none;margin-top:14px"></div>
       <button class="btn outline" style="margin-top:10px" onclick="copyActiveBrand()">📄 複製這個品牌</button>
       <button class="btn outline" style="margin-top:10px" id="bdt-archive-btn" onclick="toggleArchiveBrand()">封存</button>
     </div>
