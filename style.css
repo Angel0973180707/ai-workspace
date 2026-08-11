@@ -476,3 +476,34 @@ body { background: var(--green-dark); color: var(--cream); font-family: var(--fo
   pointer-events: none;
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+/* #07 Quick Book v3.0：三個可收合區塊（封面與圖片／可修改原稿／製作PDF），預設展開，
+   點標題可收合，跟品牌中心既有的 <details> 收合風格不同（這裡用 classList.toggle('open')
+   是因為區塊裡有互動按鈕，不適合用 <details><summary>）。 */
+.quickbook-collapsible-body { display: none; }
+.quickbook-collapsible.open .quickbook-collapsible-body { display: block; }
+
+/* #07 Quick Book v3.0：書頁卡片（第一頁完成品），讓成果看起來像「一本書的一頁」，
+   不是普通的 AI 回覆文字方塊。 */
+.quickbook-page-card {
+  background: var(--cream);
+  color: var(--text);
+  border-radius: 10px;
+  padding: 22px 20px;
+  box-shadow: 0 2px 10px rgba(0,0,0,.15);
+}
+.quickbook-page-number { font-size: 12px; color: var(--text-dim); letter-spacing: .05em; margin-bottom: 8px; }
+.quickbook-page-title { font-size: 19px; font-weight: 700; color: var(--green-dark); margin-bottom: 12px; }
+.quickbook-page-text { font-size: 15px; line-height: 1.75; color: var(--text); white-space: pre-wrap; }
+.quickbook-page-image-slot {
+  margin-top: 14px;
+  border: 1.5px dashed var(--border);
+  border-radius: 8px;
+  padding: 16px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--text-mid);
+  background: var(--coffee-pale);
+}
+.quickbook-page-layout-note { margin-top: 12px; font-size: 12px; color: var(--text-dim); }
+.quickbook-page-nav { margin-top: 16px; font-size: 12px; color: var(--text-dim); text-align: center; }

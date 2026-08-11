@@ -370,6 +370,36 @@ const FLOWS = {
       { name: '發布', role: '發布助手', category: '電子書' }
     ]
   },
+  // #07 Quick Book v3.0（CEO／總策長／技術長核准，Architecture Freeze，2026-08-05）：
+  // 小書專屬流程，跟舊版「電子書流程」並存，不取代——舊資料與舊流程完全不受影響
+  // （見 EBOOK_CATEGORIES／openAddWork()，ebook 專案新增工作時使用者自己選「小書」或
+  // 「完整電子書」）。步驟3（建立內容架構＋第一頁完成品）與步驟5（完成電子書）不是單純
+  // 「交給AI→貼回」，各自有專屬畫面（screen-quickbook-architecture／screen-quickbook-
+  // first-page／screen-quickbook-complete），由 renderWorkDetail() 攔截導轉，寫法沿用
+  // 「完成海報」（screen-make-poster）已驗證過的攔截模式。
+  quickbook: {
+    id: 'quickbook', name: '小書流程',
+    steps: [
+      { name: '開始你的故事', role: '規劃師', category: '電子書' },
+      { name: '確認書本方向', role: '規劃師', category: '電子書' },
+      { name: '建立內容架構', role: '寫作師', category: '電子書' },
+      { name: '完成全書內容', role: '寫作師', category: '電子書' },
+      { name: '完成電子書', role: '設計師', category: '電子書' },
+      { name: '保存與分享', role: '發布助手', category: '電子書' }
+    ]
+  },
+  // #7.1 Quick Book v4.0 POC（總策長／CEO 核准，2026-08-06，Phase 1）：新 flowId，跟 v3.0
+  // 的 'quickbook' 完全獨立、不共用可變狀態。steps 目前只是佔位骨架（Phase 1 只證明
+  // 分流殼跟資料模型正確），Practical 的真正 Step1-6／Creative 的真正 Step1-8 邏輯留到
+  // Phase 2／3 才會真正接上 currentStepIndex 步驟機制。
+  quickbook_v4_practical: {
+    id: 'quickbook_v4_practical', name: 'Quick Book v4.0（實用型測試版）',
+    steps: [{ name: 'POC佔位', role: '規劃師', category: '電子書' }]
+  },
+  quickbook_v4_creative: {
+    id: 'quickbook_v4_creative', name: 'Quick Book v4.0（創作型測試版）',
+    steps: [{ name: 'POC佔位', role: '規劃師', category: '電子書' }]
+  },
   customer_reply: {
     id: 'customer_reply', name: '客戶回覆流程',
     steps: [
@@ -2600,6 +2630,12 @@ function ensureNewFields(s) {
     }
   });
   s.results.forEach(function (r) { if (r.cloudStatus === undefined) r.cloudStatus = 'none'; });
+  // #07 Quick Book v3.0：舊資料（沒有 quickbook 類型工作）完全不受影響，這裡只補齊
+  // 「已經是 quickbook 流程、但資料結構還缺欄位」的工作，不會新增或修改任何非 quickbook 的 work。
+  s.works.forEach(function (w) { if (w.flowId === 'quickbook') ensureQuickBookDefaults(w); });
+  // #7.1 Quick Book v4.0 POC：同樣只補齊「已經是 v4 流程」的工作，不會新增或修改任何
+  // 非 v4 的 work（v3.0 的 'quickbook'、舊版 'ebook' 都不受影響）。
+  s.works.forEach(function (w) { if (w.flowId === 'quickbook_v4_practical' || w.flowId === 'quickbook_v4_creative') ensureQuickBookV4Defaults(w); });
   // Workspace Trust Sprint 1：舊資料沒有這些欄位時安全補上。
   // dataSafetyOnboarded 刻意預設 false（不是 true）——新舊使用者都要看過一次資料安全提醒，
   // 這點跟其他 onboarded 類欄位（例如 preferredAiOnboarded）的既有慣例不同，是 CEO 明確核准的決定。
@@ -2911,6 +2947,40 @@ function extractLabeledRowValue(content, labelOrAliases) {
     if (matched) return cells.slice(1).join('　');
   }
   return '';
+}
+// P0 Blocker 修正（CEO 真人驗收，2026-08-05，#07 內容頁空白）：extractLabeledRowValue()
+// 只抓「跟標籤同一行」的內容——AI 寫短欄位（頁碼、頁面類型）沒問題，但寫「正文」這種長
+// 內容時，很自然會把標籤自己放一行、實際段落從下一行開始寫（甚至好幾段），這時
+// extractLabeledRowValue() 會直接抓到空字串，內容整段遺失，這正是真人驗收「內容頁沒有
+// 內容」的根因。這裡新增跨行版本：從標籤那一行開始收集（同一行冒號後面如果有內容也算），
+// 收到遇到這個區塊裡任何一個「其他已知欄位標籤」開頭的那一行為止，這樣不管 AI 把內容寫在
+// 同一行還是另起好幾行、好幾段，都收得到。
+function extractLabeledBlockValue(content, label, allLabels) {
+  function escapeForRegex(s) { return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+  const lines = content.split('\n');
+  const labelPattern = new RegExp('^' + escapeForRegex(label) + '\\s*[：:]\\s*(.*)$');
+  const stopPatterns = allLabels.filter(function (l) { return l !== label; }).map(function (l) {
+    return new RegExp('^' + escapeForRegex(l) + '\\s*[：:]');
+  });
+  let capturing = false;
+  const collected = [];
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (!capturing) {
+      const m = trimmed.match(labelPattern);
+      if (m) {
+        capturing = true;
+        if (m[1]) collected.push(m[1]);
+        continue;
+      }
+    } else {
+      if (stopPatterns.some(function (p) { return p.test(trimmed); })) break;
+      if (trimmed === '' && collected.length === 0) continue;
+      collected.push(lines[i]);
+    }
+  }
+  while (collected.length && collected[collected.length - 1].trim() === '') collected.pop();
+  return collected.join('\n').trim();
 }
 // 字體欄位常見別名（總策長／CEO 核准，2026-08-06）：真人驗收實際看到 AI 把「中文標題
 // 字體」簡寫成「中文標題」、「英文或數字字體」寫成「英文／數字」——這裡列出目前已知的
@@ -3296,7 +3366,7 @@ function createFinalProduct(s, work, project) {
     return '【' + step.name + '】\n' + (r ? r.content : '');
   }).join('\n\n');
   const aiUsed = Array.from(new Set(flow.steps.map(function (step) { return suggestedToolForStep(work.flowId, step.role, step.name).name; }))).join('、');
-  const finalCategory = flow.id === 'video' ? '影片' : flow.id === 'ebook' ? '電子書' : flow.id === 'course' ? '課程' : flow.id === 'material' ? '教材' : flow.id === 'product' ? '商品' : flow.id === 'poster' ? '海報' : flow.id === 'social' ? '社群貼文' : flow.id === 'song' ? '歌曲' : flow.id === 'research' ? '論文' : '其他';
+  const finalCategory = flow.id === 'video' ? '影片' : (flow.id === 'ebook' || flow.id === 'quickbook') ? '電子書' : flow.id === 'course' ? '課程' : flow.id === 'material' ? '教材' : flow.id === 'product' ? '商品' : flow.id === 'poster' ? '海報' : flow.id === 'social' ? '社群貼文' : flow.id === 'song' ? '歌曲' : flow.id === 'research' ? '論文' : '其他';
   const final = {
     id: s.nextResultId++,
     title: work.name + '（最終成品）',
@@ -3531,7 +3601,7 @@ let selectedVideoType = null;
 // 才依 CEO 指示套用到其他 Official Flow，這輪不主動擴大範圍。
 // 商品行銷工作區重整（同一天，緊接著的子工作）：「海報」子流程正式拆出來後（見 FLOWS.poster），
 // 試點鍵值從 'product' 改成 'poster'——欄位內容不變，只是現在真的有一個對應的獨立 Flow。
-const PILOT_BRIEF_FLOWS = ['song', 'poster', 'ebook', 'video'];
+const PILOT_BRIEF_FLOWS = ['song', 'poster', 'ebook', 'video', 'quickbook'];
 
 // 「直接開始」模式的最少必要欄位，同時也是「先一起討論」模式裡提示 AI 要蒐集哪些資訊的清單
 // ——兩個模式共用同一份問題清單，不用維護兩份重複的內容。
@@ -3562,11 +3632,19 @@ const DIRECT_START_FIELDS = {
     { key: 'audience', label: '觀看對象', required: true },
     { key: 'length', label: '預計長度', required: true },
     { key: 'existing', label: '已有文字、圖片或歌曲', required: false }
+  ],
+  // #07 Quick Book v3.0 Step1「開始你的故事」：CEO 指定的四個生活化問題，沿用既有「直接開始」
+  // 表單機制（不新增畫面），使用者在這裡填的答案會透過既有 work.brief 機制帶進 Step1 的 Prompt。
+  quickbook: [
+    { key: 'story', label: '想留下什麼故事或內容？', required: true },
+    { key: 'reader', label: '想讓誰閱讀？', required: true },
+    { key: 'feeling', label: '希望讀者感受到什麼？', required: false },
+    { key: 'existing', label: '已有哪些文字、照片或素材？', required: false }
   ]
 };
 
 // 「先一起討論」模式，AI 依工作切換的角色（前置討論固定任務只負責收斂方向，不長篇上課）
-const DISCUSS_ROLE_BY_FLOW = { song: '音樂製作人', poster: '美術總監', ebook: '出版總編輯', video: '導演' };
+const DISCUSS_ROLE_BY_FLOW = { song: '音樂製作人', poster: '美術總監', ebook: '出版總編輯', video: '導演', quickbook: '童書與出版編輯' };
 
 // 只有試點 Flow、還沒有 Brief、也還沒有任何步驟成果的「全新工作」才會看到這個選擇畫面——
 // 已經在進行中的既有工作不會被追加這個畫面，避免打斷正在做的事。
@@ -3746,10 +3824,5196 @@ function chooseProductCategory(flowId) {
   showScreen('screen-add-work');
 }
 
+// #07 Quick Book v3.0（P0-1 資料結構）：work.quickBook 只在 flowId === 'quickbook' 的工作上
+// 使用，跟舊版 ebook 流程的 work 完全不相干，不會互相影響。ensureQuickBookDefaults() 是唯一
+// 建立/補齊這個結構的地方——每次要讀寫 work.quickBook 前都先呼叫一次，新欄位需要新增時只改
+// 這裡，不用到處補預設值。用淺層＋巢狀物件各自補值的方式，已存在的欄位不會被覆蓋（沿用
+// ensureNewFields() 既有的「舊資料沒有欄位時安全補上」慣例）。
+function blankQuickBookDraft() {
+  return {
+    schemaVersion: 1,
+    bookId: '',
+    mode: 'text',
+    title: '', subtitle: '', authorName: '', targetReader: '', pageCount: 0,
+    pages: [],
+    cover: { title: '', subtitle: '', visualDirection: '', imagePrompt: '', layoutSuggestion: '', completedExternally: false },
+    // pagePhotos（P0 緊急修正新增，2026-08-05）：照片模式逐頁「建議放哪張照片」的清單，
+    // 跟 pageIllustrations（生圖指令清單）分開存，供之後 Canva／圖片AI／Living Book 共用，
+    // 不影響既有 pageIllustrations 的資料形狀。
+    // visualModeSource／visualModeConfirmed／visualModeUpdatedAt（總策長裁示新增，2026-08-05）：
+    // visualMode 正式定位為 Single Source of Truth，這三個欄位記錄「這個值是怎麼來的、
+    // 使用者有沒有主動確認過」——normalizeVisualMode() 只是自然語言 fallback，不是唯一來源，
+    // 真正代表「這本書最終視覺方向」的是 Step2 使用者確認畫面寫入的這個值。
+    visualPlan: { visualMode: 'text', visualModeSource: 'ai_recommended', visualModeConfirmed: false, visualModeUpdatedAt: '', visualStyle: '', characterConsistency: '', mainSubjectDescription: '', colorMood: '', imageToolSuggestion: '', pageIllustrations: [], pagePhotos: [] },
+    delivery: { coverConfirmed: false, illustrationsConfirmed: false, editableManuscriptConfirmed: false, pdfConfirmed: false, backupConfirmed: false },
+    shareChoice: '', shareScope: '', fileNotes: '',
+    authorProfileId: '', themes: [], sourceBookIds: [], expandable: true, seriesId: '',
+    // P0-1 之外的流程進度追蹤欄位（不在 CEO 原始最小結構裡，但 Step 3／Step 6 的多階段畫面
+    // 需要記住「架構是否已確認」「保存與分享 checklist 目前走到哪一項」，沒有地方可以放，
+    // 直接掛在 quickBook 底下最合理，跟核心資料放一起，不需要另外新增 work 層級欄位）
+    architecture: [], architectureArrangement: '', architectureConfirmed: false, firstPageConfirmed: false,
+    saveShareStep: 0,
+    createdAt: '', updatedAt: ''
+  };
+}
+function ensureQuickBookDefaults(work) {
+  const blank = blankQuickBookDraft();
+  if (!work.quickBook) { work.quickBook = blank; work.quickBook.createdAt = new Date().toISOString(); return work.quickBook; }
+  const qb = work.quickBook;
+  Object.keys(blank).forEach(function (key) {
+    if (qb[key] === undefined) { qb[key] = blank[key]; return; }
+    if (key === 'cover' || key === 'delivery') {
+      Object.keys(blank[key]).forEach(function (sub) { if (qb[key][sub] === undefined) qb[key][sub] = blank[key][sub]; });
+    }
+    if (key === 'visualPlan') {
+      Object.keys(blank.visualPlan).forEach(function (sub) { if (qb.visualPlan[sub] === undefined) qb.visualPlan[sub] = blank.visualPlan[sub]; });
+    }
+  });
+  return qb;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// #7.1 Quick Book v4.0 POC（總策長／CEO 核准，2026-08-06，Phase 1；Gate 2 Phase 2A
+// 正式統一資料模型，2026-08-06）
+// 完全獨立於 work.quickBook（v3.0），新流程一律寫進 work.quickBookV4，兩者不共用、
+// 不互相讀寫，跟 v3.0 保護原則（ensureQuickBookDefaults 只認 flowId==='quickbook'）
+// 是同一套紀律。
+// ═══════════════════════════════════════════════════════════════════════════
+
+// contentStatus canonical enum（Gate 2 技術長裁示正式統一，取代 Gate 1 的
+// DRAFT／CONFIRMED／NEEDS_INFO／TO_CONFIRM 舊版）。Object.freeze 避免任何地方不小心
+// 動態新增第五個狀態值，造成語意分裂。
+const QUICKBOOK_V4_CONTENT_STATUS = Object.freeze({
+  COMPLETE: 'complete',
+  NEEDS_INPUT: 'needs_input',
+  NEEDS_CONFIRMATION: 'needs_confirmation',
+  NOT_APPLICABLE: 'not_applicable'
+});
+const QUICKBOOK_V4_CONTENT_STATUS_LABEL = Object.freeze({
+  complete: '已完成', needs_input: '待補充', needs_confirmation: '待確認', not_applicable: '不適用'
+});
+// 盤點結果（Gate 2 Phase 2A）：Gate 1 定義過的 QUICKBOOK_V4_CONTENT_STATUS 舊版枚舉
+// （DRAFT/CONFIRMED/NEEDS_INFO/TO_CONFIRM/NOT_APPLICABLE）從未被實際寫進任何頁面或
+// 單元物件——Phase 1 的 book.pages／sourceMaterial.structureUnits 全程是空陣列，純粹
+// 只有殼，沒有真正的資料使用過舊枚舉。因此這裡的正規化函式主要是防禦性質（避免萬一有
+// 開發過程中留下的舊值），不是修復真實資料損壞。
+function normalizeQuickBookV4ContentStatus(rawStatus) {
+  const legacyMap = {
+    draft: QUICKBOOK_V4_CONTENT_STATUS.NEEDS_INPUT,
+    confirmed: QUICKBOOK_V4_CONTENT_STATUS.COMPLETE,
+    needs_info: QUICKBOOK_V4_CONTENT_STATUS.NEEDS_INPUT,
+    to_confirm: QUICKBOOK_V4_CONTENT_STATUS.NEEDS_CONFIRMATION,
+    not_applicable: QUICKBOOK_V4_CONTENT_STATUS.NOT_APPLICABLE
+  };
+  const validValues = Object.values(QUICKBOOK_V4_CONTENT_STATUS);
+  if (validValues.indexOf(rawStatus) !== -1) return rawStatus;
+  if (legacyMap[rawStatus]) return legacyMap[rawStatus];
+  return QUICKBOOK_V4_CONTENT_STATUS.NEEDS_INPUT;
+}
+
+// AI Collaboration OS｜書本與影片共用內容素材流程（總策長／CEO 核准，2026-08-06）：
+// 完整文字主體確認後，使用者可以選擇整本書要用什麼方式呈現，決定分頁時的視覺規劃基調
+// （跟逐頁 visualMode 是兩個層次——presentationStyle 是全書一次性的基調選擇，visualMode
+// 是每一頁各自的素材方式，兩者不衝突，逐頁仍可以跟全書基調不同）。
+const QUICKBOOK_V4_PRESENTATION_STYLE = Object.freeze({
+  ILLUSTRATED_TEXT: 'illustrated_text', ILLUSTRATION_BOOK: 'illustration_book',
+  PICTURE_BOOK: 'picture_book', PHOTO_BOOK: 'photo_book', TEXT_ONLY: 'text_only'
+});
+const QUICKBOOK_V4_PRESENTATION_STYLE_LABEL = Object.freeze({
+  illustrated_text: '圖文書', illustration_book: '插畫書', picture_book: '繪本', photo_book: '相片書', text_only: '純文字小書'
+});
+// Quick Book 下一輪（CEO／總策長，2026-08-09）六～七節：book-level layoutProfile，第一版
+// 只支援 3 種 Canva 尺寸，全書共用同一份（不可每頁自訂）。canvaSizeId／pageOrientation／
+// aspectRatio／label 四個欄位一起儲存在 layoutProfile 上（跟這份 catalog 的 entry 形狀
+// 一致），選定尺寸時整包覆蓋寫入，不是只存 id 再另外查表存兩份。promptGuidance 是給
+// formatter 用的白話語意句，不是 Canva API 參數。
+const QUICKBOOK_V4_CANVA_SIZE_CATALOG = Object.freeze({
+  a4_portrait: {
+    canvaSizeId: 'a4_portrait', pageOrientation: 'portrait', aspectRatio: '1:1.414', label: 'A4 直式',
+    hint: '最適合一般電子小書、生命故事、圖文書、教學小冊。',
+    promptGuidance: 'Canva A4 直式滿版書頁，比例約 1:1.414，full-page / full-bleed，重要人物與文字保留安全範圍，避免裁切。'
+  },
+  a4_landscape: {
+    canvaSizeId: 'a4_landscape', pageOrientation: 'landscape', aspectRatio: '1.414:1', label: 'A4 橫式',
+    hint: '適合畫面較多、橫向繪本、簡報式內容。',
+    promptGuidance: 'Canva A4 橫式滿版書頁，比例約 1.414:1，full-page / full-bleed，重要人物與文字保留安全範圍，避免裁切。'
+  },
+  square: {
+    canvaSizeId: 'square', pageOrientation: 'square', aspectRatio: '1:1', label: '正方形',
+    hint: '適合童趣繪本、社群感較強的短篇作品。',
+    promptGuidance: 'Canva 正方形滿版書頁，比例 1:1，full-page / full-bleed，重要人物與文字保留安全範圍，避免裁切。'
+  }
+});
+const QUICKBOOK_V4_DEFAULT_LAYOUT_PROFILE = Object.freeze(Object.assign({}, QUICKBOOK_V4_CANVA_SIZE_CATALOG.a4_portrait, { fontStyle: 'clear_readable' }));
+// 十二節「字體風格」：第一版只存語意 id，不存 Canva font family／實際字型，formatter 只
+// 轉成白話語意句子（promptGuidance），不指定 Noto Sans 之類的真實字型。
+const QUICKBOOK_V4_FONT_STYLE_CATALOG = Object.freeze({
+  gentle_handwriting: { label: '手寫溫柔風', hint: '像手寫字，親切、有溫度。適合繪本、生命故事、療癒內容。', promptGuidance: '字體風格：手寫溫柔感，標題可有手寫感但必須清楚易讀，正文避免過度裝飾。' },
+  rounded_cute: { label: '圓潤可愛風', hint: '圓潤、活潑、親切。適合親子、童趣、小故事。', promptGuidance: '字體風格：圓潤可愛感，活潑親切但保持清楚可讀，避免過度花俏影響閱讀。' },
+  clear_readable: { label: '簡潔清楚風', hint: '閱讀性高、穩定、容易看。適合大多數電子小書。', promptGuidance: '字體風格：簡潔清楚，閱讀性優先，穩定不花俏，適合大多數內容。' },
+  elegant_bookish: { label: '優雅書卷風', hint: '比較文雅、有閱讀感。適合散文、生命故事、心靈書寫。', promptGuidance: '字體風格：優雅書卷感，文雅、有閱讀質感，保持清楚易讀不過度裝飾。' },
+  formal_stable: { label: '穩重正式風', hint: '清楚、沉穩、不花俏。適合教學、工具書、產品內容。', promptGuidance: '字體風格：穩重正式，清楚沉穩不花俏，適合教學或產品類內容。' }
+});
+// 十一節「畫面風格 preset」：純 UI 側常數，選了之後直接把 value 寫進既有
+// visualPlan.visualStyle（跟使用者自己手動輸入完全同一個欄位），不另存 preset id 或
+// preset object——這份清單本身不進 book 資料，只是產生按鈕跟填字用。
+const QUICKBOOK_V4_VISUAL_STYLE_PRESETS = Object.freeze([
+  { id: 'watercolor_picture_book', label: '水彩繪本風', hint: '色彩柔和、有手繪感，像溫暖故事書。', value: '水彩繪本風：色彩柔和、帶有手繪筆觸感，像溫暖的故事書插畫' },
+  { id: 'fresh_illustration', label: '清新插畫風', hint: '畫面乾淨、明亮、簡潔，容易閱讀。', value: '清新插畫風：畫面乾淨明亮、線條簡潔，容易閱讀' },
+  { id: 'warm_realistic', label: '溫暖寫實風', hint: '接近真實生活感，但光線與氣氛柔和。', value: '溫暖寫實風：接近真實生活感，但光線與氣氛柔和溫暖' },
+  { id: 'vintage_nostalgic', label: '復古懷舊風', hint: '有舊時光、回憶錄、童年年代感。', value: '復古懷舊風：帶有舊時光、回憶錄般的懷舊年代感' },
+  { id: 'minimal_text_visual', label: '極簡圖文風', hint: '留白多，重視文字與主視覺。', value: '極簡圖文風：畫面留白多，重視文字與主視覺的簡潔搭配' },
+  { id: 'soft_photo_illustration', label: '柔和照片插圖風', hint: '介於照片與插畫之間，有真實感也有故事感。', value: '柔和照片插圖風：介於照片與插畫之間，兼具真實感與故事感' }
+]);
+// 八節「presentationStyle 推薦，但不硬鎖」：只回傳 Canva 尺寸建議，字體風格不在這裡建議
+// （字體風格沒有跟作品型態強相關的既有規則，不做過度推論）。
+function getRecommendedLayoutProfile(presentationStyle) {
+  if (presentationStyle === 'picture_book') return QUICKBOOK_V4_CANVA_SIZE_CATALOG.a4_landscape;
+  return QUICKBOOK_V4_CANVA_SIZE_CATALOG.a4_portrait;
+}
+// 九／十三節：尺寸／字體風格接入 formatter 的共用讀取點，book.layoutProfile 缺值時退回
+// 預設值，不因為舊資料還沒 migration 完就整段 Prompt 出錯。
+function quickBookV4CanvaSizePromptGuidance(book) {
+  const lp = (book && book.layoutProfile) || QUICKBOOK_V4_DEFAULT_LAYOUT_PROFILE;
+  const entry = QUICKBOOK_V4_CANVA_SIZE_CATALOG[lp.canvaSizeId] || QUICKBOOK_V4_CANVA_SIZE_CATALOG.a4_portrait;
+  return entry.promptGuidance;
+}
+function quickBookV4FontStylePromptGuidance(book) {
+  const lp = (book && book.layoutProfile) || QUICKBOOK_V4_DEFAULT_LAYOUT_PROFILE;
+  const entry = QUICKBOOK_V4_FONT_STYLE_CATALOG[lp.fontStyle] || QUICKBOOK_V4_FONT_STYLE_CATALOG.clear_readable;
+  return entry.promptGuidance;
+}
+// 共用電子書引擎 P0 Phase 1（技術長《共用電子書引擎 P0 母規格技術審查》核准，2026-08-07）：
+// BookDocumentV1：Practical／Creative／未來 Living Book 共用的唯一正式書籍容器（不得
+// 新增第二套），是「確認後的輸出」，不是原始資料容器——原始資料永遠留在
+// SourceMaterialModel／CreativeSeedModel，不會被這裡覆蓋。本輪在既有欄位上做最小擴充，
+// 只增不刪：新增 bookId／bookType／topicPresetId／bookDescription／targetReader／
+// chapters／visualPlan／handoffStatus／status，既有欄位（flowType／title／subtitle／
+// authorName／presentationStyle／pages／cover／createdAt／updatedAt）完全保留。
+let quickBookV4NextBookId = 1;
+function blankBookDocumentV1() {
+  return {
+    schemaVersion: 1,
+    bookId: 'book_' + (quickBookV4NextBookId++),
+    bookType: '', // 目前對齊 flowType（'practical' | 'creative'），未來可擴充其他書籍型態
+    topicPresetId: '', // 生命故事未來只是一個 BookStructurePreset，本輪先保留欄位、不實作
+    flowType: '', // 'practical' | 'creative'（既有欄位，保留）
+    title: '', subtitle: '', authorName: '',
+    // Must Fix（CEO 真人驗收，2026-08-09）：封面署名（作者／繪者／其他署名，例如「文：
+    // 小天使／圖：AI」）是 book-level 封面 metadata，不是正文，不可寫進任何 pageText。
+    // illustratorName／coverCredit 是既有 authorName 缺少的兩個必要欄位，只新增這兩個，
+    // 不建立第二套 cover model／metadata 容器。
+    illustratorName: '', coverCredit: '',
+    bookDescription: '', targetReader: '',
+    presentationStyle: '', // 見 QUICKBOOK_V4_PRESENTATION_STYLE
+    chapters: [], // 見 blankQuickBookV4Chapter()
+    pages: [], // { pageId, pageNumber, chapterId, pageType, pageTitle, pageText, contentStatus, sourceRefs:[], imageStatus, imageNeeded, imageDescription, imagePrompt, layoutSuggestion, confirmedByUser, visualMode, storyboard, visualSuggestion, photoHint, illustrationPrompt, diagramContent, userAssetRefs:[], generatedAssetRefs:[], visualStatus, visualConfirmedByUser }
+    cover: { title: '', subtitle: '', visualDirection: '', imagePrompt: '', layoutSuggestion: '', completedExternally: false },
+    // 全書視覺定調。CEO 真人驗收＋技術長裁示（2026-08-07）：現有 styleConfirmed 只能表達
+    // 「全書畫風是否已定調」，沒有欄位能表達「試 1 張圖是否已經使用者確認」——這兩件事
+    // 是生圖 Gate 的兩個獨立條件（先風格、後試圖），缺一個就沒辦法只用現有資料判斷 Gate
+    // 是否通過，因此最小新增 trialImageConfirmed，不再擴充 visualPlan 其他欄位。
+    // P0 Blocker 補修（CEO 真人驗收，2026-08-07）：全書視覺定調畫面需要五個真正會影響整
+    // 本書圖像一致性的欄位；sceneEra／avoidElements 是既有欄位無法表達的兩個必要新欄位
+    // （場景／年代感、避免元素），只新增這兩個，不再擴充其他 visualPlan schema。
+    visualPlan: { visualStyle: '', characterConsistency: '', colorMood: '', sceneEra: '', avoidElements: '', styleConfirmed: false, trialImageConfirmed: false },
+    // Quick Book 下一輪（CEO／總策長，2026-08-09）六節：book-level Canva 尺寸／字體風格，
+    // 全書共用同一份，不可每頁自訂。預設值 = A4 直式＋簡潔清楚風（見
+    // QUICKBOOK_V4_DEFAULT_LAYOUT_PROFILE），legacy v4 資料在 ensureQuickBookV4Defaults
+    // 補齊，不影響 v3.0。
+    layoutProfile: Object.assign({}, QUICKBOOK_V4_DEFAULT_LAYOUT_PROFILE),
+    handoffStatus: { canva_pages: '', google_docs_full: '', plain_text: '', image_production: '' }, // 各 target 最後一次交接時間，供未來 UI 參考
+    status: 'draft', // 'draft' | 'partial' | 'complete'，本輪由 Validator 結果附帶參考，不建立完整狀態機
+    createdAt: '', updatedAt: ''
+  };
+}
+// 章節模型（P0 新增）：selectedForProduction 決定這個章節要不要放入這次交接包／成品，
+// pageIds 是「這個章節目前有哪些頁面、順序為何」的權威記錄，跟每個 page.chapterId
+// 互為驗證（見 validateBookDocumentStructure）。
+let quickBookV4NextChapterId = 1;
+function blankQuickBookV4Chapter() {
+  return {
+    chapterId: 'chapter_' + (quickBookV4NextChapterId++),
+    chapterTitle: '', chapterDescription: '', chapterOrder: 0,
+    status: QUICKBOOK_V4_CONTENT_STATUS.NEEDS_INPUT,
+    selectedForProduction: true,
+    pageIds: [],
+    createdAt: '', updatedAt: ''
+  };
+}
+// CEO 真人驗收＋技術長裁示（2026-08-07）：migration 自動建立的預設章節統一用這個常數，
+// 避免字串重複散落各處、日後改名漏改。
+const QUICKBOOK_V4_DEFAULT_CHAPTER_TITLE = '全部內容';
+// 四節「舊作品相容」：不管是真的舊作品（從未有 chapters 概念的年代），還是 Whole Book
+// Fast Path／Creative 分頁剛生成、本來就沒有寫 chapters 的新書，都用同一套遷移邏輯
+// 補齊。冪等（idempotent）——每次 ensureQuickBookV4Defaults 都會呼叫一次，已經正確的
+// 資料不會被改動，只修補結構缺口，不修改既有正文、不改變既有頁面順序。
+function migrateQuickBookV4BookChapters(book) {
+  if (!Array.isArray(book.chapters)) book.chapters = [];
+  if (!Array.isArray(book.pages)) book.pages = [];
+  if (!book.pages.length) return; // 空書（尚未生成任何頁面）先不強制建立空殼章節
+  const chapterIdSet = book.chapters.map(function (c) { return c.chapterId; });
+  const orphanPages = book.pages.filter(function (p) { return !p.chapterId || chapterIdSet.indexOf(p.chapterId) === -1; });
+  if (orphanPages.length) {
+    let defaultChapter = book.chapters[0];
+    if (!defaultChapter) {
+      defaultChapter = blankQuickBookV4Chapter();
+      defaultChapter.chapterTitle = QUICKBOOK_V4_DEFAULT_CHAPTER_TITLE;
+      defaultChapter.chapterOrder = 0;
+      defaultChapter.selectedForProduction = true;
+      defaultChapter.createdAt = new Date().toISOString();
+      book.chapters.push(defaultChapter);
+    }
+    orphanPages.forEach(function (p) { p.chapterId = defaultChapter.chapterId; });
+  }
+  // chapter.pageIds 是「這個章節依序有哪些頁面」的權威記錄，依現有 pageNumber 排序後
+  // 重新同步，不管前面是新建預設章節還是既有章節資料有落差都會收斂成一致狀態。
+  book.chapters.forEach(function (c) {
+    c.pageIds = book.pages.filter(function (p) { return p.chapterId === c.chapterId; })
+      .sort(function (a, b) { return a.pageNumber - b.pageNumber; })
+      .map(function (p) { return p.pageId; });
+  });
+  renumberQuickBookV4BookPages(book);
+}
+// 章節與分頁異動後，全書頁碼統一重新編號（依 chapterOrder → 章節內 pageIds 順序），
+// 確保「不得出現重複或缺號」——這是唯一允許改寫 pageNumber 的地方，其他操作都只改
+// chapters／pageIds／chapterId，最後統一呼叫這個函式收斂頁碼。
+function renumberQuickBookV4BookPages(book) {
+  const orderedChapters = book.chapters.slice().sort(function (a, b) { return a.chapterOrder - b.chapterOrder; });
+  let n = 1;
+  orderedChapters.forEach(function (c) {
+    c.pageIds.forEach(function (pid) {
+      const p = book.pages.find(function (pg) { return pg.pageId === pid; });
+      if (p) p.pageNumber = n++;
+    });
+  });
+}
+// SourceMaterialModel（Gate 2 Phase 2A 正式版，取代 Gate 1 的簡化版）：Practical 專屬。
+// rawInput 永久保留使用者最初貼入的完整資料，不得覆蓋——inventory／structureUnits 都是
+// 「整理過程中的加工結果」，rawInput 才是唯一的事實來源，Validator／Recovery 都要能
+// 回頭對照這份原始資料。inventory／structureUnits 在 Whole Book Fast Path 裡不會被
+// AI 呼叫填入（Fast Path 只有一次 AI 往返），但欄位保留、不刪除，供「進階：逐步整理
+// 資料」舊流程繼續使用（總策長／CEO 裁示，2026-08-06：舊能力保留在背景，不阻塞快速流程）。
+function blankSourceMaterialModel() {
+  return {
+    rawInput: '',
+    productName: '', oneLineIntro: '', targetAudience: '', readerTask: '',
+    usageContext: '', contactInfo: '', cta: '',
+    pageCountChoice: 0, // 5 | 6 | 8，Whole Book Fast Path 專用
+    inventory: { existing: [], missing: [], needsConfirmation: [], conflicts: [], notApplicable: [] },
+    structureUnits: [], // 見 blankQuickBookV4StructureUnit()
+    // Quick Book 母模封版 P0（CEO／總策長，2026-08-11）：烘焙小書 canonical 結構化來源，
+    // null 代表這不是一本烘焙小書；有值時是使用者原始填寫的 8 個欄位，永遠不被 AI 改寫，
+    // 只用來組成 rawInput 與比對 Validator，跟 rawInput 一樣是唯一事實來源。
+    bakingFields: null, // 見 blankQuickBookV4BakingFields()
+    createdAt: '', updatedAt: ''
+  };
+}
+function blankQuickBookV4BakingFields() {
+  return { productName: '', yieldInfo: '', ingredients: '', steps: '', fermentation: '', bakeTemp: '', bakeTime: '', notes: '' };
+}
+// Structure Unit（Gate 2 Phase 2A 新增）：每個產品介紹單元的最小模型，confirmedByUser
+// 是唯一決定「能不能正式轉入 BookDocument」的欄位——needs_input／needs_confirmation
+// 可以留在草稿裡，但不能被包裝成已確認的正式事實（見二十九節 Done Definition 第9項）。
+let quickBookV4NextUnitId = 1;
+function blankQuickBookV4StructureUnit() {
+  return {
+    unitId: 'unit_' + (quickBookV4NextUnitId++),
+    title: '', purpose: '', draftContent: '',
+    contentStatus: QUICKBOOK_V4_CONTENT_STATUS.NEEDS_INPUT,
+    sourceRefs: [], missingItems: [],
+    confirmedByUser: false, canBecomePage: true, displayOrder: 0
+  };
+}
+// Phase 2B（總策長／CEO 核准，2026-08-06）：資料盤點單項的最小模型。existing／missing／
+// needsConfirmation／notApplicable 共用同一個形狀；conflicts 另外用 versionA/versionB
+// 因為它本質上是「兩個候選值」不是「一個值」。sourceQuote 保留 AI 指出的原文依據，供
+// Validator／使用者核對「這真的是我提供的資料」還是 AI 自己補的。
+let quickBookV4NextItemId = 1;
+function blankQuickBookV4InventoryItem() {
+  return { itemId: 'item_' + (quickBookV4NextItemId++), label: '', value: '', note: '', sourceQuote: '' };
+}
+function blankQuickBookV4ConflictItem() {
+  return { itemId: 'item_' + (quickBookV4NextItemId++), label: '', versionA: '', versionB: '', resolution: '' };
+  // resolution: '' | 'use_a' | 'use_b' | 'keep_both' | 'decide_later' | 'exclude'
+}
+
+// CreativeSeedModel（AI Collaboration OS｜Creative Fast Path 最小版本，總策長／CEO 核准，
+// 2026-08-06，取代 Phase 1 佔位版）：storySource 是原始輸入（訪談回答或貼入的故事全文），
+// 永久保留供 Recovery；storyDraft 是「完整文稿」中間產物——只有使用者親自確認過
+// （confirmedByUser=true）才能進入分頁，AI／Parser 絕對不能自己把這個欄位設成 true。
+function blankQuickBookV4StorySource() {
+  return {
+    topic: '', // 這個故事主要想寫什麼
+    originalInput: '', // Path A（已有故事）：使用者貼入的原始故事全文
+    interviewAnswers: [], // Path B（需要AI提問協助）：[{question, answer, skipped}]
+    photoHints: '', // 是否已有想放進書中的照片（P0 只存文字描述，不做真正上傳／資產庫）
+    targetReader: '', intendedFeeling: ''
+  };
+}
+function blankQuickBookV4StoryDraft() {
+  return {
+    title: '', subtitle: '', fullText: '',
+    sourceRefs: [], // 對應 storySource 的哪些回答／輸入片段
+    contentStatus: QUICKBOOK_V4_CONTENT_STATUS.NEEDS_INPUT,
+    confirmedByUser: false
+  };
+}
+function blankCreativeSeedModel() {
+  return {
+    mode: '', // 'has_story' | 'need_interview'
+    storySource: blankQuickBookV4StorySource(),
+    currentQuestionIndex: 0,
+    storyDraft: blankQuickBookV4StoryDraft(),
+    presentationStyle: '', pageCountChoice: 0, // 呈現方式／頁數，同 SourceMaterialModel 的 Fast Path 用法
+    rawAiResponse: '',
+    createdAt: '', updatedAt: ''
+  };
+}
+function blankQuickBookV4Draft() {
+  return {
+    schemaVersion: 1,
+    flowType: '', // 'practical' | 'creative'
+    book: blankBookDocumentV1(),
+    sourceMaterial: null,
+    creativeSeed: null,
+    rawAiResponse: '', // 最近一次 AI 回覆的完整原文，Parser 解析失敗時仍要保留（見十九節）
+    lastCompletedStep: '', // 保存「最後完成步驟」，重新開啟時回到正確階段（見二十一節）
+    createdAt: '', updatedAt: ''
+  };
+}
+// 遞迴正規化：確保 SourceMaterialModel 裡每個 structureUnit、BookDocumentV1 裡每個
+// page 的 contentStatus 都是 canonical enum 值——不管是舊資料殘留，還是外部直接塞值，
+// 都會被收斂成合法狀態，不會讓同一個作品內同時出現兩種狀態格式（Gate 2 三節硬性要求）。
+function normalizeQuickBookV4Statuses(v4) {
+  if (v4.sourceMaterial && Array.isArray(v4.sourceMaterial.structureUnits)) {
+    v4.sourceMaterial.structureUnits.forEach(function (u) { u.contentStatus = normalizeQuickBookV4ContentStatus(u.contentStatus); });
+  }
+  if (v4.book && Array.isArray(v4.book.pages)) {
+    v4.book.pages.forEach(function (p) { p.contentStatus = normalizeQuickBookV4ContentStatus(p.contentStatus); });
+  }
+}
+// Quick Book 下一輪（CEO／總策長，2026-08-09）四節「舊 v4 資料 Recovery」：封面正文改為
+// 必須留空後，舊已存檔的 book.pages[cover] 可能還留著真正的正文內容（例如舊版 Practical
+// adapter 曾經把 oneLineIntro 塞進 coverPage.pageText，或使用者當時自己在封面頁寫了
+// 內容）。不能默默清掉，也不能每次渲染都重跑——用 book.coverTextRecoveredAt 記錄「已經
+// 處理過一次」（冪等）。作法跟 quickBookV4NormalizeCoverPageText()（Whole Book Parser 用
+// 的同一套邏輯）一致：正文搬到正文第 1 頁，不遺失原文，不新增第二套 cover model；設一個
+// 一次性 coverTextRecoveryNotice 旗標，讓畫面下次渲染時用既有 showToast() 提示，不用會
+// 打斷自動化流程的 confirm()。新作品從一開始 cover.pageText 就是空的（見
+// buildPracticalBookDocument／parseQuickBookV4WholeBook 本輪修正），不會觸發這裡；
+// v3.0 的 work.quickBook 完全不會呼叫這個函式，不受影響。
+function quickBookV4RecoverLegacyCoverPageText(book) {
+  if (book.coverTextRecoveredAt) return;
+  const cover = (book.pages || []).find(function (p) { return p.pageType === 'cover'; });
+  if (!cover || !cover.pageText || !cover.pageText.trim()) {
+    book.coverTextRecoveredAt = new Date().toISOString();
+    return;
+  }
+  const strayText = cover.pageText.trim();
+  cover.pageText = '';
+  const firstBody = (book.pages || []).find(function (p) { return p.pageType !== 'cover'; });
+  if (firstBody) {
+    firstBody.pageText = strayText + (firstBody.pageText ? '\n\n' + firstBody.pageText : '');
+  } else {
+    // 沒有任何正文頁可承接（例如舊資料只有封面一頁），保留成一個新的正文頁，不遺失內容。
+    const p = blankQuickBookV4BookPage();
+    const maxPageNumber = book.pages.reduce(function (m, x) { return Math.max(m, x.pageNumber || 0); }, 0);
+    p.pageNumber = maxPageNumber + 1;
+    p.chapterId = cover.chapterId || '';
+    p.pageType = 'feature';
+    p.pageText = strayText;
+    p.contentStatus = QUICKBOOK_V4_CONTENT_STATUS.NEEDS_CONFIRMATION;
+    book.pages.push(p);
+  }
+  book.coverTextRecoveredAt = new Date().toISOString();
+  book.coverTextRecoveryNotice = true;
+}
+function ensureQuickBookV4Defaults(work) {
+  if (!work.quickBookV4) {
+    work.quickBookV4 = blankQuickBookV4Draft();
+    work.quickBookV4.flowType = work.flowId === 'quickbook_v4_creative' ? 'creative' : 'practical';
+    work.quickBookV4.book.flowType = work.quickBookV4.flowType;
+    work.quickBookV4.book.bookType = work.quickBookV4.flowType;
+    if (work.quickBookV4.flowType === 'practical') work.quickBookV4.sourceMaterial = blankSourceMaterialModel();
+    else work.quickBookV4.creativeSeed = blankCreativeSeedModel();
+    work.quickBookV4.createdAt = new Date().toISOString();
+    return work.quickBookV4;
+  }
+  const v4 = work.quickBookV4;
+  const blank = blankQuickBookV4Draft();
+  Object.keys(blank).forEach(function (key) {
+    if (v4[key] === undefined) v4[key] = blank[key];
+  });
+  if (!v4.book) v4.book = blankBookDocumentV1();
+  if (v4.flowType === 'practical' && !v4.sourceMaterial) v4.sourceMaterial = blankSourceMaterialModel();
+  if (v4.flowType === 'creative' && !v4.creativeSeed) v4.creativeSeed = blankCreativeSeedModel();
+  // Gate 1 舊資料補齊 Phase 2A 新欄位（既有測試作品若只有 Gate 1 的簡化版 sourceMaterial，
+  // 這裡安全補上新欄位，不覆蓋已有值）。
+  if (v4.sourceMaterial) {
+    const blankSM = blankSourceMaterialModel();
+    Object.keys(blankSM).forEach(function (key) { if (v4.sourceMaterial[key] === undefined) v4.sourceMaterial[key] = blankSM[key]; });
+    if (!v4.sourceMaterial.inventory) v4.sourceMaterial.inventory = blankSM.inventory;
+    else Object.keys(blankSM.inventory).forEach(function (key) { if (!Array.isArray(v4.sourceMaterial.inventory[key])) v4.sourceMaterial.inventory[key] = []; });
+  }
+  // AI Collaboration OS 回合（2026-08-06）：Phase 1 時代建立的舊 creativeSeed（theme／
+  // starter／interview.turns 那個舊形狀）安全升級成新的 storySource／storyDraft 形狀，
+  // 不刪除舊資料本身（舊欄位如果有值，盡量搬到新形狀對應欄位），只是這個作品從沒有真的
+  // 用過 Creative Step 邏輯（Phase 1 只佔位），實務上不會有真的舊資料遺失風險。
+  if (v4.flowType === 'creative' && v4.creativeSeed) {
+    const cs = v4.creativeSeed;
+    if (!cs.storySource || !cs.storyDraft || cs.currentQuestionIndex === undefined) {
+      const blankCS = blankCreativeSeedModel();
+      if (!cs.storySource) cs.storySource = blankCS.storySource;
+      if (!cs.storyDraft) cs.storyDraft = blankCS.storyDraft;
+      if (cs.currentQuestionIndex === undefined) cs.currentQuestionIndex = 0;
+      if (cs.mode === undefined) cs.mode = '';
+      if (cs.presentationStyle === undefined) cs.presentationStyle = '';
+      if (cs.pageCountChoice === undefined) cs.pageCountChoice = 0;
+      if (cs.rawAiResponse === undefined) cs.rawAiResponse = '';
+    }
+  }
+  if (v4.book) {
+    // 共用電子書引擎 P0（技術長《共用電子書引擎 P0 母規格技術審查》核准，2026-08-07）：
+    // 舊 BookDocument 補齊新欄位，只補缺少欄位、不覆蓋原值（四節「向下相容」硬性要求）。
+    const blankBook = blankBookDocumentV1();
+    Object.keys(blankBook).forEach(function (key) {
+      if (key === 'bookId') { if (!v4.book.bookId) v4.book.bookId = blankBook.bookId; return; } // 已有 id 不覆蓋，沒有才補一個穩定 id
+      if (v4.book[key] === undefined) v4.book[key] = blankBook[key];
+    });
+    if (!v4.book.bookType) v4.book.bookType = v4.book.flowType || v4.flowType || '';
+    if (!v4.book.visualPlan) v4.book.visualPlan = blankBook.visualPlan;
+    else Object.keys(blankBook.visualPlan).forEach(function (key) { if (v4.book.visualPlan[key] === undefined) v4.book.visualPlan[key] = blankBook.visualPlan[key]; });
+    // 十八節「migration」：舊 v4 沒有 layoutProfile，補 default（A4 直式＋簡潔清楚風），
+    // 已有的欄位不覆蓋（例如舊資料某天已經手動存過部分欄位）。
+    if (!v4.book.layoutProfile) v4.book.layoutProfile = Object.assign({}, QUICKBOOK_V4_DEFAULT_LAYOUT_PROFILE);
+    else Object.keys(QUICKBOOK_V4_DEFAULT_LAYOUT_PROFILE).forEach(function (key) { if (v4.book.layoutProfile[key] === undefined) v4.book.layoutProfile[key] = QUICKBOOK_V4_DEFAULT_LAYOUT_PROFILE[key]; });
+    if (!v4.book.handoffStatus) v4.book.handoffStatus = blankBook.handoffStatus;
+    else Object.keys(blankBook.handoffStatus).forEach(function (key) { if (v4.book.handoffStatus[key] === undefined) v4.book.handoffStatus[key] = blankBook.handoffStatus[key]; });
+    if (!Array.isArray(v4.book.chapters)) v4.book.chapters = [];
+    const blankPage = blankQuickBookV4BookPage();
+    v4.book.pages.forEach(function (p) {
+      Object.keys(blankPage).forEach(function (key) {
+        if (key === 'pageId') return; // 每頁自己的 id 不可被覆蓋
+        if (p[key] === undefined) p[key] = blankPage[key];
+      });
+      if (!p.pageId) p.pageId = 'page_' + (quickBookV4NextPageId++); // 防禦性：極舊資料萬一沒有 pageId，產生一次穩定 ID 後不再變動
+    });
+    migrateQuickBookV4BookChapters(v4.book);
+    // 二／四節「封面正文改為必須留空」：舊資料可能還留著真正的正文內容（例如舊版
+    // Practical adapter 曾經把 oneLineIntro 塞進 coverPage.pageText），不能默默清掉。
+    quickBookV4RecoverLegacyCoverPageText(v4.book);
+    // Must Fix（CEO 真人驗收，2026-08-09）：已經存檔的舊書（本次修正前生成）可能已經把
+    // 「文：X／圖：Y」這類署名寫進頁面正文，開啟舊作品時一併清乾淨，不用等重新生成。
+    // 函式本身冪等，署名一旦搬走就找不到東西可搬，可以安全每次開啟都跑。
+    quickBookV4StripCoverCreditFromPages(v4.book);
+  }
+  normalizeQuickBookV4Statuses(v4);
+  return v4;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// AI Collaboration OS｜書本與影片共用內容素材流程（總策長／CEO 核准，2026-08-06）
+// Whole Book Prompt／Parser／Validator：Practical Fast Path 與 Creative Fast Path 共用
+// 同一套（九節明確要求），不管是「一次生成整本書」還是「把已確認文稿分頁」，AI 回覆的
+// 格式都是同一種「【第N頁】」固定標籤，所以 Parser 可以共用，Prompt 依情境各自組字但
+// 都呼叫同一個 Parser。硬規則：AI 輸出的頁面最高只能是 needs_confirmation，
+// confirmedByUser 永遠是 false——只有使用者在頁面詳情畫面按「這一頁可以」才能改變，
+// Parser／Validator 絕對不會、也不能把這兩個值設成「已確認」。
+// ═══════════════════════════════════════════════════════════════════════════
+function quickBookV4NormalizePageTypeGuess(raw, idx, total) {
+  const t = (raw || '').trim();
+  if (/封面/.test(t)) return 'cover';
+  if (/結尾|下一步|封底/.test(t)) return 'cta';
+  if (idx === 0) return 'cover';
+  if (idx === total - 1) return 'cta';
+  return 'feature';
+}
+// 三節「修正資料入口，不可只修 UI」：AI 回覆若把「正文」寫進封面頁，不可直接當成功資料
+// 寫入（會被顯示成「第 1 頁＝封面」），也不能默默刪掉——把內容搬到封面後第一個非封面頁
+// 最前面，不遺失內容。四種 parser tier（json／labeled_block／markdown_heading／
+// natural_page）共用同一個正規化，raw_fallback 那一層本來就不是正式頁面，不需要處理。
+function quickBookV4NormalizeCoverPageText(pages) {
+  const cover = pages.find(function (p) { return p.pageType === 'cover'; });
+  if (!cover || !cover.pageText || !cover.pageText.trim()) return pages;
+  const strayText = cover.pageText.trim();
+  cover.pageText = '';
+  const firstBody = pages.find(function (p) { return p.pageType !== 'cover'; });
+  if (firstBody) {
+    firstBody.pageText = strayText + (firstBody.pageText ? '\n\n' + firstBody.pageText : '');
+  } else {
+    const p = blankQuickBookV4BookPage();
+    p.pageNumber = pages.length + 1;
+    p.pageType = 'feature';
+    p.pageText = strayText;
+    pages.push(p);
+  }
+  return pages;
+}
+// Must Fix（CEO 真人驗收，2026-08-09）：作者／繪者／封面署名（例如「文：小天使／圖：
+// AI」）是封面 metadata，不是故事正文，不得留在任何頁面的 pageText，也不得被逐頁生圖
+// Prompt 當成故事內容送出去。只有「整行都是署名格式」才視為署名（用／、/、、拆開多個
+// 署名時，每一段都要符合格式才算，只要有一段不符合就整行保留，不誤刪真正的正文——跟
+// 上一輪「不能默默刪正文」同一個原則，這裡差別是署名本來就不該是正文，搬到 book-level
+// metadata 才是正確位置，不是刪除）。
+const QUICKBOOK_V4_COVER_CREDIT_LINE_PATTERNS = [
+  { field: 'authorName', regex: /^(文|作者|文字|文案)[:：]\s*(.+)$/ },
+  { field: 'illustratorName', regex: /^(圖|繪者|繪圖|插畫|美術)[:：]\s*(.+)$/ }
+];
+function quickBookV4MatchCoverCreditLine(line) {
+  const segments = line.split(/[／/、]/).map(function (s) { return s.trim(); }).filter(Boolean);
+  if (!segments.length) return null;
+  const applied = [];
+  for (let i = 0; i < segments.length; i++) {
+    let matched = false;
+    for (let j = 0; j < QUICKBOOK_V4_COVER_CREDIT_LINE_PATTERNS.length; j++) {
+      const m = segments[i].match(QUICKBOOK_V4_COVER_CREDIT_LINE_PATTERNS[j].regex);
+      if (m) { applied.push({ field: QUICKBOOK_V4_COVER_CREDIT_LINE_PATTERNS[j].field, value: m[2].trim() }); matched = true; break; }
+    }
+    if (!matched) return null;
+  }
+  return applied;
+}
+// 逐頁掃描 book.pages（含封面，防呆用——正常流程封面 pageText 這時已經是空的），命中的
+// 整行搬到 book.authorName／illustratorName（已有值不覆蓋，避免蓋掉使用者自己填的），該行
+// 從 pageText 移除。冪等：署名一旦搬走，重跑找不到東西可搬，不會重複處理。
+function quickBookV4StripCoverCreditFromPages(book) {
+  (book.pages || []).forEach(function (p) {
+    if (!p.pageText) return;
+    const lines = p.pageText.split('\n');
+    const kept = [];
+    lines.forEach(function (line) {
+      const trimmed = line.trim();
+      if (!trimmed) { kept.push(line); return; }
+      const applied = quickBookV4MatchCoverCreditLine(trimmed);
+      if (applied) {
+        applied.forEach(function (item) { if (!book[item.field]) book[item.field] = item.value; });
+      } else {
+        kept.push(line);
+      }
+    });
+    p.pageText = kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+  });
+}
+// 附加需求：繪本（picture_book）應預設全書需要圖片，只有使用者明確設為純文字的頁面才
+// 排除——只在剛生成、頁面都還沒被使用者個別調整過視覺方式（仍是預設值 add_later）時套用，
+// 不會覆蓋使用者已經自己選過的「純文字」／「稍後再補」。
+function quickBookV4ApplyPresentationStyleImageDefault(book) {
+  if (book.presentationStyle !== QUICKBOOK_V4_PRESENTATION_STYLE.PICTURE_BOOK) return;
+  (book.pages || []).forEach(function (p) {
+    if (p.visualMode === QUICKBOOK_V4_VISUAL_MODE.ADD_LATER) {
+      p.visualMode = QUICKBOOK_V4_VISUAL_MODE.GENERATED_ILLUSTRATION;
+    }
+  });
+}
+// Parser 五層 fallback（跟 Phase 2C 結構規劃 Parser 同一套紀律）：①結構化 JSON ②固定標籤
+// 【第N頁】③Markdown 標題④自然頁碼（例如「第一頁：」「Page 1:」）⑤完全解析不出來時
+// 整段保留成一個頁面，不遺失內容，也不假裝是正式成書（parseTier==='raw_fallback' 時
+// 呼叫端必須視為需要人工介入，不能直接當作正常結果使用）。
+function parseQuickBookV4WholeBook(content) {
+  const stripped = stripAfterQuickBookStepBoundary(content);
+  const trimmed = stripped.trim();
+  // 第一層：結構化 JSON
+  if (/^[{[]/.test(trimmed)) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      const arr = Array.isArray(parsed) ? parsed : parsed.pages;
+      if (Array.isArray(arr) && arr.length) {
+        const pages = arr.map(function (raw, idx) {
+          const p = blankQuickBookV4BookPage();
+          p.pageNumber = idx + 1;
+          p.pageType = quickBookV4NormalizePageTypeGuess(raw.pageType || '', idx, arr.length);
+          p.pageTitle = raw.pageTitle || raw.title || '';
+          p.pageText = raw.pageText || raw.text || '';
+          p.sourceRefs = Array.isArray(raw.sourceRefs) ? raw.sourceRefs : (raw.sourceRefs ? [raw.sourceRefs] : []);
+          p.visualSuggestion = raw.visualSuggestion || '';
+          return p;
+        }).filter(function (p) { return p.pageTitle || p.pageText; });
+        if (pages.length) return { pages: quickBookV4NormalizeCoverPageText(pages), parseTier: 'json' };
+      }
+    } catch (e) { /* 不是合法 JSON，往下一層 fallback */ }
+  }
+  // 第二層：固定標籤【第N頁】（跟 v3.0 Step4 同一種格式，AI 很熟悉這個格式）
+  const blocks = stripped.split(/\n(?=\s*【第\s*\d+\s*頁】)/).filter(function (s) { return /【第\s*\d+\s*頁】/.test(s); });
+  if (blocks.length) {
+    const fieldLabels = ['頁面類型', '頁面標題', '正文', '來源依據', '視覺建議'];
+    const pages = blocks.map(function (block, idx) {
+      const body = block.replace(/^\s*【第\s*\d+\s*頁】\s*\n?/, '');
+      function grab(label) { return extractLabeledBlockValue(body, label, fieldLabels); }
+      const p = blankQuickBookV4BookPage();
+      p.pageNumber = idx + 1;
+      p.pageType = quickBookV4NormalizePageTypeGuess(grab('頁面類型'), idx, blocks.length);
+      p.pageTitle = grab('頁面標題');
+      // Must Fix（技術長裁示，2026-08-08）：不再對「正文：」欄位做語意關鍵字黑名單過濾
+      // ——防污染只靠固定欄位結構本身（只取「正文：」標籤之後、下一個欄位標籤之前的內容），
+      // 不得因為正文剛好出現「我覺得」「我認為」「這篇」之類的字就被誤刪。
+      p.pageText = grab('正文');
+      p.sourceRefs = quickBookV4SplitList(grab('來源依據'));
+      p.visualSuggestion = grab('視覺建議');
+      return p;
+    }).filter(function (p) { return p.pageTitle || p.pageText; });
+    if (pages.length) return { pages: quickBookV4NormalizeCoverPageText(pages), parseTier: 'labeled_block' };
+  }
+  // 第三層：Markdown 標題
+  const mdBlocks = stripped.split(/\n(?=#{1,3}\s+\S)/).filter(function (s) { return /^#{1,3}\s+/.test(s.trim()); });
+  if (mdBlocks.length) {
+    const pages = mdBlocks.map(function (block, idx) {
+      const lines = block.trim().split('\n');
+      const title = lines[0].replace(/^#{1,3}\s+/, '').replace(/^第?\d+[頁.、]?\s*/, '').trim();
+      const body = lines.slice(1).join('\n').trim();
+      const p = blankQuickBookV4BookPage();
+      p.pageNumber = idx + 1;
+      p.pageType = idx === 0 ? 'cover' : (idx === mdBlocks.length - 1 ? 'cta' : 'feature');
+      p.pageTitle = title; p.pageText = body;
+      return p;
+    }).filter(function (p) { return p.pageTitle || p.pageText; });
+    if (pages.length) return { pages: quickBookV4NormalizeCoverPageText(pages), parseTier: 'markdown_heading' };
+  }
+  // 第四層：自然頁碼（AI 用自己習慣的「第一頁：」「Page 1:」條列，沒有固定欄位標籤）
+  const naturalLines = stripped.split('\n').filter(function (line) { return /^(第\s*[0-9一二三四五六七八九十]+\s*頁|Page\s*\d+)[:：]/i.test(line.trim()); });
+  if (naturalLines.length >= 2) {
+    const pages = naturalLines.map(function (line, idx) {
+      const cleaned = line.replace(/^(第\s*[0-9一二三四五六七八九十]+\s*頁|Page\s*\d+)[:：]\s*/i, '').trim();
+      const sepParts = cleaned.split(/[—–\-－：:]\s*/);
+      const p = blankQuickBookV4BookPage();
+      p.pageNumber = idx + 1;
+      p.pageType = idx === 0 ? 'cover' : (idx === naturalLines.length - 1 ? 'cta' : 'feature');
+      p.pageTitle = sepParts[0].trim();
+      p.pageText = sepParts.length > 1 ? sepParts.slice(1).join('：').trim() : '';
+      return p;
+    }).filter(function (p) { return p.pageTitle; });
+    if (pages.length) return { pages: quickBookV4NormalizeCoverPageText(pages), parseTier: 'natural_page' };
+  }
+  // 第五層：完全解析不出來——不遺失內容，整段原文保留成一個頁面，不得假裝是正式成書
+  const fallback = blankQuickBookV4BookPage();
+  fallback.pageNumber = 1; fallback.pageType = 'feature';
+  fallback.pageTitle = 'AI 原始回覆（格式無法自動辨識）';
+  fallback.pageText = stripped;
+  return { pages: [fallback], parseTier: 'raw_fallback' };
+}
+// Validator：AI 宣稱的完成狀態一律不採信，強制封頂在 needs_confirmation，confirmedByUser
+// 強制 false——這是十節「AI 輸出頁面最高只能是 needs_confirmation」的具體實作位置，不管
+// Parser 解析出什麼值都會在這裡被收斂，不會漏掉任何一層 fallback。
+// 技術長 Gate A Must Fix 6：沒有合法來源（sourceRefs 對不到允許資料）時，這些主題不得
+// 出現在正式頁面。關鍵字判斷刻意保守寬鬆（寧可多攔一些交給使用者複核，也不要漏放捏造
+// 內容），配合 sourceRefs 合法性檢查一起判斷，不是單獨憑關鍵字就報錯整頁。
+const QUICKBOOK_V4_HIGH_RISK_PATTERNS = [
+  { key: 'price', label: '價格', pattern: /\$|NT\$|新台幣|定價|優惠價|特價|折扣價|每份\d|每個\d|\d+\s*元/ },
+  { key: 'contact', label: '聯絡方式', pattern: /電話[:：]|LINE\s*ID|line@|信箱[:：]|Email[:：]|E-mail[:：]|聯絡我們|聯絡電話|洽詢電話|地址[:：]/i },
+  { key: 'cta', label: 'CTA／購買方式', pattern: /立即購買|馬上訂購|快來搶購|限時搶購|立即下單|即刻訂購|如何購買|購買方式|報名方式|訂購方式/ },
+  { key: 'guarantee', label: '成效或保證', pattern: /保證有效|療效|治癒|根治|100%有效|絕對有效|保證滿意/ }
+];
+function quickBookV4ValueTexts(items) {
+  return (items || []).map(function (i) { return (i.value || '').trim(); }).filter(function (v) { return v.length >= 4; });
+}
+// 技術長 Gate A Must Fix 2（2026-08-06）：完整 Validator，Practical／Creative 共用同一套，
+// 不新增第二套。第三個參數 parseMeta = { parseTier, expectedPageCount, allowedMaterial }
+// 由呼叫端（submitPasteBack 的 wholebook／creative_paginate 分支）組裝，Validator 本身
+// 不重新計算允許資料，避免跟 Prompt 端用的允許資料不同步。
+function validateQuickBookV4WholeBook(book, sourceMaterial, parseMeta) {
+  parseMeta = parseMeta || {};
+  const errors = [];
+  const warnings = [];
+  const pages = book.pages || [];
+
+  // Must Fix 3：raw fallback 一律不得正式成書，直接短路回傳，不做後面任何其他檢查
+  // （後面的頁碼／sourceRefs 檢查對「整段原文塞成一頁」的 raw fallback 頁面沒有意義）。
+  if (parseMeta.parseTier === 'raw_fallback') {
+    return { valid: false, errors: ['這次 AI 的回覆格式無法自動辨識，需要人工確認後才能重新嘗試，不能直接當作正式成書結果'], warnings: [], recoveryReason: 'raw_fallback', normalizedBook: book };
+  }
+
+  // ① 頁數必須跟使用者選擇的一致（不得把 4 頁當 5 頁的成功結果）
+  const expectedPageCount = parseMeta.expectedPageCount || 0;
+  if (expectedPageCount && pages.length !== expectedPageCount) {
+    errors.push('使用者選擇 ' + expectedPageCount + ' 頁，AI 實際產生 ' + pages.length + ' 頁，頁數不符');
+  }
+
+  // ② 頁碼：從 1 開始、連續、不重複、不缺號
+  const pageNumbers = pages.map(function (p) { return p.pageNumber; }).slice().sort(function (a, b) { return a - b; });
+  const expectedNumbers = pages.map(function (p, idx) { return idx + 1; });
+  if (JSON.stringify(pageNumbers) !== JSON.stringify(expectedNumbers)) {
+    errors.push('頁碼不連續、有缺號或重複：' + JSON.stringify(pageNumbers));
+  }
+
+  // Step Boundary 不得出現在任何正文（雙重保險：Parser 前已經 strip 過一次，這裡再檢查
+  // 一次避免任何解析路徑漏掉）
+  pages.forEach(function (p) {
+    if ((p.pageText || '').indexOf('Step Boundary') !== -1) {
+      errors.push('第' + p.pageNumber + '頁正文出現 Step Boundary 內容，不應該進入正式頁面');
+    }
+  });
+
+  // ③④⑤⑥：sourceRefs 合法性、禁止回流（notApplicable／missing／未確認／未解決）、
+  // 高風險欄位（沒有合法來源時不得出現）
+  const allowed = parseMeta.allowedMaterial || { facts: [], excludedLabels: [] };
+  const allowedLabels = allowed.facts.map(function (f) { return f.label; });
+  const excludedLabels = allowed.excludedLabels || [];
+  const excludedValueTexts = (sourceMaterial && sourceMaterial.inventory)
+    ? quickBookV4ValueTexts(sourceMaterial.inventory.notApplicable).concat(quickBookV4ValueTexts(sourceMaterial.inventory.missing))
+    : [];
+
+  pages.forEach(function (p) {
+    const refs = p.sourceRefs || [];
+    const hasSubstantiveContent = (p.pageText || '').trim().length > 0;
+    // 封面允許空 sourceRefs（不一定有引用資料）；結尾／CTA 頁如果只是通用結語，允許空
+    // sourceRefs（軟性提醒），但真正的內容頁（不是封面也不是結尾）沒有來源依據時直接阻擋
+    // ——這是技術長 Gate A 明確要求的「sourceRefs 缺失，Validator 阻擋」。
+    const isGenuineContentPage = p.pageType !== 'cover' && p.pageType !== 'cta';
+    if (isGenuineContentPage && refs.length === 0 && hasSubstantiveContent) {
+      errors.push('第' + p.pageNumber + '頁是內容頁但沒有標示來源依據（sourceRefs 為空），不得作為正式頁面內容');
+    } else if (!isGenuineContentPage && refs.length === 0 && hasSubstantiveContent) {
+      warnings.push('第' + p.pageNumber + '頁沒有標示來源依據（sourceRefs 為空）');
+    }
+    refs.forEach(function (ref) {
+      if (excludedLabels.indexOf(ref) !== -1) {
+        errors.push('第' + p.pageNumber + '頁的來源依據「' + ref + '」指向已被排除的資料（notApplicable／missing／未確認／未解決），不得作為正式頁面來源');
+      } else if (allowedLabels.length && allowedLabels.indexOf(ref) === -1) {
+        errors.push('第' + p.pageNumber + '頁的來源依據「' + ref + '」不是允許使用的資料，可能是非法或未知來源');
+      }
+    });
+    excludedValueTexts.forEach(function (text) {
+      if (text && (p.pageText || '').indexOf(text) !== -1) {
+        errors.push('第' + p.pageNumber + '頁的內容疑似包含已排除資料的原文（notApplicable／missing），不得寫成正式內容');
+      }
+    });
+    const hits = QUICKBOOK_V4_HIGH_RISK_PATTERNS.filter(function (h) { return h.pattern.test(p.pageText || ''); });
+    if (hits.length && refs.length === 0) {
+      errors.push('第' + p.pageNumber + '頁提到「' + hits.map(function (h) { return h.label; }).join('、') + '」但沒有標示合法來源，不得出現在正式頁面');
+    }
+  });
+
+  // ④ AI 宣稱的 complete 一律強制降級，confirmedByUser 強制 false——不管前面驗證通不通過，
+  // 這一步都要做，避免任何路徑讓「AI 自己講完成」變成使用者看到的已確認狀態。
+  pages.forEach(function (p) {
+    if (p.contentStatus === QUICKBOOK_V4_CONTENT_STATUS.COMPLETE) p.contentStatus = QUICKBOOK_V4_CONTENT_STATUS.NEEDS_CONFIRMATION;
+    p.confirmedByUser = false;
+  });
+
+  const valid = errors.length === 0;
+  return { valid: valid, errors: errors, warnings: warnings, recoveryReason: valid ? '' : errors[0], normalizedBook: book };
+}
+
+const QUICKBOOK_V4_RAW_FALLBACK_PAGE_TITLE = 'AI 原始回覆（格式無法自動辨識）';
+function quickBookV4IsRawFallbackPage(p) { return p.pageTitle === QUICKBOOK_V4_RAW_FALLBACK_PAGE_TITLE; }
+// 共用電子書引擎 P0（技術長《共用電子書引擎 P0 母規格技術審查》核准，2026-08-07）｜
+// 六節：章節／頁面／輸出完整性 Validator。跟 Phase 2D 的 validateQuickBookV4WholeBook
+// 是兩個不同層次——那個驗證「這次 AI 生成的結果能不能寫進 book」，這個驗證「目前 book
+// 的章節／分頁結構本身是否自洽」，任何一次章節或分頁操作之後都可以呼叫來檢查資料完整性。
+function validateBookDocumentStructure(bookDocument) {
+  const errors = [];
+  const warnings = [];
+  const chapters = bookDocument.chapters || [];
+  const pages = bookDocument.pages || [];
+
+  // chapterId 唯一
+  const chapterIdCounts = {};
+  chapters.forEach(function (c) { chapterIdCounts[c.chapterId] = (chapterIdCounts[c.chapterId] || 0) + 1; });
+  Object.keys(chapterIdCounts).forEach(function (id) { if (chapterIdCounts[id] > 1) errors.push('章節 ID 重複：' + id); });
+
+  // chapterOrder 連續（排序後應為 0..N-1，不重複不缺號）
+  if (chapters.length) {
+    const orders = chapters.map(function (c) { return c.chapterOrder; }).slice().sort(function (a, b) { return a - b; });
+    const expectedOrders = chapters.map(function (c, idx) { return idx; });
+    if (JSON.stringify(orders) !== JSON.stringify(expectedOrders)) warnings.push('章節順序（chapterOrder）不連續或有缺號／重複');
+  }
+
+  // pageId 唯一
+  const pageIdCounts = {};
+  pages.forEach(function (p) { pageIdCounts[p.pageId] = (pageIdCounts[p.pageId] || 0) + 1; });
+  Object.keys(pageIdCounts).forEach(function (id) { if (pageIdCounts[id] > 1) errors.push('頁面 ID 重複：' + id); });
+
+  // pageNumber 連續（從 1 開始，不重複不缺號）
+  if (pages.length) {
+    const pageNumbers = pages.map(function (p) { return p.pageNumber; }).slice().sort(function (a, b) { return a - b; });
+    const expectedNumbers = pages.map(function (p, idx) { return idx + 1; });
+    if (JSON.stringify(pageNumbers) !== JSON.stringify(expectedNumbers)) errors.push('頁碼不連續、有缺號或重複：' + JSON.stringify(pageNumbers));
+  }
+
+  // page.chapterId 必須存在於 chapters，不存在 orphan page
+  const chapterIdSet = chapters.map(function (c) { return c.chapterId; });
+  const orphanPages = pages.filter(function (p) { return chapterIdSet.indexOf(p.chapterId) === -1; });
+  if (orphanPages.length) errors.push('存在沒有對應章節的頁面（orphan page）：' + orphanPages.map(function (p) { return p.pageId; }).join('、'));
+
+  // chapter.pageIds 與 pages 實際一致
+  chapters.forEach(function (c) {
+    const actualPageIds = pages.filter(function (p) { return p.chapterId === c.chapterId; }).map(function (p) { return p.pageId; });
+    const declared = c.pageIds || [];
+    const mismatch = declared.length !== actualPageIds.length || declared.some(function (id) { return actualPageIds.indexOf(id) === -1; });
+    if (mismatch) errors.push('章節「' + (c.chapterTitle || c.chapterId) + '」的 pageIds 與實際頁面不一致');
+  });
+
+  // selectedForProduction 章節的輸出狀態分類：needs_input／raw fallback 不算可輸出頁面，
+  // 已選入本次製作且至少有一頁可輸出的章節才算「已完成」，其餘一律進未完成清單，不阻塞
+  // 已完成章節、也不會被 AI 自動補完（P0 完全沒有「自動補完」這個動作存在）。
+  const completedChapterIds = [];
+  const incompleteChapterIds = [];
+  const exportablePageIds = [];
+  chapters.forEach(function (c) {
+    const chapterPages = pages.filter(function (p) { return p.chapterId === c.chapterId; });
+    const pageIsExportable = function (p) {
+      return !quickBookV4IsRawFallbackPage(p) && p.contentStatus !== QUICKBOOK_V4_CONTENT_STATUS.NEEDS_INPUT && p.pageText && p.pageText.trim();
+    };
+    const chapterExportablePages = chapterPages.filter(pageIsExportable);
+    if (c.selectedForProduction && chapterExportablePages.length) {
+      completedChapterIds.push(c.chapterId);
+      chapterExportablePages.forEach(function (p) { exportablePageIds.push(p.pageId); });
+    } else {
+      incompleteChapterIds.push(c.chapterId);
+    }
+  });
+
+  const valid = errors.length === 0;
+  return {
+    valid: valid, errors: errors, warnings: warnings,
+    completedChapterIds: completedChapterIds, incompleteChapterIds: incompleteChapterIds, exportablePageIds: exportablePageIds
+  };
+}
+
+// Page Review Gate（CEO／總策長，2026-08-10）十五～十六節：P0 不新增 book-level Gate 狀態，
+// 完全重用既有 page.confirmedByUser／page.contentStatus，「Gate 是否已通過」永遠是即時算出
+// 來的（quickBookV4PageReviewGatePassed），不是存一個 book.xxxConfirmed 布林值——這樣「修改
+// 頁面後 confirmation 失效」不需要另外寫失效邏輯：既有的 editQuickBookV4PageText／
+// editQuickBookV4PageTitle／editQuickBookV4CoverContent 等函式本來就會把改到的那一頁
+// confirmedByUser 設回 false，Gate 下一次重新計算自然就不通過，不用新增任何「這頁被改過」
+// 的追蹤欄位。先重用既有 validateBookDocumentStructure() 做結構檢查（章節/頁面ID唯一、
+// 頁碼連續、orphan page），再補這裡特有的「內容是否真的可以讓人確認」檢查。
+function validateQuickBookV4PageReviewReady(book) {
+  const structureCheck = validateBookDocumentStructure(book);
+  const errors = structureCheck.errors.slice();
+  const pages = (book.pages || []).slice().sort(function (a, b) { return a.pageNumber - b.pageNumber; });
+  const cover = pages.find(function (p) { return p.pageType === 'cover'; });
+  const bodyPages = pages.filter(function (p) { return p.pageType !== 'cover'; });
+
+  if (!cover) {
+    errors.push('這本書目前沒有封面頁，請先確認分頁結構。');
+  } else if (!book.title || !book.title.trim()) {
+    errors.push('封面還沒有書名，請先設定封面內容。');
+  }
+  if (!bodyPages.length) {
+    errors.push('這本書目前沒有正文頁，請先完成分頁。');
+  }
+
+  // raw fallback（AI 原始回覆格式無法辨識）跟空白正文分開列出，各自給明確、有行動性的
+  // 錯誤訊息，不是一句籠統的「尚未完成」。
+  const rawFallbackPages = pages.filter(quickBookV4IsRawFallbackPage);
+  const blankBodyPages = bodyPages.filter(function (p) { return !quickBookV4IsRawFallbackPage(p) && (!p.pageText || !p.pageText.trim()); });
+  const needsInputPages = pages.filter(function (p) {
+    return p.contentStatus === QUICKBOOK_V4_CONTENT_STATUS.NEEDS_INPUT && !quickBookV4IsRawFallbackPage(p) && blankBodyPages.indexOf(p) === -1;
+  });
+
+  rawFallbackPages.forEach(function (p) {
+    errors.push(getBookPageDisplayLabel(p, book) + '是 AI 原始回覆、格式無法自動辨識，請先處理這一頁。');
+  });
+  blankBodyPages.forEach(function (p) {
+    errors.push(getBookPageDisplayLabel(p, book) + '還沒有內容，請先補完整。');
+  });
+  needsInputPages.forEach(function (p) {
+    errors.push(getBookPageDisplayLabel(p, book) + '資料仍需要處理，請先確認內容。');
+  });
+
+  return { valid: errors.length === 0, errors: errors, warnings: structureCheck.warnings };
+}
+// Gate 是否已通過＝內容本身沒有問題，而且每一頁都已經被使用者確認過（confirmedByUser）。
+// 純讀取、不修改任何資料，可以放心在任何畫面渲染時呼叫來決定要不要鎖後續流程。
+function quickBookV4PageReviewGatePassed(book) {
+  const result = validateQuickBookV4PageReviewReady(book);
+  if (!result.valid) return false;
+  return (book.pages || []).every(function (p) { return p.confirmedByUser === true; });
+}
+// 十七節「Gate 按鈕」：按下時如果 validation 全部成立，批次確認符合條件（有效正文、只是
+// needs_confirmation）的頁面——這顆按鈕本身就是使用者的確認動作，跟其他地方「唯一能把
+// confirmedByUser 設成 true 的地方」同一個原則，不是 AI／Parser 自己設的。needs_input／
+// raw fallback／空白頁在 validator 就已經被擋下，不會走到這裡被誤判成「確認過」。
+function confirmQuickBookV4PageReview() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  const book = v4.book;
+  const result = validateQuickBookV4PageReviewReady(book);
+  if (!result.valid) {
+    showToast('⚠️ ' + result.errors[0]);
+    return;
+  }
+  (book.pages || []).forEach(function (p) {
+    if (p.contentStatus === QUICKBOOK_V4_CONTENT_STATUS.NEEDS_CONFIRMATION) {
+      p.confirmedByUser = true;
+      p.contentStatus = QUICKBOOK_V4_CONTENT_STATUS.COMPLETE;
+    }
+  });
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  showToast('✅ 分頁內容已確認，可以繼續設定全書視覺。');
+  renderQuickBookV4Preview();
+}
+// 十九節「Gate 前必須 block 的正式後續流程」：共用守門函式，擋下「全書正式視覺
+// production／測試圖確認後的production／全書逐頁生圖／排版成圖／Canva handoff」五個
+// 正式後續動作的入口，沒通過就顯示明確原因＋導回分頁檢閱（screen-quickbook-v4-preview），
+// 不是 dead end。回傳 true／false 給呼叫端決定要不要繼續原本的動作。
+function quickBookV4RequirePageReviewGate() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  const book = v4.book;
+  // 三十節「不要碰目前已驗收通過的功能」：Page Review Gate 是十四節「新的 Creative 主
+  // 流程」規定的一環，Practical Whole Book Fast Path 是已經驗收通過、有完整既有 regression
+  // 覆蓋的流程，這輪不擴大範圍去動它——只在 Creative 作品上生效，Practical 一律直接放行。
+  if (v4.flowType !== 'creative') return true;
+  if (quickBookV4PageReviewGatePassed(book)) return true;
+  const result = validateQuickBookV4PageReviewReady(book);
+  const reason = result.valid ? '目前還有頁面尚未確認。' : result.errors[0];
+  showToast('⚠️ 請先檢閱並確認所有分頁內容，後面的圖片與排版都會依照這些內容製作。' + (reason ? '（' + reason + '）' : ''));
+  showScreen('screen-quickbook-v4-preview');
+  return false;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 共用電子書引擎 P0（技術長《共用電子書引擎 P0 母規格技術審查》核准，2026-08-07）
+// 七～十一節：四種 Handoff Contract。buildBookHandoff(bookDocument, target, options) 是
+// 唯一正式入口，四個底層 formatter 直接讀 chapters／pages 組字，不呼叫、不修改任何
+// v3.0／既有 v4 legacy adapter 函式，不會建立第二套 quickBook 狀態——呼叫端（畫面）
+// 只能呼叫 buildBookHandoff()，不得自行拼接文字。
+// ═══════════════════════════════════════════════════════════════════════════
+function quickBookV4OrderedChapters(book) {
+  return (book.chapters || []).slice().sort(function (a, b) { return a.chapterOrder - b.chapterOrder; });
+}
+function quickBookV4ChapterPages(book, chapterId) {
+  return (book.pages || []).filter(function (p) { return p.chapterId === chapterId; }).sort(function (a, b) { return a.pageNumber - b.pageNumber; });
+}
+// 純文字類輸出的正文清理：雙重保險再 strip 一次 Step Boundary（Parser 階段已經 strip
+// 過，這裡是最後一道防線，避免任何解析路徑漏掉導致治理文字混入交接包）。
+function quickBookV4CleanPageTextForHandoff(text) {
+  return stripAfterQuickBookStepBoundary(text || '');
+}
+function quickBookV4BuildIncompleteChapterList(book, validation) {
+  if (!validation.incompleteChapterIds.length) return '';
+  const chapters = quickBookV4OrderedChapters(book).filter(function (c) { return validation.incompleteChapterIds.indexOf(c.chapterId) !== -1; });
+  return '【未完成章節】\n' + chapters.map(function (c) {
+    const label = quickBookV4ShouldShowChapterTitle(book, c) ? (c.chapterTitle || '（未命名章節）') : '尚未完成的內容';
+    return '- ' + label + (c.selectedForProduction ? '（本次製作，但尚未有可輸出內容）' : '（尚未選入本次製作）');
+  }).join('\n');
+}
+const QUICKBOOK_V4_VISUAL_STATUS_LABEL = Object.freeze({ not_set: '尚未設定', needs_confirmation: '待確認', confirmed: '已確認' });
+// CEO 真人驗收＋技術長裁示（2026-08-07）三節「全部內容不得外洩」：全書只有 migration
+// 自動建立的那一個系統預設章節時，對使用者交付輸出一律隱藏章節名稱（不顯示「全部內容」
+// 這個系統內部標籤）；真的存在多章節（使用者自己新增過、或改過名字）時才正常顯示章節
+// 名稱。不刪除、不修改 migration 建立的預設章節本身，只在輸出這一層做隱藏判斷，不影響
+// 舊作品的資料結構。
+function quickBookV4ShouldShowChapterTitle(book) {
+  const chapters = book.chapters || [];
+  if (chapters.length === 1 && chapters[0].chapterTitle === QUICKBOOK_V4_DEFAULT_CHAPTER_TITLE) return false;
+  return true;
+}
+// 二節「共用 clean manuscript helper」：唯一負責「正確閱讀順序＋真正正文＋不重複書名」
+// 的地方，plain_text（十節「完整文稿」）呼叫這裡取得純閱讀稿，不自己另外判斷一次。
+// CEO 真人驗收前補修（2026-08-07，Must Fix）：完整文稿＝乾淨正文＝可直接作影片旁白稿，
+// 只能輸出①book.title 一次②各頁 pageText（已清過 Step Boundary），依正式閱讀順序串接
+// ——不得輸出任何 pageTitle，包括一般內容頁標題（原本只排除封面頁標題與書名重複的
+// 情況，範圍不夠：一般內容頁標題也不該混進旁白稿）。pageTitle 留給分鏡文稿／Canva
+// 逐頁稿／製作交接資料使用，不屬於完整文稿。不輸出任何管理資訊（頁碼／pageType／
+// contentStatus／圖片與排版資訊），不使用另一份 manuscript 儲存欄位——每次呼叫都是從
+// book.pages 即時計算，頁面 reorder／修改內文／新增或刪除頁面之後再呼叫，結果自動同步。
+function quickBookV4BuildCleanManuscript(book, validation) {
+  const bookTitle = (book.title || '').trim();
+  const showChapterTitle = quickBookV4ShouldShowChapterTitle(book);
+  const parts = [];
+  if (bookTitle) parts.push(bookTitle);
+  quickBookV4OrderedChapters(book).forEach(function (c) {
+    if (validation.completedChapterIds.indexOf(c.chapterId) === -1) return;
+    const pages = quickBookV4ChapterPages(book, c.chapterId).filter(function (p) { return !quickBookV4IsRawFallbackPage(p) && p.contentStatus !== QUICKBOOK_V4_CONTENT_STATUS.NEEDS_INPUT; });
+    if (!pages.length) return;
+    if (showChapterTitle && c.chapterTitle) parts.push(c.chapterTitle);
+    pages.forEach(function (p) {
+      const cleanText = quickBookV4CleanPageTextForHandoff(p.pageText).trim();
+      if (cleanText) parts.push(cleanText);
+    });
+  });
+  return parts.join('\n\n');
+}
+
+// 八節｜Canva 逐頁輸出：一頁一個固定格式區塊，依章節與頁碼排序，needs_confirmation
+// 標示「待確認」，needs_input／raw fallback 不當正式正文輸出，未完成章節另列清單。
+function buildBookHandoffCanvaPages(book, validation, options) {
+  options = options || {};
+  const includeIncompleteChapters = !!options.includeUnconfirmed;
+  const chapters = quickBookV4OrderedChapters(book);
+  const showChapterTitle = quickBookV4ShouldShowChapterTitle(book);
+  // 九／十三節「尺寸／字體風格必須真正進 Prompt」：Canva handoff 開頭附上目前選定的
+  // book-level Canva 尺寸與字體風格，一次性提醒（不逐頁重複），跟每頁 formatter 讀同一份
+  // book.layoutProfile。
+  const lp = book.layoutProfile || QUICKBOOK_V4_DEFAULT_LAYOUT_PROFILE;
+  const fontEntry = QUICKBOOK_V4_FONT_STYLE_CATALOG[lp.fontStyle] || QUICKBOOK_V4_FONT_STYLE_CATALOG.clear_readable;
+  const blocks = ['Canva 尺寸：' + lp.label + '（比例約 ' + lp.aspectRatio + '）\n字體風格：' + fontEntry.label];
+  chapters.forEach(function (c) {
+    const isCompleted = validation.completedChapterIds.indexOf(c.chapterId) !== -1;
+    if (!isCompleted && !includeIncompleteChapters) return;
+    quickBookV4ChapterPages(book, c.chapterId).forEach(function (p) {
+      if (quickBookV4IsRawFallbackPage(p)) return;
+      if (p.contentStatus === QUICKBOOK_V4_CONTENT_STATUS.NEEDS_INPUT) return;
+      const statusLabel = p.confirmedByUser ? '已完成' : '待確認';
+      // 二節 Canonical 規則：封面頁的圖片建議／圖片指令／排版建議改讀 book.cover（見
+      // quickBookV4PageVisualFields 註解），一般頁維持原本讀 page 欄位。
+      const visual = quickBookV4PageVisualFields(book, p);
+      blocks.push(
+        getBookPageDisplayLabel(p, book) + '\n' +
+        (showChapterTitle ? ('章節：' + (c.chapterTitle || '（未命名章節）') + '\n') : '') +
+        '頁面類型：' + quickBookV4PageTypeLabel(p.pageType, book.flowType) + '\n' +
+        '頁面標題：' + (p.pageTitle || '') + '\n' +
+        '正文：\n' + quickBookV4CleanPageTextForHandoff(p.pageText) + '\n' +
+        '圖片建議：' + (visual.visualSuggestion || '（無）') + '\n' +
+        '圖片指令：' + (visual.imagePrompt || '（無）') + '\n' +
+        '排版建議：' + (visual.layoutSuggestion || '（無）') + '\n' +
+        '完成狀態：' + statusLabel
+      );
+    });
+  });
+  const incompleteList = quickBookV4BuildIncompleteChapterList(book, validation);
+  return blocks.join('\n\n---\n\n') + (incompleteList ? '\n\n' + incompleteList : '');
+}
+
+// Blocker 2（CEO 真人驗收，2026-08-07）：Canva 每頁獨立複製——不重寫 buildBookHandoffCanvaPages()
+// 這個既有 formatter，另外用一個更精簡的單頁版本，只含頁面標題／正文／畫面構想或圖片
+// 建議／生圖指令（若已產生）／排版建議（若已有），不含章節、頁面類型、完成狀態這些製作
+// 管理資訊，也不含 sourceRefs／flowType／pageId／「全部內容」。欄位沒有值就整行不輸出，
+// 不顯示「（尚未產生）」這類 placeholder。
+function quickBookV4BuildCanvaSinglePageText(page) {
+  const lines = [];
+  if (page.pageTitle) lines.push(page.pageTitle);
+  const cleanText = quickBookV4CleanPageTextForHandoff(page.pageText).trim();
+  if (cleanText) lines.push(cleanText);
+  if (page.storyboard) lines.push('畫面構想：' + page.storyboard);
+  else if (page.visualSuggestion) lines.push('圖片建議：' + page.visualSuggestion);
+  const prompt = page.imagePrompt || page.illustrationPrompt;
+  if (prompt) lines.push('生圖指令：' + prompt);
+  if (page.layoutSuggestion) lines.push('排版建議：' + page.layoutSuggestion);
+  return lines.join('\n\n');
+}
+
+// UX Flow Blocker 修正（CEO 正式主流程，2026-08-08）：「2｜分鏡文稿」正式前台區塊，直接
+// 讀 pages[] 現有欄位即時計算，不建第二份分鏡資料——視覺 Gate 完成前這裡就已經能顯示
+// 頁碼／標題／正文／畫面構想／視覺建議，Gate 完成、imagePrompt／layoutSuggestion 寫入
+// pages[] 之後，同一份文稿下次渲染自動補上生圖指令／排版建議，不需要另外同步。跟
+// quickBookV4BuildCanvaSinglePageText() 不同：畫面構想與視覺建議是兩個獨立欄位各自顯示，
+// 不合併成一行（Canva 單頁複製才合併，因為那裡只需要一句視覺提示）。
+function quickBookV4BuildStoryboardPageBlock(book, page) {
+  const label = getBookPageDisplayLabel(page, book);
+  const lines = [label + (page.pageTitle ? '｜' + page.pageTitle : '')];
+  const cleanText = quickBookV4CleanPageTextForHandoff(page.pageText).trim();
+  if (cleanText) lines.push('正文：\n' + cleanText);
+  const visual = quickBookV4PageVisualFields(book, page);
+  if (visual.storyboard) lines.push('畫面構想：\n' + visual.storyboard);
+  if (visual.visualSuggestion) lines.push('視覺建議：\n' + visual.visualSuggestion);
+  if (visual.imagePrompt) lines.push('生圖指令：\n' + visual.imagePrompt);
+  if (visual.layoutSuggestion) lines.push('排版建議：\n' + visual.layoutSuggestion);
+  return lines.join('\n\n');
+}
+function buildQuickBookV4StoryboardText(book, validation) {
+  const showChapterTitle = quickBookV4ShouldShowChapterTitle(book);
+  const parts = [];
+  quickBookV4OrderedChapters(book).forEach(function (c) {
+    if (validation.completedChapterIds.indexOf(c.chapterId) === -1) return;
+    const pages = quickBookV4ChapterPages(book, c.chapterId).filter(function (p) { return !quickBookV4IsRawFallbackPage(p) && p.contentStatus !== QUICKBOOK_V4_CONTENT_STATUS.NEEDS_INPUT; });
+    if (!pages.length) return;
+    const pageBlocks = pages.map(function (p) { return quickBookV4BuildStoryboardPageBlock(book, p); });
+    parts.push(showChapterTitle ? ('【' + (c.chapterTitle || '（未命名章節）') + '】\n\n' + pageBlocks.join('\n\n---\n\n')) : pageBlocks.join('\n\n---\n\n'));
+  });
+  return parts.join('\n\n');
+}
+
+// 九節｜Google Docs：保留章節層級與封面／製作資訊，定位是「製作交接資料」，不等於
+// 「完整文稿」（CEO 真人驗收＋技術長裁示，2026-08-07：前台名稱必須誠實區分兩者，見
+// index.html screen-quickbook-v4-handoff「其他輸出方式」內「完整製作資料」卡片）。
+function buildBookHandoffGoogleDocsFull(book, validation) {
+  const chapters = quickBookV4OrderedChapters(book);
+  const showChapterTitle = quickBookV4ShouldShowChapterTitle(book);
+  const parts = [];
+  parts.push('【書籍基本資料】\n書名：' + (book.title || '（未命名）') + '\n副標：' + (book.subtitle || '（無）') + '\n作者：' + (book.authorName || '（未填寫）') + '\n繪者：' + (book.illustratorName || '（未填寫）') + '\n目標讀者：' + (book.targetReader || '（未填寫）'));
+  // Quick Book 下一輪（CEO／總策長，2026-08-09）二節 Canonical 規則：book.cover 改為
+  // 封面專屬 canonical source，這裡改回直接讀 book.cover（透過共用 helper，跟頁面詳情
+  // 畫面、Canva 逐頁複製讀同一份資料，不會再各存一份互相矛盾）。
+  const coverPage = (book.pages || []).find(function (p) { return p.pageType === 'cover'; });
+  const coverVisual = coverPage ? quickBookV4PageVisualFields(book, coverPage) : { storyboard: '', imagePrompt: '', layoutSuggestion: '' };
+  parts.push('【封面資料】\n封面標題：' + (book.title || '') + '\n封面副標：' + (book.subtitle || '') + '\n封面主視覺：' + (coverVisual.storyboard || '（尚未完成）') + '\nCanva 排版指引：' + (coverVisual.layoutSuggestion || '（無）') + '\n封面生圖指令：' + (coverVisual.imagePrompt || '（尚未產生）'));
+  if (showChapterTitle) {
+    parts.push('【章節清單】\n' + (chapters.length ? chapters.map(function (c, idx) {
+      return (idx + 1) + '. ' + (c.chapterTitle || '（未命名章節）') + '（' + c.pageIds.length + ' 頁）' + (c.selectedForProduction ? '' : '［未選入本次製作］');
+    }).join('\n') : '（目前沒有章節）'));
+  }
+  const bodyBlocks = [];
+  chapters.forEach(function (c) {
+    if (validation.completedChapterIds.indexOf(c.chapterId) === -1) return;
+    const pages = quickBookV4ChapterPages(book, c.chapterId).filter(function (p) { return !quickBookV4IsRawFallbackPage(p) && p.contentStatus !== QUICKBOOK_V4_CONTENT_STATUS.NEEDS_INPUT; });
+    const pageBlocks = pages.map(function (p) {
+      const suffix = p.contentStatus === QUICKBOOK_V4_CONTENT_STATUS.NEEDS_CONFIRMATION ? '（待確認）' : '';
+      const visual = quickBookV4PageVisualFields(book, p);
+      return getBookPageDisplayLabel(p, book) + '　' + (p.pageTitle || '') + suffix + '\n' + quickBookV4CleanPageTextForHandoff(p.pageText) +
+        '\n圖片與排版：' + (visual.visualSuggestion || visual.imagePrompt || '（無）') + (visual.layoutSuggestion ? '／' + visual.layoutSuggestion : '');
+    });
+    bodyBlocks.push(showChapterTitle ? ('【' + (c.chapterTitle || '（未命名章節）') + '】\n\n' + pageBlocks.join('\n\n')) : pageBlocks.join('\n\n'));
+  });
+  parts.push('【逐章逐頁內容】\n\n' + (bodyBlocks.length ? bodyBlocks.join('\n\n═══\n\n') : '（目前沒有已完成章節）'));
+  const incomplete = quickBookV4BuildIncompleteChapterList(book, validation);
+  if (incomplete) parts.push(incomplete);
+  return parts.join('\n\n');
+}
+
+// 十節｜完整文稿（CEO 真人驗收＋技術長裁示，2026-08-07 全面重新定義）：完整文稿＝純
+// 正文／閱讀稿／影片旁白稿，只有書名一次＋真正正文＋正確閱讀順序，直接呼叫共用的
+// quickBookV4BuildCleanManuscript()，不在這裡另外拼接書籍基本資料／章節清單／頁碼／
+// pageType／待確認／圖片與排版資訊——那些是製作資料，屬於 google_docs_full／
+// canva_pages，不屬於完整文稿。
+function buildBookHandoffPlainText(book, validation) {
+  return quickBookV4BuildCleanManuscript(book, validation);
+}
+
+// 十一節｜圖片製作版（CEO 真人驗收＋技術長裁示，2026-08-07 做減法）：正式逐頁生圖指令
+// 只有全書視覺定調（styleConfirmed）與試 1 張已由使用者確認（trialImageConfirmed）都
+// 成立才輸出——Gate 沒過之前不假裝已經有完整的逐頁製作資料，只誠實顯示目前真的已有的
+// 視覺建議，不輸出任何空欄位 placeholder（「（未填寫）」「（尚未產生）」「（無）」）。
+function buildBookHandoffImageProduction(book) {
+  const chapters = quickBookV4OrderedChapters(book);
+  const showChapterTitle = quickBookV4ShouldShowChapterTitle(book);
+  const vp = book.visualPlan || {};
+  const gatePassed = !!vp.styleConfirmed && !!vp.trialImageConfirmed;
+  const lp = book.layoutProfile || QUICKBOOK_V4_DEFAULT_LAYOUT_PROFILE;
+  const parts = [];
+  parts.push('【全書視覺設定】\n' + (gatePassed
+    ? ('共用畫風：' + (vp.visualStyle || '（未設定）') + '\n主角／主體設定：' + (vp.characterConsistency || '（未設定）') + '\n色彩基調：' + (vp.colorMood || '（未設定）') + '\nCanva 尺寸：' + lp.label)
+    : '這本書的整體畫風還沒確認。先完成風格定調與測試圖確認，再產生逐頁圖片指令。'));
+  chapters.forEach(function (c) {
+    const pages = quickBookV4ChapterPages(book, c.chapterId).filter(function (p) { return !quickBookV4IsRawFallbackPage(p) && p.contentStatus !== QUICKBOOK_V4_CONTENT_STATUS.NEEDS_INPUT; });
+    if (!pages.length) return;
+    const pageBlocks = pages.map(function (p) {
+      // 二節 Canonical 規則：封面頁畫面構想／視覺建議／生圖指令／排版建議改讀 book.cover。
+      const visual = quickBookV4PageVisualFields(book, p);
+      const lines = [getBookPageDisplayLabel(p, book) + '　' + (p.pageTitle || '')];
+      if (visual.storyboard) lines.push('畫面構想：' + visual.storyboard);
+      if (visual.visualSuggestion) lines.push('視覺建議：' + visual.visualSuggestion);
+      if (gatePassed) {
+        if (visual.imagePrompt) lines.push('生圖指令：' + visual.imagePrompt);
+        if (visual.layoutSuggestion) lines.push('排版建議：' + visual.layoutSuggestion);
+      }
+      return lines.join('\n');
+    });
+    parts.push(showChapterTitle ? ('【' + (c.chapterTitle || '（未命名章節）') + '】\n\n' + pageBlocks.join('\n\n')) : pageBlocks.join('\n\n'));
+  });
+  return parts.join('\n\n');
+}
+
+function buildBookHandoff(bookDocument, target, options) {
+  const validation = validateBookDocumentStructure(bookDocument);
+  switch (target) {
+    case 'canva_pages': return buildBookHandoffCanvaPages(bookDocument, validation, options);
+    case 'google_docs_full': return buildBookHandoffGoogleDocsFull(bookDocument, validation);
+    case 'plain_text': return buildBookHandoffPlainText(bookDocument, validation);
+    case 'image_production': return buildBookHandoffImageProduction(bookDocument);
+    default: return '';
+  }
+}
+
+// 技術長 Gate A Must Fix 3：Validator 沒過（含 raw fallback）時導向這個共用 Recovery
+// 畫面，Practical／Creative 共用同一套。這裡刻意不建立、不寫入任何「正式書頁」——
+// rawAiResponse 已經在呼叫端存過，這個畫面只負責讓使用者決定下一步，不會讓使用者誤以為
+// 這次結果已經是可以確認的正式頁面。
+let quickBookV4RecoveryContext = null; // { errors, warnings, recoveryReason, stage }
+function showQuickBookV4Recovery(validation, stage) {
+  quickBookV4RecoveryContext = { errors: validation.errors || [], warnings: validation.warnings || [], recoveryReason: validation.recoveryReason || '', stage: stage };
+  showScreen('screen-quickbook-v4-recovery');
+}
+function renderQuickBookV4Recovery() {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const ctx = quickBookV4RecoveryContext || { errors: [], warnings: [], recoveryReason: '' };
+  document.getElementById('qbv4rc-reason').textContent = ctx.recoveryReason === 'raw_fallback'
+    ? '這次 AI 的回覆格式無法自動辨識，需要人工確認，還不能當作正式成書結果。'
+    : '這次 AI 的回覆沒有通過安全檢查，還不能當作正式成書結果。';
+  document.getElementById('qbv4rc-errors').innerHTML = ctx.errors.length
+    ? ctx.errors.map(function (e) { return '<div class="line">• ' + escHtml(e) + '</div>'; }).join('')
+    : '<div class="line">（無詳細原因）</div>';
+  document.getElementById('qbv4rc-raw').innerHTML = copyReadyActionsHtml(v4.rawAiResponse || '', '已複製這次 AI 的原始回覆');
+}
+function retryQuickBookV4Recovery() {
+  const ctx = quickBookV4RecoveryContext;
+  quickBookV4Stage = ctx ? ctx.stage : null;
+  showScreen('screen-copy-to-ai');
+}
+function pasteBackAgainQuickBookV4Recovery() {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const ctx = quickBookV4RecoveryContext;
+  quickBookV4Stage = ctx ? ctx.stage : null;
+  showScreen('screen-paste-back');
+  const textarea = document.getElementById('paste-back-textarea');
+  if (textarea) textarea.value = v4.rawAiResponse || '';
+}
+function dismissQuickBookV4Recovery() {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  showToast('已保留這次的原始回覆，之後可以再處理');
+  showScreen(v4.flowType === 'creative' ? 'screen-quickbook-v4-creative' : 'screen-quickbook-v4-practical');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// #7.1 Quick Book v4.0 POC Gate 2 Phase 2B（總策長／CEO 核准，2026-08-06）
+// Practical 資料盤點閉環：Step1 貼資料→Step2 確認讀者用途→Step3 AI盤點→使用者編輯／
+// conflict 處理。本輪不做 structure units、BookDocument 轉換、Canva/Docs 交接。
+// ═══════════════════════════════════════════════════════════════════════════
+
+// Prompt Contract（十一節）：不得補造價格／規格／功能／成效／聯絡方式／CTA 等。這段文字
+// 同時也是 Validator 的判斷依據之一（sourceQuote 空白的 existing 項目視為可疑，見
+// validateQuickBookV4Inventory()）。
+const QUICKBOOK_V4_NO_FABRICATION_CONTRACT =
+  '你只能根據下面「使用者原始資料」整理，絕對不可以自己新增：產品功能、價格、規格、保證、保固、認證、客戶見證、銷售數字、成效、合作品牌、醫療或健康效果、聯絡方式、購買方式、CTA、未來功能。' +
+  '原始資料裡沒有提到的，一律歸類到「仍需補充」，不要用合理推測直接補成正式內容。「已有資料」的每一項都要附上原文依據（從原始資料裡逐字或幾乎逐字摘錄），沒有原文依據的項目不可以放進「已有資料」。';
+
+function buildQuickBookV4InventoryPrompt(work) {
+  const sm = ensureQuickBookV4Defaults(work).sourceMaterial;
+  const vars = { work_name: work.name, goal: work.name };
+  return fillTemplate(
+    '你是產品介紹小書流程中的資料盤點助手。\n\n請根據以下使用者提供的產品資料，直接幫使用者盤點目前的資料狀態，不是幫產品寫文案，是先盤點「有什麼、缺什麼、要確認什麼」。\n\n' +
+    '主要讀者：' + escHtmlNoop(sm.targetAudience) + '\n希望讀者看完後：' + escHtmlNoop(sm.readerTask) + '\n使用情境：' + escHtmlNoop(sm.usageContext) + '\n\n使用者原始資料：\n' + (sm.rawInput || '（未提供）') + '\n\n' +
+    QUICKBOOK_V4_NO_FABRICATION_CONTRACT + '\n\n' +
+    '請用以下固定格式輸出（欄位名稱與符號請照抄，這樣才能直接複製貼回工作台；每一區裡如果沒有對應項目可以整區留空，不要硬湊）：\n\n' +
+    '【已有資料】\n- 標籤：（例如：產品名稱）\n  內容：（實際內容）\n  原文依據：（從原始資料摘錄的那句話）\n\n（可以有多項，依此格式重複）\n\n' +
+    '【仍需補充】\n- 標籤：（例如：價格）\n  原因：（為什麼產品介紹會需要這項）\n\n' +
+    '【需要確認】\n- 標籤：\n  內容：（目前看起來的內容）\n  原因：（為什麼不確定，例如原文表達模糊）\n\n' +
+    '【資料衝突】\n- 標籤：（例如：容量）\n  版本A：\n  版本B：\n\n' +
+    '【可以暫時不放】\n- 標籤：\n  原因：\n\n' +
+    buildStepBoundaryBlock('完成資料盤點並輸出以上五個區塊', ['開始撰寫產品介紹正式內容', '規劃小書的頁面或章節結構'].concat(STEP_BOUNDARY_GENERIC_FORBIDDEN), STEP_BOUNDARY_GENERIC_WAITING),
+    vars
+  );
+}
+
+// Parser：三層 fallback——①結構化 JSON（AI 有時候會直接給 JSON）②標籤區塊（主要格式，
+// 支援「【已有資料】」或「## 已有資料」或「已有資料:」多種寫法）③完全解析不出來時，
+// 整段原文保留成一個「需要確認」項目，不遺失內容，也不清空 rawInput。
+const QUICKBOOK_V4_INVENTORY_SECTION_LABELS = {
+  existing: ['已有資料', '目前已有的資料', 'existing'],
+  missing: ['仍需補充', '仍然需要補充', 'missing'],
+  needsConfirmation: ['需要確認', 'needsConfirmation'],
+  conflicts: ['資料衝突', 'conflicts'],
+  notApplicable: ['可以暫時不放', '不適用', 'notApplicable']
+};
+function quickBookV4FindSectionBlocks(content) {
+  const allLabelsFlat = Object.values(QUICKBOOK_V4_INVENTORY_SECTION_LABELS).reduce(function (a, b) { return a.concat(b); }, []);
+  const pattern = new RegExp('^(?:【(' + allLabelsFlat.join('|') + ')】|#{1,3}\\s*(' + allLabelsFlat.join('|') + ')|(' + allLabelsFlat.join('|') + ')\\s*[:：])\\s*$', 'i');
+  const lines = content.split('\n');
+  const blocks = {};
+  let currentKey = null;
+  function keyForLabel(label) {
+    return Object.keys(QUICKBOOK_V4_INVENTORY_SECTION_LABELS).find(function (k) { return QUICKBOOK_V4_INVENTORY_SECTION_LABELS[k].indexOf(label) !== -1; });
+  }
+  lines.forEach(function (line) {
+    const trimmed = line.trim();
+    const m = trimmed.match(pattern);
+    if (m) {
+      const label = m[1] || m[2] || m[3];
+      currentKey = keyForLabel(label);
+      if (currentKey && !blocks[currentKey]) blocks[currentKey] = [];
+      return;
+    }
+    if (currentKey) blocks[currentKey].push(line);
+  });
+  return blocks;
+}
+function quickBookV4ParseBulletItems(blockText, isConflict) {
+  // 每個「- 標籤：」開頭一個新項目，底下縮排的「內容／原因／原文依據／版本A／版本B」用
+  // extractLabeledBlockValue 的同一種「標籤與內容可分行」邏輯個別抓，跟 Step4 Parser
+  // 學到的教訓（正文常常跟標籤不同行）是同一套處理方式。extractLabeledBlockValue 要求標籤
+  // 出現在該行「開頭」，所以先把每行開頭的項目符號（-／•／*）去掉，不然「- 標籤：」的
+  // 開頭是符號不是「標籤」兩個字，會抓不到（P0 系列已經踩過同類坑，這裡先自己修正）。
+  const itemBlocks = blockText.join('\n').split(/\n(?=\s*-\s*標籤[:：])/).map(function (s) { return s.trim(); }).filter(Boolean);
+  return itemBlocks.map(function (rawBlock) {
+    const raw = rawBlock.split('\n').map(function (line) { return line.replace(/^\s*[-•*]\s*/, ''); }).join('\n');
+    const labelLabels = ['標籤', '內容', '原因', '原文依據', '版本A', '版本B'];
+    function grab(label) { return extractLabeledBlockValue(raw, label, labelLabels); }
+    if (isConflict) {
+      const item = blankQuickBookV4ConflictItem();
+      item.label = grab('標籤'); item.versionA = grab('版本A'); item.versionB = grab('版本B');
+      return item;
+    }
+    const item = blankQuickBookV4InventoryItem();
+    item.label = grab('標籤'); item.value = grab('內容'); item.note = grab('原因'); item.sourceQuote = grab('原文依據');
+    return item;
+  }).filter(function (item) { return item.label; });
+}
+function parseQuickBookV4Inventory(content) {
+  const stripped = stripAfterQuickBookStepBoundary(content);
+  const trimmed = stripped.trim();
+  // 第一層：結構化 JSON
+  if (/^[{[]/.test(trimmed)) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      const result = { existing: [], missing: [], needsConfirmation: [], conflicts: [], notApplicable: [], parseTier: 'json' };
+      ['existing', 'missing', 'needsConfirmation', 'notApplicable'].forEach(function (key) {
+        (parsed[key] || []).forEach(function (raw) {
+          const item = blankQuickBookV4InventoryItem();
+          item.label = raw.label || ''; item.value = raw.value || ''; item.note = raw.why || raw.note || raw.reason || ''; item.sourceQuote = raw.sourceQuote || '';
+          if (item.label) result[key].push(item);
+        });
+      });
+      (parsed.conflicts || []).forEach(function (raw) {
+        const item = blankQuickBookV4ConflictItem();
+        item.label = raw.label || ''; item.versionA = raw.versionA || ''; item.versionB = raw.versionB || '';
+        if (item.label) result.conflicts.push(item);
+      });
+      const hasAny = result.existing.length || result.missing.length || result.needsConfirmation.length || result.conflicts.length || result.notApplicable.length;
+      if (hasAny) return result;
+    } catch (e) { /* 不是合法 JSON，往下一層 fallback */ }
+  }
+  // 第二層：標籤區塊（主要格式）
+  const blocks = quickBookV4FindSectionBlocks(stripped);
+  const hasBlocks = Object.keys(blocks).length > 0;
+  if (hasBlocks) {
+    return {
+      existing: quickBookV4ParseBulletItems(blocks.existing || []),
+      missing: quickBookV4ParseBulletItems(blocks.missing || []),
+      needsConfirmation: quickBookV4ParseBulletItems(blocks.needsConfirmation || []),
+      conflicts: quickBookV4ParseBulletItems(blocks.conflicts || [], true),
+      notApplicable: quickBookV4ParseBulletItems(blocks.notApplicable || []),
+      parseTier: 'labeled_block'
+    };
+  }
+  // 第三層：完全解析不出來——不遺失內容，整段原文保留成一個「需要確認」項目
+  const fallbackItem = blankQuickBookV4InventoryItem();
+  fallbackItem.label = 'AI 原始回覆（格式無法自動辨識）';
+  fallbackItem.value = stripped;
+  fallbackItem.note = '這段內容無法自動拆解成盤點格式，請直接閱讀後手動整理。';
+  return { existing: [], missing: [], needsConfirmation: [fallbackItem], conflicts: [], notApplicable: [], parseTier: 'raw_fallback' };
+}
+
+// Validator（Phase 2B 版）：existing 項目沒有 sourceQuote（原文依據）時，視為可疑——
+// 不直接刪除，但自動移到 needsConfirmation，避免「AI 自己補的內容」被當成已確認事實
+// （呼應十一節「無來源內容不得用合理推測補成正式內容」）。
+function validateQuickBookV4Inventory(inventory) {
+  const warnings = [];
+  const safeExisting = [];
+  (inventory.existing || []).forEach(function (item) {
+    if (!item.sourceQuote || !item.sourceQuote.trim()) {
+      warnings.push('「' + item.label + '」沒有原文依據，已自動移到「需要確認」');
+      inventory.needsConfirmation = (inventory.needsConfirmation || []).concat([item]);
+    } else {
+      safeExisting.push(item);
+    }
+  });
+  inventory.existing = safeExisting;
+  return { valid: true, warnings: warnings };
+}
+
+// #7.1 Quick Book v4.0 POC｜入口與分流（Phase 1：只建立殼，Step 邏輯在 Phase 2／3）───────
+// 獨立的 'quickbook_v4' 專案類型，跟 v3.0 電子書專案（type: 'ebook'）分開，不會混在一起，
+// 也不出現在首頁「今天想完成什麼？」那個正式入口，只能從設定頁「進階」區塊的測試按鈕進來。
+function openQuickBookV4Entry() {
+  showScreen('screen-quickbook-v4-entry');
+}
+function chooseQuickBookV4Type(type) {
+  let p = state.projects.find(function (x) { return x.type === 'quickbook_v4'; });
+  if (!p) {
+    p = { id: state.nextProjectId++, type: 'quickbook_v4', emoji: '🧪', name: 'Quick Book v4.0 測試', defaultBrandId: null };
+    state.projects.push(p);
+  }
+  const flowId = type === 'creative' ? 'quickbook_v4_creative' : 'quickbook_v4_practical';
+  const w = {
+    id: state.nextWorkId++, projectId: p.id,
+    name: (type === 'creative' ? '生命故事' : '產品介紹') + ' POC', flowId: flowId,
+    started: true, status: '進行中', currentStepIndex: 0, stepResultIds: [], stepVersions: []
+  };
+  state.works.push(w);
+  activeProjectId = p.id;
+  activeWorkId = w.id;
+  ensureQuickBookV4Defaults(w);
+  saveState();
+  // 十二節「新增 Story Book 類型選擇」：新建立的 Creative 作品先進 preset 選擇畫面
+  // （生命故事／親情故事），選定後才進既有 screen-quickbook-v4-creative（已有故事內容／
+  // 需要AI提問協助）二選一，下游流程完全不變。
+  showScreen(type === 'creative' ? 'screen-quickbook-v4-story-preset' : 'screen-quickbook-v4-practical');
+}
+// 十三節「選擇後要真正保存」：寫入既有 book.topicPresetId，之後訪談／文稿／分頁／視覺／
+// 生圖／排版全部從同一個 topicPresetId 找 preset（getStoryBookPreset()），沒有另存一份
+// storyType／bookPreset 之類的重複欄位。
+function chooseQuickBookV4StoryPreset(presetId) {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  if (!STORY_BOOK_PRESETS[presetId]) return;
+  v4.book.topicPresetId = presetId;
+  v4.updatedAt = new Date().toISOString(); saveState();
+  showScreen('screen-quickbook-v4-creative');
+}
+// ── AI Collaboration OS｜Practical Whole Book Fast Path（總策長／CEO 核准，2026-08-06） ──
+// 這個畫面是新的主要入口：一句話確認（這本書介紹什麼／給誰看／希望讀者做什麼／頁數）＋
+// 貼入資料，按一個按鈕直接請 AI 一次生成整本書，不必經過五區盤點管理／structure card
+// 管理／逐單元交AI。Phase 2B～2D 的舊逐步流程完整保留，用「進階：逐步整理資料」連結
+// 進入，不刪除、不阻塞新的快速流程。
+const QUICKBOOK_V4_PAGE_COUNT_CHOICES = [5, 6, 8];
+function renderQuickBookV4Practical() {
+  const work = getActiveWork();
+  if (!work) { showScreen('screen-quickbook-v4-entry'); return; }
+  const v4 = ensureQuickBookV4Defaults(work);
+  const sm = v4.sourceMaterial;
+  document.getElementById('qbv4p-work-name').textContent = work.name;
+  document.getElementById('qbv4p-flow-type').textContent = v4.flowType;
+  const introInput = document.getElementById('qbv4p-intro-input');
+  if (introInput) introInput.value = sm.oneLineIntro || '';
+  document.getElementById('qbv4p-audience-options').innerHTML = QUICKBOOK_V4_AUDIENCE_PRESETS.map(function (opt) {
+    return '<div class="template-pick' + (sm.targetAudience === opt ? ' selected' : '') + '" onclick="chooseQuickBookV4FastField(\'targetAudience\',\'' + opt + '\')">' + opt + '</div>';
+  }).join('') + '<button class="btn outline" style="margin-top:6px" onclick="customQuickBookV4FastField(\'targetAudience\',\'主要讀者\')">✏️ 其他（自行輸入）</button>' +
+    (sm.targetAudience && QUICKBOOK_V4_AUDIENCE_PRESETS.indexOf(sm.targetAudience) === -1 ? '<div class="notice" style="margin-top:6px">目前：' + escHtml(sm.targetAudience) + '</div>' : '');
+  document.getElementById('qbv4p-task-options').innerHTML = QUICKBOOK_V4_READER_TASK_PRESETS.map(function (opt) {
+    return '<div class="template-pick' + (sm.readerTask === opt ? ' selected' : '') + '" onclick="chooseQuickBookV4FastField(\'readerTask\',\'' + opt + '\')">' + opt + '</div>';
+  }).join('') + '<button class="btn outline" style="margin-top:6px" onclick="customQuickBookV4FastField(\'readerTask\',\'希望讀者看完後做什麼\')">✏️ 其他（自行輸入）</button>' +
+    (sm.readerTask && QUICKBOOK_V4_READER_TASK_PRESETS.indexOf(sm.readerTask) === -1 ? '<div class="notice" style="margin-top:6px">目前：' + escHtml(sm.readerTask) + '</div>' : '');
+  document.getElementById('qbv4p-pagecount-options').innerHTML = QUICKBOOK_V4_PAGE_COUNT_CHOICES.map(function (n) {
+    return '<div class="template-pick' + (sm.pageCountChoice === n ? ' selected' : '') + '" onclick="chooseQuickBookV4PageCount(' + n + ')">' + n + ' 頁</div>';
+  }).join('');
+  const textarea = document.getElementById('qbv4p-raw-input');
+  if (textarea) textarea.value = sm.rawInput || '';
+}
+function saveQuickBookV4Intro() {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  v4.sourceMaterial.oneLineIntro = document.getElementById('qbv4p-intro-input').value.trim();
+  v4.sourceMaterial.updatedAt = new Date().toISOString();
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+}
+function chooseQuickBookV4FastField(field, value) {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  v4.sourceMaterial[field] = value;
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  renderQuickBookV4Practical();
+}
+function customQuickBookV4FastField(field, label) {
+  const custom = prompt(label + '：');
+  if (!custom || !custom.trim()) return;
+  chooseQuickBookV4FastField(field, custom.trim());
+}
+function chooseQuickBookV4PageCount(n) {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  v4.sourceMaterial.pageCountChoice = n;
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  renderQuickBookV4Practical();
+}
+function saveQuickBookV4RawInput() {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  v4.sourceMaterial.rawInput = document.getElementById('qbv4p-raw-input').value;
+  v4.sourceMaterial.updatedAt = new Date().toISOString();
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  showToast('已暫存');
+}
+function clearQuickBookV4RawInput() {
+  if (!confirm('確定要清除目前輸入的內容嗎？')) return;
+  document.getElementById('qbv4p-raw-input').value = '';
+  saveQuickBookV4RawInput();
+}
+// 成書 Gate（一句話確認＋原始資料齊全才放行），不清空任何已填欄位，只是不放行。
+function quickBookV4WholeBookGateCheck(sm) {
+  const errors = [];
+  if (!sm.rawInput || !sm.rawInput.trim()) errors.push('請先貼入資料');
+  if (!sm.targetAudience) errors.push('請先選擇主要讀者');
+  if (!sm.readerTask) errors.push('請先選擇希望讀者看完後做什麼');
+  if (!sm.pageCountChoice) errors.push('請先選擇頁數（5／6／8頁）');
+  return { valid: errors.length === 0, errors: errors };
+}
+function proceedToQuickBookV4WholeBook() {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  saveQuickBookV4Intro();
+  v4.sourceMaterial.rawInput = document.getElementById('qbv4p-raw-input').value.trim();
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  const gate = quickBookV4WholeBookGateCheck(v4.sourceMaterial);
+  if (!gate.valid) { showToast(gate.errors[0]); return; }
+  // 技術長 Gate A 第二次複審 Must Fix：純 Fast Path（沒有盤點資料）清理後如果什麼都不
+  // 剩（使用者貼的整段都是 Step Boundary／治理標記區塊），不得送給 AI，直接擋下並提示
+  // 使用者補上正式資料——沿用既有 toast，不新增畫面。
+  const allowedPreview = buildQuickBookV4AllowedSourceMaterial(work);
+  if (!allowedPreview.hasCuratedInventory && !allowedPreview.text.trim()) {
+    showToast('目前資料只有內部備註或技術內容，請補上要放進書中的正式資料。');
+    return;
+  }
+  quickBookV4Stage = 'wholebook';
+  showScreen('screen-copy-to-ai');
+}
+// Quick Book 母模封版 P0（CEO／總策長，2026-08-11）：烘焙小書入口——建立跟一般 Practical
+// 完全相同的 work／flowId（quickbook_v4_practical），只是多寫一個 book.topicPresetId=
+// 'baking_book'（既有欄位，跟生命故事系列共用同一套 topicPresetId 接線機制），並且進的是
+// 專屬 8 欄位輸入畫面而不是通用 Practical 輸入畫面。Whole Book Fast Path 之後的所有步驟
+// （Prompt／Parser／分頁／視覺／生圖／排版）完全共用既有引擎，不新增 flow、不改 schema。
+function chooseQuickBookV4Baking() {
+  let p = state.projects.find(function (x) { return x.type === 'quickbook_v4'; });
+  if (!p) {
+    p = { id: state.nextProjectId++, type: 'quickbook_v4', emoji: '🧪', name: 'Quick Book v4.0 測試', defaultBrandId: null };
+    state.projects.push(p);
+  }
+  const w = {
+    id: state.nextWorkId++, projectId: p.id,
+    name: '烘焙小書 POC', flowId: 'quickbook_v4_practical',
+    started: true, status: '進行中', currentStepIndex: 0, stepResultIds: [], stepVersions: []
+  };
+  state.works.push(w);
+  activeProjectId = p.id;
+  activeWorkId = w.id;
+  const v4 = ensureQuickBookV4Defaults(w);
+  v4.book.topicPresetId = 'baking_book';
+  if (!v4.sourceMaterial.bakingFields) v4.sourceMaterial.bakingFields = blankQuickBookV4BakingFields();
+  saveState();
+  showScreen('screen-quickbook-v4-baking-input');
+}
+function renderQuickBookV4BakingInput() {
+  const work = getActiveWork();
+  if (!work) { showScreen('screen-quickbook-v4-entry'); return; }
+  const v4 = ensureQuickBookV4Defaults(work);
+  if (!v4.sourceMaterial.bakingFields) v4.sourceMaterial.bakingFields = blankQuickBookV4BakingFields();
+  const bf = v4.sourceMaterial.bakingFields;
+  Object.keys(bf).forEach(function (key) {
+    const el = document.getElementById('qbv4bk-' + key);
+    if (el) el.value = bf[key] || '';
+  });
+}
+function saveQuickBookV4BakingField(key) {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  if (!v4.sourceMaterial.bakingFields) v4.sourceMaterial.bakingFields = blankQuickBookV4BakingFields();
+  const el = document.getElementById('qbv4bk-' + key);
+  v4.sourceMaterial.bakingFields[key] = el ? el.value : '';
+  v4.sourceMaterial.updatedAt = new Date().toISOString();
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  showToast('已暫存');
+}
+// 8 欄位組成 rawInput 的固定標籤格式；只有真正有填的欄位才輸出那一行（發酵條件或時間／
+// 注意事項或心得允許留空，不是每種烘焙品都會用到）。sm.bakingFields 才是 canonical 來源，
+// rawInput 只是這份資料「送進既有 Whole Book Fast Path」的組裝結果，跟 Practical 原本
+// 「使用者自己貼一大段文字」的 rawInput 語意一致，不需要新的 Prompt 拼接管線。
+const QUICKBOOK_V4_BAKING_FIELD_LABELS = {
+  productName: '品名', yieldInfo: '成品或份量', ingredients: '材料', steps: '步驟',
+  fermentation: '發酵條件或時間', bakeTemp: '烘烤溫度', bakeTime: '烘烤時間', notes: '注意事項或心得'
+};
+const QUICKBOOK_V4_BAKING_REQUIRED_FIELDS = ['productName', 'ingredients', 'steps'];
+function buildQuickBookV4BakingRawInput(bf) {
+  return Object.keys(QUICKBOOK_V4_BAKING_FIELD_LABELS).map(function (key) {
+    const value = (bf[key] || '').trim();
+    return value ? (QUICKBOOK_V4_BAKING_FIELD_LABELS[key] + '：' + value) : '';
+  }).filter(Boolean).join('\n\n');
+}
+// Quick Book 母模封版 P0（CEO／總策長，2026-08-11）：烘焙小書最小數值 Validator——只做
+// Hard Contract 要求的四件事：①必填欄位沒有漏填 ②數字＋單位有逐字保留在生成的正文裡
+// ③步驟先後順序沒有被調換 ④（附帶）失敗訊息要講清楚是哪個欄位、原始值是什麼，不是
+// 泛用技術錯誤。刻意不做語意層級的「有沒有偷加約略字眼」判斷（例如「約180°C」裡的
+// 180°C 仍然是逐字保留，這個 P0 版本不會抓到「約」這個字本身），這是機械式 token
+// 比對，不是語意 Validator，留在報告裡誠實揭露、不假裝比實際做的更嚴格。
+const QUICKBOOK_V4_BAKING_UNIT_TOKEN_PATTERN = /\d+(?:\.\d+)?\s?(?:分鐘|大匙|小匙|公克|公斤|毫升|公升|小時|°C|℃|kg|ml|cm|克|斤|升|g|分|杯|顆|個|條|%)/g;
+function quickBookV4ExtractBakingNumericTokens(text) {
+  if (!text) return [];
+  const matches = String(text).match(QUICKBOOK_V4_BAKING_UNIT_TOKEN_PATTERN);
+  return matches || [];
+}
+function validateQuickBookV4BakingSourceIntegrity(book, sourceMaterial) {
+  const errors = [];
+  const bf = (sourceMaterial && sourceMaterial.bakingFields) || null;
+  if (!bf) return { valid: true, errors: errors, warnings: [] };
+
+  // ①必填欄位（品名／材料／步驟）——理論上入口畫面已經擋過一次，這裡是第二層保險，
+  // 避免資料在暫存／重新整理之間被清空後仍然送出。
+  QUICKBOOK_V4_BAKING_REQUIRED_FIELDS.forEach(function (key) {
+    if (!bf[key] || !String(bf[key]).trim()) {
+      errors.push('⚠️ 尚未填寫「' + QUICKBOOK_V4_BAKING_FIELD_LABELS[key] + '」，請先補上再繼續。');
+    }
+  });
+
+  const pageText = (book.pages || []).map(function (p) { return p.pageText || ''; }).join('\n');
+  const normalizedPageText = pageText.replace(/\s+/g, '');
+
+  // ②數字＋單位逐項比對，依欄位分開檢查，訊息才能講清楚是哪個欄位、原始值是什麼——
+  // 例如「⚠️ 烘烤溫度原始資料是180°C，目前內容未完整保留，請先確認。」
+  Object.keys(QUICKBOOK_V4_BAKING_FIELD_LABELS).forEach(function (key) {
+    const value = bf[key];
+    if (!value || !String(value).trim()) return;
+    const tokens = quickBookV4ExtractBakingNumericTokens(String(value));
+    tokens.forEach(function (token) {
+      const normalizedToken = token.replace(/\s+/g, '');
+      if (normalizedPageText.indexOf(normalizedToken) === -1) {
+        errors.push('⚠️ ' + QUICKBOOK_V4_BAKING_FIELD_LABELS[key] + '原始資料是' + token + '，目前內容未完整保留，請先確認。');
+      }
+    });
+  });
+
+  // ③步驟順序：把「步驟」欄位每一行去掉行首編號後，取前幾個字當作定位關鍵字，確認這些
+  // 關鍵字在正文中出現的先後位置沒有被打亂（找不到就跳過，不誤判成順序錯誤）。
+  if (bf.steps && String(bf.steps).trim()) {
+    const stepLines = String(bf.steps).split('\n')
+      .map(function (line) { return line.replace(/^\s*[\d一二三四五六七八九十]+[.、)．]?\s*/, '').trim(); })
+      .filter(Boolean);
+    let lastIndex = -1;
+    let orderBroken = false;
+    stepLines.forEach(function (line) {
+      const key = line.slice(0, 6).replace(/\s+/g, '');
+      if (!key) return;
+      const idx = normalizedPageText.indexOf(key);
+      if (idx !== -1) {
+        if (idx < lastIndex) orderBroken = true;
+        lastIndex = idx;
+      }
+    });
+    if (orderBroken) errors.push('⚠️ 步驟順序可能被調整，請先確認每一步驟的先後順序跟原始資料一致。');
+  }
+
+  return { valid: errors.length === 0, errors: errors, warnings: [], recoveryReason: errors.length ? errors[0] : '' };
+}
+function proceedToQuickBookV4BakingWholeBook() {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const bf = v4.sourceMaterial.bakingFields || blankQuickBookV4BakingFields();
+  const missing = QUICKBOOK_V4_BAKING_REQUIRED_FIELDS.filter(function (key) { return !bf[key] || !bf[key].trim(); });
+  if (missing.length) { showToast('請先填寫「' + QUICKBOOK_V4_BAKING_FIELD_LABELS[missing[0]] + '」'); return; }
+  v4.sourceMaterial.oneLineIntro = bf.productName;
+  v4.sourceMaterial.productName = bf.productName;
+  v4.sourceMaterial.targetAudience = v4.sourceMaterial.targetAudience || '想跟著做的人';
+  v4.sourceMaterial.readerTask = v4.sourceMaterial.readerTask || '照著步驟完成這道烘焙品';
+  v4.sourceMaterial.pageCountChoice = v4.sourceMaterial.pageCountChoice || 5;
+  v4.sourceMaterial.rawInput = buildQuickBookV4BakingRawInput(bf);
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  const allowedPreview = buildQuickBookV4AllowedSourceMaterial(work);
+  if (!allowedPreview.hasCuratedInventory && !allowedPreview.text.trim()) {
+    showToast('目前資料只有內部備註或技術內容，請補上要放進書中的正式資料。');
+    return;
+  }
+  quickBookV4Stage = 'wholebook';
+  showScreen('screen-copy-to-ai');
+}
+// 技術長 Gate A Must Fix 1（2026-08-06）：Whole Book Prompt 原本直接把完整 sm.rawInput
+// 當成 AI 可自由使用的正文來源，會讓已經被使用者在進階盤點流程排除的 notApplicable／
+// missing／未確認 needsConfirmation／未解決 conflicts 重新流回書稿。這個 helper 是唯一
+// 決定「這次 Whole Book 生成可以用什麼資料」的地方，Practical／Creative 共用同一套判斷：
+// ①如果使用者已經做過任何盤點（不管是進階流程或未來機制填進 sm.inventory），一律只用
+// 已確認可用的 existing／已解決 conflicts，把 notApplicable／missing／未確認／未解決
+// 明確列成排除清單，供 Validator 之後比對 sourceRefs 合法性 ②如果使用者完全沒有做過任何
+// 盤點（純 Fast Path，這是 CEO 已核准的一次 AI 往返設計本身），沒有任何「已建立的排除
+// 邊界」可以違反，這時唯一可用的資料就是 rawInput——這不是繞過安全邊界，是還沒有邊界
+// 可以繞過；rawInput 本身永遠不被這個 helper 修改，只是「要不要被使用」的判斷。
+// 技術長 Gate A 第二次複審 Must Fix（2026-08-06）：純 Fast Path（完全沒有做過任何盤點）
+// 時，唯一可用資料是 rawInput，但不應該原封不動整段送給 AI 自由使用——這裡做「最低限度
+// 且可預測」的機械式清理，只移除高度確定不是書稿正文的三類內容：①Step Boundary 區塊
+// ②有固定【標記】格式的測試治理／角色指令／不對外區塊。不做摘要、不改寫、不補字、
+// 不調整語氣、不重新排列、不對自然段落做任何語意判斷——只有整行「就是」一個已知標記
+// 本身時才視為區塊開頭，一般正文裡自然出現「測試」「開發」「內部」「角色」等字詞完全
+// 不受影響（案例見 test_quickbook_v4_gatea_rawinput_sanitizer.js）。
+const QUICKBOOK_V4_GOVERNANCE_MARKERS = [
+  '測試備註', '內部測試', '驗收備註', '開發備註', '技術備註', '治理備註', '僅供測試', '不要放入成品',
+  '角色指派與執行邊界', '執行邊界', '角色邊界', '技術限制', '測試指令', '開發指令',
+  '排除', '不放入書中', '不要寫入成品', '僅供內部參考'
+];
+function sanitizeQuickBookV4FastPathRawInput(rawInput) {
+  if (!rawInput) return '';
+  // 第一層：Step Boundary——優先沿用既有 stripAfterQuickBookStepBoundary()，不重新發明
+  // 一套不相容規則；額外處理使用者可能貼入的半形方括號變體 [Step Boundary]，同一種
+  // 「從標記到文字結尾整段移除」邏輯。
+  let text = stripAfterQuickBookStepBoundary(rawInput);
+  const asciiIdx = text.indexOf('[Step Boundary]');
+  if (asciiIdx !== -1) text = text.slice(0, asciiIdx).replace(/\s+$/, '');
+
+  // 第二層：明確區塊標記——整行必須「恰好就是」【標記】本身（前後可以有空白）才算數，
+  // 區塊從標記那一行開始，移除到下一個空行為止（含該空行），沒有空行結尾時移除到文字
+  // 結尾。這是機械式的區塊移除，不是語意摘要。
+  const markerLineRegex = new RegExp('^【(' + QUICKBOOK_V4_GOVERNANCE_MARKERS.map(function (m) { return m.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }).join('|') + ')】\\s*$');
+  const lines = text.split('\n');
+  const kept = [];
+  let skipping = false;
+  lines.forEach(function (line) {
+    const trimmed = line.trim();
+    if (skipping) {
+      if (trimmed === '') skipping = false;
+      return;
+    }
+    if (markerLineRegex.test(trimmed)) { skipping = true; return; }
+    kept.push(line);
+  });
+  return kept.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+function buildQuickBookV4AllowedSourceMaterial(work) {
+  const v4 = ensureQuickBookV4Defaults(work);
+  const sm = v4.sourceMaterial;
+  const facts = quickBookV4UsableFacts(sm);
+  const excludedLabels = []
+    .concat((sm.inventory.notApplicable || []).map(function (i) { return i.label; }))
+    .concat((sm.inventory.missing || []).map(function (i) { return i.label; }))
+    .concat((sm.inventory.needsConfirmation || []).map(function (i) { return i.label; }))
+    .concat((sm.inventory.conflicts || []).filter(function (c) { return !c.resolution || c.resolution === 'decide_later' || c.resolution === 'exclude'; }).map(function (c) { return c.label; }))
+    .filter(Boolean);
+  const hasCuratedInventory = facts.length > 0 || excludedLabels.length > 0;
+  // rawInput 本身完全不被修改（sm.rawInput 永遠是原文）——sanitize 只發生在「要不要
+  // 送進 Prompt」這一步的計算結果裡，原始來源檢視／Recovery 仍然讀 sm.rawInput 本身。
+  return {
+    hasCuratedInventory: hasCuratedInventory,
+    facts: facts,
+    excludedLabels: excludedLabels,
+    text: hasCuratedInventory
+      ? (facts.length ? facts.map(function (f) { return '- ' + f.label + '：' + f.value; }).join('\n') : '（目前沒有已確認可用的資料）')
+      : sanitizeQuickBookV4FastPathRawInput(sm.rawInput)
+  };
+}
+// Quick Book 母模封版 P0（CEO／總策長，2026-08-11）：烘焙小書 Hard Contract——跟一般
+// 「不捏造內容」的 NO_FABRICATION_CONTRACT 不是同一件事：那個管的是「不能新增沒有的
+// 資料」，這個管的是「原本有的數值不能被 AI 悄悄改掉」，只在 topicPresetId==='baking_book'
+// 時才附加，不影響任何其他 preset 的 Whole Book Prompt。
+const QUICKBOOK_V4_BAKING_HARD_CONTRACT =
+  '【烘焙數值鐵則】這是一本烘焙操作型小書，以下這些屬於原始資料裡的數字、單位、溫度、時間、步驟，是使用者實測過的正確數值，一律逐字照抄，不可以修改、四捨五入、簡化、換算單位、用約略說法取代、或調整先後順序：\n' +
+  '- 材料的數量與單位（例如 250g 不可以變成「約250克」「一杯」，200ml 不可以變成「200毫升」以外的寫法）\n' +
+  '- 溫度（例如 180°C 不可以變成 175°C 或「中溫」）\n' +
+  '- 時間（例如 30分鐘 不可以變成「半小時」，發酵時間不可以被省略或改成別的數字）\n' +
+  '- 百分比（例如 70% 不可以變成 0.7 或「七成」）\n' +
+  '- 步驟的先後順序，不可以調換、合併或省略任何一步\n' +
+  '如果「可使用的資料」裡某一項沒有提供（例如沒有發酵條件），正文請直接不寫這一項或註明「未提供」，不可以自己補一個數字或推測合理值。';
+function buildQuickBookV4WholeBookPrompt(work) {
+  const v4 = ensureQuickBookV4Defaults(work);
+  const sm = v4.sourceMaterial;
+  const allowed = buildQuickBookV4AllowedSourceMaterial(work);
+  const isBaking = v4.book && v4.book.topicPresetId === 'baking_book';
+  const vars = { work_name: work.name, goal: work.name };
+  return fillTemplate(
+    '你是產品介紹小書流程的整本書作者。請根據下面「可使用的資料」，直接一次完成整本小書的內容，包含封面、內容頁與結尾頁，不需要先盤點或分段確認。\n\n' +
+    '這本書大概介紹：' + escHtmlNoop(sm.oneLineIntro) + '\n主要讀者：' + escHtmlNoop(sm.targetAudience) + '\n希望讀者看完後：' + escHtmlNoop(sm.readerTask) + '\n建議頁數：' + (sm.pageCountChoice || 5) + ' 頁（含封面與結尾，請盡量剛好是這個數字，不要多也不要少）\n\n' +
+    '可使用的資料（只能使用下面這些，不可以自己新增或延伸）：\n' + (allowed.text || '（未提供）') + '\n\n' +
+    QUICKBOOK_V4_NO_FABRICATION_CONTRACT + '\n\n' +
+    (isBaking ? QUICKBOOK_V4_BAKING_HARD_CONTRACT + '\n\n' : '') +
+    '請規劃第一頁為封面，最後一頁為結尾／下一步行動，中間是內容頁，總頁數請盡量剛好是 ' + (sm.pageCountChoice || 5) + ' 頁。封面是獨立的一頁，封面的「正文：」請留空，不要把介紹文字或正式內容寫在封面，正文一律從封面後的第一個內容頁開始。每一頁請用以下固定格式輸出，用「【第N頁】」開頭分隔（N 從 1 開始）：\n\n' +
+    '【第1頁】\n頁面類型：封面／內容頁／結尾頁（三選一）\n頁面標題：\n正文：（如果頁面類型是封面，這裡請留空；正文從封面後第一個內容頁開始寫，不要把正式內容或完整文稿塞進封面）\n來源依據：（這一頁用到「可使用的資料」裡的哪一項，請照抄該項目的標籤名稱；封面若沒有引用資料可以留空）\n視覺建議：（這一頁適合用什麼方式呈現，例如：適合放產品實拍照／適合簡單插畫／不需要圖片）\n\n（依此格式重複到全書所有頁）\n\n這一步只需要輸出頁面內容，不需要額外的開場白或總結說明。\n\n' +
+    buildStepBoundaryBlock('完成整本書內容並輸出以上格式', ['規劃封面圖片或版型細節', '產生生圖指令'].concat(STEP_BOUNDARY_GENERIC_FORBIDDEN), STEP_BOUNDARY_GENERIC_WAITING),
+    vars
+  );
+}
+function proceedToQuickBookV4Step2() {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const rawInput = document.getElementById('qbv4p-raw-input').value.trim();
+  if (!rawInput) { showToast('請先貼入產品資料'); return; }
+  v4.sourceMaterial.rawInput = rawInput;
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  showScreen('screen-quickbook-v4-practical-step2');
+}
+
+// ── #7.1 Quick Book v4.0 Phase 2B｜Practical Step2：確認讀者與用途 ────────────────────
+const QUICKBOOK_V4_AUDIENCE_PRESETS = ['第一次認識產品的人', '正在比較的人', '已購買顧客', '合作夥伴', '課程學員'];
+const QUICKBOOK_V4_READER_TASK_PRESETS = ['了解產品', '判斷是否適合', '詢問購買', '開始使用', '分享給別人'];
+const QUICKBOOK_V4_USAGE_CONTEXT_PRESETS = ['LINE', '社群', '現場介紹', '課堂展示', '網站', 'Canva', 'Google Docs'];
+function renderQuickBookV4Step2() {
+  const work = getActiveWork();
+  const sm = ensureQuickBookV4Defaults(work).sourceMaterial;
+  document.getElementById('qbv4s2-audience-options').innerHTML = QUICKBOOK_V4_AUDIENCE_PRESETS.map(function (opt) {
+    return '<div class="template-pick' + (sm.targetAudience === opt ? ' selected' : '') + '" onclick="chooseQuickBookV4Field(\'targetAudience\',\'' + opt + '\')">' + opt + '</div>';
+  }).join('') + '<button class="btn outline" style="margin-top:6px" onclick="customQuickBookV4Field(\'targetAudience\',\'主要讀者\')">✏️ 其他（自行輸入）</button>' +
+    (sm.targetAudience && QUICKBOOK_V4_AUDIENCE_PRESETS.indexOf(sm.targetAudience) === -1 ? '<div class="notice" style="margin-top:6px">目前：' + escHtml(sm.targetAudience) + '</div>' : '');
+  document.getElementById('qbv4s2-task-options').innerHTML = QUICKBOOK_V4_READER_TASK_PRESETS.map(function (opt) {
+    return '<div class="template-pick' + (sm.readerTask === opt ? ' selected' : '') + '" onclick="chooseQuickBookV4Field(\'readerTask\',\'' + opt + '\')">' + opt + '</div>';
+  }).join('') + '<button class="btn outline" style="margin-top:6px" onclick="customQuickBookV4Field(\'readerTask\',\'希望讀者看完後做什麼\')">✏️ 其他（自行輸入）</button>' +
+    (sm.readerTask && QUICKBOOK_V4_READER_TASK_PRESETS.indexOf(sm.readerTask) === -1 ? '<div class="notice" style="margin-top:6px">目前：' + escHtml(sm.readerTask) + '</div>' : '');
+  document.getElementById('qbv4s2-usage-options').innerHTML = QUICKBOOK_V4_USAGE_CONTEXT_PRESETS.map(function (opt) {
+    return '<div class="template-pick' + (sm.usageContext === opt ? ' selected' : '') + '" onclick="chooseQuickBookV4Field(\'usageContext\',\'' + opt + '\')">' + opt + '</div>';
+  }).join('') + '<button class="btn outline" style="margin-top:6px" onclick="customQuickBookV4Field(\'usageContext\',\'會在哪裡使用\')">✏️ 其他（自行輸入）</button>' +
+    (sm.usageContext && QUICKBOOK_V4_USAGE_CONTEXT_PRESETS.indexOf(sm.usageContext) === -1 ? '<div class="notice" style="margin-top:6px">目前：' + escHtml(sm.usageContext) + '</div>' : '');
+}
+function chooseQuickBookV4Field(field, value) {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  v4.sourceMaterial[field] = value;
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  renderQuickBookV4Step2();
+}
+function customQuickBookV4Field(field, label) {
+  const custom = prompt(label + '：');
+  if (!custom || !custom.trim()) return;
+  chooseQuickBookV4Field(field, custom.trim());
+}
+function proceedToQuickBookV4Inventory() {
+  const work = getActiveWork();
+  const sm = ensureQuickBookV4Defaults(work).sourceMaterial;
+  if (!sm.targetAudience || !sm.readerTask || !sm.usageContext) { showToast('請先完成三項確認：主要讀者、希望讀者做什麼、會在哪裡使用'); return; }
+  quickBookV4Stage = 'inventory';
+  showScreen('screen-copy-to-ai');
+}
+function backToQuickBookV4Inventory() { quickBookV4Stage = 'inventory'; showScreen('screen-copy-to-ai'); }
+
+// ── #7.1 Quick Book v4.0 Phase 2B｜Practical Step3：資料盤點顯示與編輯 ───────────────────
+function renderQuickBookV4Inventory() {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const inv = v4.sourceMaterial.inventory;
+  function itemRow(bucket, item, extraActions) {
+    return '<div class="card" style="margin-top:6px">' +
+      '<div class="line"><b>' + escHtml(item.label || '（未命名）') + '</b></div>' +
+      (item.value ? '<div class="line">' + escHtml(item.value) + '</div>' : '') +
+      (item.note ? '<div class="line" style="opacity:.75;font-size:12px">' + escHtml(item.note) + '</div>' : '') +
+      (item.sourceQuote ? '<div class="line" style="opacity:.6;font-size:12px">原文依據：「' + escHtml(item.sourceQuote) + '」</div>' : '') +
+      '<div class="action-row" style="margin-top:6px">' +
+      '<button class="btn outline" style="width:auto;flex:1;padding:7px;font-size:12px" onclick="editQuickBookV4InventoryItem(\'' + bucket + '\',\'' + item.itemId + '\')">✏️ 修改</button>' +
+      (extraActions || '') +
+      '<button class="btn outline" style="width:auto;flex:1;padding:7px;font-size:12px" onclick="deleteQuickBookV4InventoryItem(\'' + bucket + '\',\'' + item.itemId + '\')">🗑 刪除</button>' +
+      '</div>' +
+      '<div style="margin-top:4px">' + ['existing', 'missing', 'needsConfirmation', 'notApplicable'].filter(function (b) { return b !== bucket; }).map(function (b) {
+        return '<button class="btn outline" style="width:auto;padding:5px 8px;font-size:11px;margin:2px 4px 0 0" onclick="moveQuickBookV4InventoryItem(\'' + bucket + '\',\'' + b + '\',\'' + item.itemId + '\')">移到' + quickBookV4BucketLabel(b) + '</button>';
+      }).join('') + '</div>' +
+      '</div>';
+  }
+  document.getElementById('qbv4inv-existing').innerHTML = (inv.existing.length ? inv.existing.map(function (i) { return itemRow('existing', i); }).join('') : '<div class="notice">目前沒有項目</div>') +
+    '<button class="btn outline" style="margin-top:8px" onclick="addQuickBookV4InventoryItem(\'existing\')">＋ 新增項目</button>';
+  document.getElementById('qbv4inv-missing').innerHTML = (inv.missing.length ? inv.missing.map(function (i) { return itemRow('missing', i); }).join('') : '<div class="notice">目前沒有項目</div>') +
+    '<button class="btn outline" style="margin-top:8px" onclick="addQuickBookV4InventoryItem(\'missing\')">＋ 新增項目</button>';
+  document.getElementById('qbv4inv-needsConfirmation').innerHTML = (inv.needsConfirmation.length ? inv.needsConfirmation.map(function (i) { return itemRow('needsConfirmation', i); }).join('') : '<div class="notice">目前沒有項目</div>') +
+    '<button class="btn outline" style="margin-top:8px" onclick="addQuickBookV4InventoryItem(\'needsConfirmation\')">＋ 新增項目</button>';
+  document.getElementById('qbv4inv-notApplicable').innerHTML = (inv.notApplicable.length ? inv.notApplicable.map(function (i) { return itemRow('notApplicable', i); }).join('') : '<div class="notice">目前沒有項目</div>') +
+    '<button class="btn outline" style="margin-top:8px" onclick="addQuickBookV4InventoryItem(\'notApplicable\')">＋ 新增項目</button>';
+  document.getElementById('qbv4inv-conflicts').innerHTML = inv.conflicts.length ? inv.conflicts.map(function (c) {
+    const resolutionLabel = { use_a: '✅ 使用版本A', use_b: '✅ 使用版本B', keep_both: '✅ 保留兩種方案', decide_later: '⏳ 稍後確認', exclude: '🚫 不放入小書' };
+    return '<div class="card" style="margin-top:6px"><div class="line"><b>' + escHtml(c.label) + '</b></div>' +
+      '<div class="line">版本A：' + escHtml(c.versionA) + '</div><div class="line">版本B：' + escHtml(c.versionB) + '</div>' +
+      (c.resolution ? '<div class="notice" style="margin-top:6px">' + resolutionLabel[c.resolution] + '</div>' : '<div class="action-row" style="margin-top:6px;flex-wrap:wrap">' +
+        ['use_a', 'use_b', 'keep_both', 'decide_later', 'exclude'].map(function (r) {
+          return '<button class="btn outline" style="width:auto;padding:6px 8px;font-size:11px;margin:2px" onclick="resolveQuickBookV4Conflict(\'' + c.itemId + '\',\'' + r + '\')">' + resolutionLabel[r] + '</button>';
+        }).join('') + '</div>') +
+      '</div>';
+  }).join('') : '<div class="notice">目前沒有衝突項目</div>';
+  const unresolvedConflicts = inv.conflicts.filter(function (c) { return !c.resolution; }).length;
+  document.getElementById('qbv4inv-status').textContent = unresolvedConflicts > 0 ? '還有 ' + unresolvedConflicts + ' 項衝突待處理' : '目前沒有未處理的衝突';
+}
+function quickBookV4BucketLabel(bucket) {
+  return { existing: '已有資料', missing: '仍需補充', needsConfirmation: '需要確認', conflicts: '資料衝突', notApplicable: '可以暫時不放' }[bucket] || bucket;
+}
+function quickBookV4FindItem(v4, bucket, itemId) {
+  return v4.sourceMaterial.inventory[bucket].find(function (i) { return i.itemId === itemId; });
+}
+function editQuickBookV4InventoryItem(bucket, itemId) {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const item = quickBookV4FindItem(v4, bucket, itemId);
+  if (!item) return;
+  const newLabel = prompt('標籤：', item.label);
+  if (newLabel === null) return;
+  const newValue = prompt('內容（可留空）：', item.value || '');
+  if (newValue === null) return;
+  item.label = newLabel.trim();
+  item.value = newValue.trim();
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  renderQuickBookV4Inventory();
+}
+function addQuickBookV4InventoryItem(bucket) {
+  const label = prompt('新增項目的標籤：');
+  if (!label || !label.trim()) return;
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const item = blankQuickBookV4InventoryItem();
+  item.label = label.trim();
+  // 使用者自己手動新增的項目視為已確認來源（就是使用者自己輸入的），不會被 Validator
+  // 移到需要確認（只有 AI 產出、沒有原文依據的項目才會被移動）。
+  item.sourceQuote = '（使用者手動新增）';
+  v4.sourceMaterial.inventory[bucket].push(item);
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  renderQuickBookV4Inventory();
+}
+function deleteQuickBookV4InventoryItem(bucket, itemId) {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  v4.sourceMaterial.inventory[bucket] = v4.sourceMaterial.inventory[bucket].filter(function (i) { return i.itemId !== itemId; });
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  renderQuickBookV4Inventory();
+}
+function moveQuickBookV4InventoryItem(fromBucket, toBucket, itemId) {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const item = quickBookV4FindItem(v4, fromBucket, itemId);
+  if (!item) return;
+  v4.sourceMaterial.inventory[fromBucket] = v4.sourceMaterial.inventory[fromBucket].filter(function (i) { return i.itemId !== itemId; });
+  v4.sourceMaterial.inventory[toBucket].push(item);
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  renderQuickBookV4Inventory();
+}
+function resolveQuickBookV4Conflict(itemId, resolution) {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const item = v4.sourceMaterial.inventory.conflicts.find(function (c) { return c.itemId === itemId; });
+  if (!item) return;
+  item.resolution = resolution;
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  renderQuickBookV4Inventory();
+}
+function regenerateQuickBookV4Inventory() {
+  quickBookV4Stage = 'inventory';
+  showScreen('screen-copy-to-ai');
+}
+// ═══════════════════════════════════════════════════════════════════════════
+// AI Collaboration OS｜Creative 生命故事 Fast Path 最小版本（總策長／CEO 核准，
+// 2026-08-06）：入口二選一（已有故事內容／需要AI提問協助）→ 4 個快速情境問題 → A：
+// 貼入故事直接整理／B：5 題一次一題訪談（可略過）→ AI 整理完整文稿 → 使用者確認
+// →選擇呈現方式與頁數 → AI 分頁（跟 Practical Whole Book Fast Path 共用同一個 Parser）
+// → 進入共用的預覽／逐頁確認／交接畫面。硬規則：storyDraft.confirmedByUser 只能由
+// 使用者在文稿確認畫面按「這就是我要表達的」設定，AI／Parser 絕對不能自己設 true；
+// 未確認文稿不得分頁。
+// ═══════════════════════════════════════════════════════════════════════════
+// Story Book Preset P0（CEO／總策長，2026-08-10）：Preset 只是 configuration——提供使用者
+// 提問、建議頁數、分頁提示、視覺提示、生圖提示、排版提示，不管理狀態、不自己 parse AI、
+// 不自己保存書、不是第二套 flow 或第二套資料模型。同一套 Creative flow 只靠讀不同 preset
+// 就能完成不同故事小書。沿用既有 book.topicPresetId（BookDocumentV1 早就有這個欄位，這輪
+// 才第一次正式接線），不新增 storyType／bookPreset／templateType 等重複欄位。
+// life_story 是既有生命故事流程原封不動收斂進來的 preset，訪談問題、建議頁數完全沿用舊值，
+// manuscriptFlowHint／pageStructureHint／visualGuidance／layoutGuidance 刻意留空——這些是
+// 舊流程本來就沒有的額外提示，留空代表 formatter 那端不會多插入任何新句子，行為跟本輪
+// 修改前逐字相同，確保「原本生命故事使用體驗不能變差」。
+const STORY_BOOK_PRESETS = Object.freeze({
+  life_story: {
+    id: 'life_story',
+    label: '生命故事',
+    description: '記錄自己的經歷、感受與想留給未來的話。',
+    interviewQuestions: [
+      '你想留下哪一段故事？',
+      '事情是怎麼開始的？',
+      '最難忘或最感動的是什麼？',
+      '這段經歷帶來什麼改變？',
+      '最想留給讀者或未來自己的話是什麼？'
+    ],
+    recommendedPageRange: { min: 5, max: 8 },
+    manuscriptRoleLabel: '生命故事',
+    manuscriptFlowHint: '',
+    pageStructureHint: '',
+    visualGuidance: '',
+    layoutGuidance: ''
+  },
+  family_story: {
+    id: 'family_story',
+    label: '親情故事',
+    description: '記錄一位重要家人、一段溫暖回憶，以及最想對對方說的話。',
+    interviewQuestions: [
+      '你最想寫哪一位家人？',
+      '你最記得和他／她的一個畫面或一件事是什麼？',
+      '那時候對方做了什麼？',
+      '那件事讓你有什麼感受？',
+      '現在最想對他／她說什麼？'
+    ],
+    recommendedPageRange: { min: 5, max: 8 },
+    manuscriptRoleLabel: '親情故事',
+    manuscriptFlowHint: '建議故事脈絡：人物關係 → 一段具體回憶 → 自己的感受 → 想對對方說的話，不需要每一段都硬套內容，依實際回答彈性調整。',
+    pageStructureHint: '參考分頁方向：封面、人物／關係、記憶片段、重要畫面、感受、想說的話、結尾——這只是建議，請依實際完整文稿內容拆頁，不要套成固定頁數或固定頁序。',
+    visualGuidance: '這是一本親情故事小書：重視人物一致性、重視家人關係感、重視日常生活溫度；如果文稿有提到年代，畫面要維持年代感；不要自行加入使用者沒有提到的擁抱、牽手、哭泣等互動；沒有明確外貌資訊時，不要把猜測寫成正式人物設定。',
+    layoutGuidance: '親情故事以溫暖、易讀、具有留白的圖文排版為主；人物與文字不要互相遮擋，重要回憶頁可以讓圖片比例較高，想說的話／結尾頁可以增加文字留白。'
+  },
+  // Quick Book 母模封版 P0（CEO／總策長，2026-08-11）：daily_story 是敘事型代表，跟
+  // life_story／family_story 同一套結構，只是提問聚焦「生活中的一件事」而不是整段人生
+  // 或特定家人，證明同一套 preset configuration 可以承接更多敘事型內容，不需要為每種
+  // 敘事主題各自開一套 flow。
+  daily_story: {
+    id: 'daily_story',
+    label: '生活故事',
+    description: '記錄生活中的一件事、當下的情境與感受，留下屬於這一刻的紀錄。',
+    interviewQuestions: [
+      '你想記錄生活中的哪一件事？',
+      '事情發生在什麼情境？',
+      '最讓你記得的是什麼？',
+      '當時你有什麼感受或想法？',
+      '現在回頭看，你最想留下什麼？'
+    ],
+    recommendedPageRange: { min: 5, max: 8 },
+    manuscriptRoleLabel: '生活故事',
+    manuscriptFlowHint: '建議故事脈絡：情境 → 發生的事 → 印象深刻片段 → 感受／理解 → 想留下的話，只能使用使用者實際輸入的內容，不要新增人物、事件、對話、情緒、結果，也不要強行寫成勵志文。',
+    pageStructureHint: '',
+    visualGuidance: '這是一本生活故事小書：畫面重視生活感、自然、真實、易讀，不必過度戲劇化，不要把日常片段畫成誇張或超現實的場面。',
+    layoutGuidance: ''
+  },
+  // 童書／繪本走既有 Creative／picture_book 路徑，這輪真正的差異化是 Character Anchor
+  // （見 quickBookV4BuildCharacterAnchorText），不是訪談問題本身——CEO 沒有另外指定童書
+  // 專屬提問，沿用跟 life_story 相同的 5 題（同一套敘事引導本來就適用），只是入口標籤與
+  // 說明改成童書語境，讓使用者知道自己選的是要做成繪本的故事。
+  children_book: {
+    id: 'children_book',
+    label: '童書／繪本',
+    description: '用溫暖的圖畫說一個簡單故事，適合做成繪本形式的小書。',
+    interviewQuestions: [
+      '你想留下哪一段故事？',
+      '事情是怎麼開始的？',
+      '最難忘或最感動的是什麼？',
+      '這段經歷帶來什麼改變？',
+      '最想留給讀者或未來自己的話是什麼？'
+    ],
+    recommendedPageRange: { min: 5, max: 8 },
+    manuscriptRoleLabel: '童書故事',
+    manuscriptFlowHint: '',
+    pageStructureHint: '',
+    visualGuidance: '',
+    layoutGuidance: ''
+  },
+  // 烘焙小書走既有 Practical／SourceMaterial 路徑，不是 Creative——這裡的重點不是訪談
+  // 問題（Practical 不訪談，interviewQuestions 留空陣列不會被讀取），而是證明同一個
+  // getStoryBookPreset()／topicPresetId 接線機制 Creative／Practical 都能共用，不需要
+  // 為 Practical 另外做一套 preset 系統；visualGuidance／layoutGuidance 沿用既有的
+  // Trial Image Prompt／逐頁排版成圖 Prompt 注入點（見 buildQuickBookV4TrialImagePrompt／
+  // 該排版 Prompt 函式已有的 getStoryBookPreset(book.topicPresetId) 呼叫），不需要新函式。
+  baking_book: {
+    id: 'baking_book',
+    label: '烘焙小書',
+    description: '記錄一份烘焙配方的材料、步驟與烘烤細節，做成清楚好用的操作小書。',
+    interviewQuestions: [],
+    recommendedPageRange: { min: 5, max: 8 },
+    manuscriptRoleLabel: '烘焙小書',
+    manuscriptFlowHint: '',
+    pageStructureHint: '',
+    visualGuidance: '這是一本烘焙操作型小書：畫面用途是輔助閱讀，不是主角，材料與數值必須清楚可辨識，溫度與時間等關鍵數字要醒目、不能被插畫或裝飾蓋住，不要為了畫面好看犧牲數值的可讀性。',
+    layoutGuidance: '烘焙小書排版以清楚易讀為第一優先：材料與步驟分段呈現，不要把多個步驟擠在同一段落；溫度、時間、份量等數值請保持醒目、獨立成行，不要被圖片或裝飾元素遮擋；步驟順序不可調換。'
+  }
+});
+// 依 book.topicPresetId 找 preset，找不到（含舊資料從未設定過）一律退回 life_story——
+// 這正是既有生命故事作品的原本唯一行為，等於「沒有 preset 概念時的預設值」，不是新規則。
+function getStoryBookPreset(topicPresetId) {
+  return STORY_BOOK_PRESETS[topicPresetId] || STORY_BOOK_PRESETS.life_story;
+}
+// 反捏造契約（Creative 版）：跟 Practical 的 QUICKBOOK_V4_NO_FABRICATION_CONTRACT 是同一種
+// 精神，但换成生命故事語境（人物／事件／情緒／對話，不是產品規格／價格）。兩個 preset
+// 共用同一份契約文字，「不得捏造」是所有故事小書共同的硬規則，不是 life_story 專屬内容。
+const QUICKBOOK_V4_CREATIVE_NO_FABRICATION_CONTRACT =
+  '你只能根據使用者實際寫下或回答的內容整理，絕對不可以自己新增或想像：沒有提到的人物、事件、對話、情緒、結果、時間地點細節。' +
+  '原始資料裡沒有提到的，不要用合理推測直接補成正式內容，寧可保持簡短或留白，也不要自己延伸情節。不要把使用者沒有明確表達的情緒或想法，寫成好像使用者說過的話。';
+
+function renderQuickBookV4Creative() {
+  const work = getActiveWork();
+  if (!work) { showScreen('screen-quickbook-v4-entry'); return; }
+  document.getElementById('qbv4c-work-name').textContent = work.name;
+  document.getElementById('qbv4c-flow-type').textContent = work.quickBookV4.flowType;
+  // 十三節：畫面標題改用目前選定的 preset 名稱，不再固定寫死「生命故事」。
+  const v4 = ensureQuickBookV4Defaults(work);
+  const titleEl = document.getElementById('qbv4c-title');
+  if (titleEl) titleEl.textContent = getStoryBookPreset(v4.book.topicPresetId).label;
+}
+function chooseQuickBookV4CreativeMode(mode) {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  v4.creativeSeed.mode = mode;
+  v4.updatedAt = new Date().toISOString(); saveState();
+  showScreen('screen-quickbook-v4-creative-context');
+}
+// 四節「接著詢問」：4 個快速情境問題，開放文字輸入（不是預設選項），保持簡單。
+function renderQuickBookV4CreativeContext() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  const ss = v4.creativeSeed.storySource;
+  document.getElementById('qbv4cc-topic').value = ss.topic || '';
+  document.getElementById('qbv4cc-target-reader').value = ss.targetReader || '';
+  document.getElementById('qbv4cc-intended-feeling').value = ss.intendedFeeling || '';
+  document.getElementById('qbv4cc-photo-hints').value = ss.photoHints || '';
+}
+function proceedFromQuickBookV4CreativeContext() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  const ss = v4.creativeSeed.storySource;
+  ss.topic = document.getElementById('qbv4cc-topic').value.trim();
+  ss.targetReader = document.getElementById('qbv4cc-target-reader').value.trim();
+  ss.intendedFeeling = document.getElementById('qbv4cc-intended-feeling').value.trim();
+  ss.photoHints = document.getElementById('qbv4cc-photo-hints').value.trim();
+  v4.updatedAt = new Date().toISOString(); saveState();
+  showScreen(v4.creativeSeed.mode === 'has_story' ? 'screen-quickbook-v4-creative-paste' : 'screen-quickbook-v4-creative-interview');
+}
+
+// ── Path A：已有故事內容 ──────────────────────────────────────────────
+function renderQuickBookV4CreativePaste() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  document.getElementById('qbv4cp-input').value = v4.creativeSeed.storySource.originalInput || '';
+}
+function saveQuickBookV4CreativePaste() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  v4.creativeSeed.storySource.originalInput = document.getElementById('qbv4cp-input').value;
+  v4.updatedAt = new Date().toISOString(); saveState();
+  showToast('已暫存');
+}
+function proceedToQuickBookV4CreativeStoryFromPaste() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  const text = document.getElementById('qbv4cp-input').value.trim();
+  if (!text) { showToast('請先貼入故事內容'); return; }
+  v4.creativeSeed.storySource.originalInput = text;
+  v4.updatedAt = new Date().toISOString(); saveState();
+  quickBookV4CreativeExtraInstruction = '';
+  quickBookV4Stage = 'creative_story';
+  showScreen('screen-copy-to-ai');
+}
+
+// ── Path B：需要 AI 提問協助——5 題一次一題，可略過 ──────────────────────
+// 三節「正式使用既有 topicPresetId」：訪談問題改成從 getStoryBookPreset(book.topicPresetId)
+// 讀取，life_story／family_story 各自的 5 題只存在 STORY_BOOK_PRESETS 裡，不重複維護。
+function quickBookV4CurrentInterviewQuestions(v4) {
+  return getStoryBookPreset(v4.book.topicPresetId).interviewQuestions;
+}
+function renderQuickBookV4CreativeInterview() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  const cs = v4.creativeSeed;
+  const idx = cs.currentQuestionIndex;
+  const questions = quickBookV4CurrentInterviewQuestions(v4);
+  const total = questions.length;
+  if (idx >= total) { proceedToQuickBookV4CreativeStoryGeneration(); return; }
+  document.getElementById('qbv4ci-progress').textContent = '第 ' + (idx + 1) + ' / ' + total + ' 題';
+  document.getElementById('qbv4ci-question').textContent = questions[idx];
+  document.getElementById('qbv4ci-answer-input').value = '';
+}
+function answerQuickBookV4CreativeQuestion() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  const cs = v4.creativeSeed;
+  const idx = cs.currentQuestionIndex;
+  const answer = document.getElementById('qbv4ci-answer-input').value.trim();
+  if (!answer) { showToast('請先輸入回答，或按「略過這一題」'); return; }
+  cs.storySource.interviewAnswers.push({ question: quickBookV4CurrentInterviewQuestions(v4)[idx], answer: answer, skipped: false });
+  cs.currentQuestionIndex = idx + 1;
+  v4.updatedAt = new Date().toISOString(); saveState();
+  renderQuickBookV4CreativeInterview();
+}
+function skipQuickBookV4CreativeQuestion() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  const cs = v4.creativeSeed;
+  const idx = cs.currentQuestionIndex;
+  cs.storySource.interviewAnswers.push({ question: quickBookV4CurrentInterviewQuestions(v4)[idx], answer: '', skipped: true });
+  cs.currentQuestionIndex = idx + 1;
+  v4.updatedAt = new Date().toISOString(); saveState();
+  renderQuickBookV4CreativeInterview();
+}
+function proceedToQuickBookV4CreativeStoryGeneration() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  const cs = v4.creativeSeed;
+  const answeredCount = cs.storySource.interviewAnswers.filter(function (a) { return !a.skipped && a.answer; }).length;
+  if (cs.mode === 'need_interview' && answeredCount === 0) { showToast('至少需要回答一題才能繼續'); showScreen('screen-quickbook-v4-creative-interview'); return; }
+  quickBookV4CreativeExtraInstruction = '';
+  quickBookV4Stage = 'creative_story';
+  showScreen('screen-copy-to-ai');
+}
+
+// ── 完整文稿生成 Prompt＋Parser（Path A／B 共用，內部依 mode 分流） ──────────────────
+let quickBookV4CreativeExtraInstruction = '';
+function buildQuickBookV4CreativeStoryDraftPrompt(work) {
+  const v4 = ensureQuickBookV4Defaults(work);
+  const cs = v4.creativeSeed;
+  const ss = cs.storySource;
+  // 二十四節「Preset guidance 接入點」：只有 manuscriptRoleLabel／manuscriptFlowHint 有差異
+  // 的地方才讀 preset；life_story 兩個欄位都是空字串／跟原字面相同，這裡的輸出逐字等於
+  // 本輪修改前的版本，不影響既有生命故事使用體驗。
+  const preset = getStoryBookPreset(v4.book.topicPresetId);
+  const roleLabel = preset.manuscriptRoleLabel || '生命故事';
+  const sourceText = cs.mode === 'has_story'
+    ? (ss.originalInput || '')
+    : ss.interviewAnswers.filter(function (a) { return !a.skipped && a.answer; }).map(function (a) { return 'Q：' + a.question + '\nA：' + a.answer; }).join('\n\n');
+  const vars = { work_name: work.name, goal: work.name };
+  return fillTemplate(
+    '你是' + roleLabel + '小書流程中的文稿整理者。請根據使用者' + (cs.mode === 'has_story' ? '貼入的故事內容' : '以下的訪談回答') + '，整理成一篇連貫、完整的' + roleLabel + '文稿。\n\n' +
+    '這個故事主要想寫：' + escHtmlNoop(ss.topic) + '\n希望給誰看：' + escHtmlNoop(ss.targetReader) + '\n希望讀者感受到：' + escHtmlNoop(ss.intendedFeeling) + '\n\n' +
+    '使用者' + (cs.mode === 'has_story' ? '原始故事內容' : '的訪談回答') + '：\n' + (sourceText || '（無）') + '\n\n' +
+    QUICKBOOK_V4_CREATIVE_NO_FABRICATION_CONTRACT + '\n\n' +
+    (preset.manuscriptFlowHint ? (preset.manuscriptFlowHint + '\n\n') : '') +
+    (quickBookV4CreativeExtraInstruction ? ('特別提醒：' + quickBookV4CreativeExtraInstruction + '\n\n') : '') +
+    '請用以下固定格式輸出（欄位名稱請照抄）：\n\n書名：（簡短、貼近故事本身，不要浮誇）\n副標：（可留空）\n完整文稿：（把上面內容整理成一篇連貫、通順的完整文字，不要條列式一問一答，不要分頁）\n\n' +
+    '只輸出上面「書名：」「副標：」「完整文稿：」這三個欄位本身，「完整文稿：」底下只能是正式的故事正文，不要加任何評論、分析、稱讚、解釋或前後說明（例如「這篇已經很完整了」「我特別喜歡」「我會把這篇理解成」這類回應使用者的話都不要出現）。\n\n' +
+    buildStepBoundaryBlock('整理完整' + roleLabel + '文稿並輸出以上格式', ['開始分頁', '規劃視覺呈現方式'].concat(STEP_BOUNDARY_GENERIC_FORBIDDEN), STEP_BOUNDARY_GENERIC_WAITING),
+    vars
+  );
+}
+const QUICKBOOK_V4_CREATIVE_STORY_FIELD_LABELS = ['書名', '副標', '完整文稿'];
+// P0 Blocker（CEO 手機真人驗收，《善解的力量》案例，2026-08-08）：Root cause——AI 有時候
+// 會在正式輸出前後夾帶評語／分析／稱讚（例如「這篇已經很完整了」「我特別喜歡」「我會把
+// 這篇理解成」「如果作為……」），如果這些內容剛好讓「完整文稿：」這個標籤抓不到東西，
+// 舊版 parser（`fullText || stripped.trim()`）會直接把整段原始 AI 回覆當成正文存進
+// storyDraft.fullText，評語就會被當成正式作品，後續分頁時又會被當成「完整文稿裡的內容」
+// 逐字摘錄進 pageText，污染第1頁。
+// Must Fix（技術長裁示，2026-08-08）：第一版修正曾經加了一份「評語句型黑名單」逐行過濾
+// 正文（/這篇/、/我覺得/、/我認為/、/核心是/……），這個做法過度寬泛，會誤刪使用者真正
+// 想寫的正文（例如「我覺得，真正的善解不是忍耐。」「這篇文字，是我寫給自己的提醒。」）。
+// 正式原則：防 AI 評語污染要靠格式邊界，不能靠猜正文語意。改為純結構式解析，不對抓到的
+// 正文內容做任何語意關鍵字刪除：
+// ①一律只採信「完整文稿：」標籤之後的內容，不再有「抓不到就整段回退」這個 fallback。
+// ②標籤抓不到內容時，改試 Markdown 標題／正文結構（# 標題 或 **標題**，純結構判斷，
+//   不檢查內容像不像評語）。
+// ③仍然沒有可靠結構時，回傳 unparseable，交給呼叫端顯示「請重新整理」，絕不寫入
+//   storyDraft——即使整段回覆看起來像《善解的力量》案例那樣全是評語，也是靠「找不到
+//   完整文稿：或 Markdown 標題結構」判定 unparseable，不是靠關鍵字砍字句「救」出正文。
+function parseQuickBookV4CreativeStoryDraft(content) {
+  const stripped = stripAfterQuickBookStepBoundary(content);
+  function grab(label) { return extractLabeledBlockValue(stripped, label, QUICKBOOK_V4_CREATIVE_STORY_FIELD_LABELS); }
+  const fullText = grab('完整文稿');
+  if (fullText) {
+    return { title: grab('書名') || '', subtitle: grab('副標') || '', fullText: fullText, parseTier: 'labeled_block', unparseable: false };
+  }
+  // Fallback 第二層：Markdown 標題／正文結構（# 標題 或 **標題**，其後接正文）。純看
+  // 結構是否明確（有沒有標題行＋非空正文），不對內容做語意判斷。
+  const lines = stripped.split('\n');
+  let i = 0;
+  while (i < lines.length && !lines[i].trim()) i++;
+  if (i < lines.length) {
+    const firstLine = lines[i].trim();
+    const headingMatch = firstLine.match(/^#{1,3}\s+(.+)$/) || firstLine.match(/^\*\*(.+?)\*\*$/);
+    if (headingMatch) {
+      const title = headingMatch[1].replace(/^[《「]|[》」]$/g, '').trim();
+      const body = lines.slice(i + 1).join('\n').trim();
+      if (body) {
+        return { title: title, subtitle: '', fullText: body, parseTier: 'markdown_fallback', unparseable: false };
+      }
+    }
+  }
+  // 完全沒有可靠的格式結構——寧可要求重新整理，不把 AI 聊天內容當成書，也不用關鍵字
+  // 刪除去「救」出一段看似乾淨的正文。
+  return { title: '', subtitle: '', fullText: '', parseTier: 'unparseable', unparseable: true };
+}
+
+// ── 完整文稿確認畫面：確認／修改／重新整理／這不是我說的／查看原始回答 ──────────────
+function renderQuickBookV4CreativeDraft() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  const cs = v4.creativeSeed;
+  document.getElementById('qbv4cd-title').textContent = cs.storyDraft.title || '（未命名）';
+  document.getElementById('qbv4cd-fulltext').textContent = cs.storyDraft.fullText || '（尚無內容）';
+  document.getElementById('qbv4cd-status').textContent = QUICKBOOK_V4_CONTENT_STATUS_LABEL[cs.storyDraft.contentStatus] + (cs.storyDraft.confirmedByUser ? '（已確認）' : '');
+}
+// 唯一能把 storyDraft.confirmedByUser 設成 true 的地方——AI／Parser 不可以碰這個欄位。
+function confirmQuickBookV4CreativeStoryDraft() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  const cs = v4.creativeSeed;
+  if (!cs.storyDraft.fullText || !cs.storyDraft.fullText.trim()) { showToast('文稿目前是空的'); return; }
+  cs.storyDraft.confirmedByUser = true;
+  cs.storyDraft.contentStatus = QUICKBOOK_V4_CONTENT_STATUS.COMPLETE;
+  cs.updatedAt = new Date().toISOString(); v4.updatedAt = new Date().toISOString();
+  saveState();
+  showToast('已確認完整文稿');
+  showScreen('screen-quickbook-v4-creative-style');
+}
+function editQuickBookV4CreativeStoryDraft() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  const cs = v4.creativeSeed;
+  const t = prompt('修改完整文稿：', cs.storyDraft.fullText || '');
+  if (t === null) return;
+  cs.storyDraft.fullText = t.trim();
+  cs.storyDraft.confirmedByUser = false;
+  cs.storyDraft.contentStatus = cs.storyDraft.fullText ? QUICKBOOK_V4_CONTENT_STATUS.NEEDS_CONFIRMATION : QUICKBOOK_V4_CONTENT_STATUS.NEEDS_INPUT;
+  // 文稿修改後，如果已經分頁過，既有頁面內容可能跟新文稿不一致，全部標記待確認，
+  // 避免使用者誤以為舊頁面內容仍然正確（十六節「修改文稿後頁面重回需確認」）。
+  if (v4.book.pages && v4.book.pages.length) {
+    v4.book.pages.forEach(function (p) { p.confirmedByUser = false; if (p.contentStatus === QUICKBOOK_V4_CONTENT_STATUS.COMPLETE) p.contentStatus = QUICKBOOK_V4_CONTENT_STATUS.NEEDS_CONFIRMATION; });
+  }
+  cs.updatedAt = new Date().toISOString(); v4.updatedAt = new Date().toISOString();
+  saveState();
+  renderQuickBookV4CreativeDraft();
+  showToast('已更新文稿，記得重新確認');
+}
+function regenerateQuickBookV4CreativeStoryDraft() {
+  quickBookV4CreativeExtraInstruction = '';
+  quickBookV4Stage = 'creative_story';
+  showScreen('screen-copy-to-ai');
+}
+// Recovery：這不是我說的——清除文稿避免誤看到，附上嚴格提醒重新整理。
+function flagQuickBookV4CreativeStoryDraftNotMine() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  const cs = v4.creativeSeed;
+  if (!confirm('這會清除目前的文稿，並請 AI 用更嚴格的規則重新整理，確定嗎？')) return;
+  const offending = cs.storyDraft.fullText;
+  cs.storyDraft.fullText = '';
+  cs.storyDraft.confirmedByUser = false;
+  cs.storyDraft.contentStatus = QUICKBOOK_V4_CONTENT_STATUS.NEEDS_INPUT;
+  cs.updatedAt = new Date().toISOString(); v4.updatedAt = new Date().toISOString();
+  saveState();
+  quickBookV4CreativeExtraInstruction = '上一版文稿裡出現了不是使用者說的內容（使用者標記「這不是我說的」），請重新檢查原始回答／原始故事內容，絕對不要自己延伸情節或補造細節。上一版有問題的文字：「' + offending + '」';
+  showToast('已清除，AI 會重新整理');
+  quickBookV4Stage = 'creative_story';
+  showScreen('screen-copy-to-ai');
+}
+function viewQuickBookV4CreativeStorySource() {
+  showScreen('screen-quickbook-v4-source-view');
+}
+
+// ── 呈現方式與頁數選擇 → 分頁（Parser 跟 Practical Whole Book Fast Path 共用） ────────
+function renderQuickBookV4CreativeStyle() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  const cs = v4.creativeSeed;
+  document.getElementById('qbv4cs-style-options').innerHTML = Object.keys(QUICKBOOK_V4_PRESENTATION_STYLE_LABEL).map(function (key) {
+    return '<div class="template-pick' + (cs.presentationStyle === key ? ' selected' : '') + '" onclick="chooseQuickBookV4CreativeStyle(\'' + key + '\')">' + QUICKBOOK_V4_PRESENTATION_STYLE_LABEL[key] + '</div>';
+  }).join('');
+  document.getElementById('qbv4cs-pagecount-options').innerHTML = QUICKBOOK_V4_PAGE_COUNT_CHOICES.map(function (n) {
+    return '<div class="template-pick' + (cs.pageCountChoice === n ? ' selected' : '') + '" onclick="chooseQuickBookV4CreativePageCount(' + n + ')">' + n + ' 頁</div>';
+  }).join('');
+}
+function chooseQuickBookV4CreativeStyle(style) {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  v4.creativeSeed.presentationStyle = style; v4.updatedAt = new Date().toISOString(); saveState();
+  renderQuickBookV4CreativeStyle();
+}
+function chooseQuickBookV4CreativePageCount(n) {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  v4.creativeSeed.pageCountChoice = n; v4.updatedAt = new Date().toISOString(); saveState();
+  renderQuickBookV4CreativeStyle();
+}
+function buildQuickBookV4CreativeBookPrompt(work) {
+  const v4 = ensureQuickBookV4Defaults(work);
+  const cs = v4.creativeSeed;
+  const styleNote = QUICKBOOK_V4_PRESENTATION_STYLE_LABEL[cs.presentationStyle] || '';
+  const preset = getStoryBookPreset(v4.book.topicPresetId);
+  const roleLabel = preset.manuscriptRoleLabel || '生命故事';
+  const vars = { work_name: work.name, goal: work.name };
+  return fillTemplate(
+    '你是' + roleLabel + '小書流程中的分頁編輯。請把下面「已確認的完整文稿」拆成' + (cs.pageCountChoice || 5) + ' 頁（含封面與結尾），只能使用這篇文稿裡的內容，不要新增文稿沒有的情節。\n\n' +
+    '書名：' + escHtmlNoop(cs.storyDraft.title) + '\n呈現方式：' + styleNote + '\n\n完整文稿：\n' + (cs.storyDraft.fullText || '') + '\n\n' +
+    QUICKBOOK_V4_CREATIVE_NO_FABRICATION_CONTRACT + '\n\n' +
+    '第一頁請規劃為封面，最後一頁為結尾，中間依文稿脈絡分段。封面是獨立的一頁，封面的「正文：」請留空，不要把完整文稿的第一段或任何正文內容放在封面——完整文稿一律從封面後的第一個內容頁開始逐字摘錄。' + (preset.pageStructureHint ? preset.pageStructureHint + '\n' : '') + '每一頁請用以下固定格式輸出，用「【第N頁】」開頭分隔：\n\n' +
+    '【第1頁】\n頁面類型：封面／內容頁／結尾頁（三選一）\n頁面標題：\n正文：（如果頁面類型是封面，這裡請留空；其餘頁面只能是完整文稿裡的內容，用原文或幾乎逐字摘錄，不要改寫出文稿沒有的細節）\n來源依據：（這一頁對應完整文稿的哪一段，簡短說明）\n視覺建議：\n\n（依此格式重複到全書所有頁）\n\n' +
+    buildStepBoundaryBlock('完成分頁並輸出以上格式', ['規劃封面圖片細節'].concat(STEP_BOUNDARY_GENERIC_FORBIDDEN), STEP_BOUNDARY_GENERIC_WAITING),
+    vars
+  );
+}
+function proceedToQuickBookV4CreativePaginate() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  const cs = v4.creativeSeed;
+  if (!cs.storyDraft.confirmedByUser) { showToast('請先確認完整文稿'); showScreen('screen-quickbook-v4-creative-draft'); return; }
+  if (!cs.presentationStyle) { showToast('請先選擇呈現方式'); return; }
+  if (!cs.pageCountChoice) { showToast('請先選擇頁數'); return; }
+  quickBookV4Stage = 'creative_paginate';
+  showScreen('screen-copy-to-ai');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// #7.1 Quick Book v4.0 POC Gate 2 Phase 2C（總策長／CEO 核准，2026-08-06）
+// 內容結構卡與逐單元整理：把已確認的產品資料整理成 3～5 個內容單元，使用者逐單元參與
+// 確認。分兩段 AI 往返：①整本規劃 3～5 個單元（含初稿）②單一單元重新整理（使用者對某個
+// 單元不滿意時，只針對那一個單元重新請 AI 整理，不影響其他單元）。
+// 硬規則（不可違反）：confirmedByUser 只能透過使用者在單元詳情畫面按「這就是我要表達的」
+// 直接設定，AI／Parser／任何自動流程都不可以把這個欄位設成 true。
+// ═══════════════════════════════════════════════════════════════════════════
+
+// 進入結構規劃前的 Gate（三節）：資料不齊全就擋下，不清空任何既有資料，只是不放行。
+function quickBookV4StructureGateCheck(v4) {
+  const sm = v4.sourceMaterial;
+  const errors = [];
+  if (!sm.rawInput || !sm.rawInput.trim()) errors.push('尚未貼入產品資料');
+  if (!sm.targetAudience) errors.push('尚未確認主要讀者');
+  if (!sm.readerTask) errors.push('尚未確認希望讀者看完後做什麼');
+  if (!sm.usageContext) errors.push('尚未確認使用情境');
+  if (!(sm.inventory.existing && sm.inventory.existing.length)) errors.push('「已有資料」目前是空的，至少需要一項才能規劃內容單元');
+  const unresolvedConflicts = (sm.inventory.conflicts || []).filter(function (c) { return !c.resolution; });
+  if (unresolvedConflicts.length) errors.push('還有 ' + unresolvedConflicts.length + ' 項資料衝突尚未處理');
+  return { valid: errors.length === 0, errors: errors };
+}
+function proceedToQuickBookV4Structure() {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const gate = quickBookV4StructureGateCheck(v4);
+  if (!gate.valid) { showToast(gate.errors[0]); return; }
+  quickBookV4Stage = 'structure';
+  showScreen('screen-copy-to-ai');
+}
+
+// 只把「已確認可用」的資料交給 AI：existing 全部可用；conflicts 只有已解決的才算數，依
+// resolution 決定要用哪個版本；needsConfirmation／missing／notApplicable 一律不放入，
+// 呼應「不得使用未確認或不適用資料」的硬性規定。
+function quickBookV4UsableFacts(sm) {
+  const inv = sm.inventory;
+  const facts = (inv.existing || []).map(function (i) { return { label: i.label, value: i.value }; });
+  (inv.conflicts || []).forEach(function (c) {
+    if (c.resolution === 'use_a') facts.push({ label: c.label, value: c.versionA });
+    else if (c.resolution === 'use_b') facts.push({ label: c.label, value: c.versionB });
+    else if (c.resolution === 'keep_both') facts.push({ label: c.label, value: c.versionA + '／' + c.versionB });
+  });
+  return facts;
+}
+
+function buildQuickBookV4StructurePrompt(work) {
+  const v4 = ensureQuickBookV4Defaults(work);
+  const sm = v4.sourceMaterial;
+  const facts = quickBookV4UsableFacts(sm);
+  const factsText = facts.length ? facts.map(function (f) { return '- ' + f.label + '：' + f.value; }).join('\n') : '（目前沒有已確認的資料）';
+  const vars = { work_name: work.name, goal: work.name };
+  return fillTemplate(
+    '你是產品介紹小書流程中的內容架構規劃助手。\n\n' +
+    '請根據下面「可使用的產品資料」，把這些資料整理成 3～5 個內容單元（例如：產品介紹、使用方式、適合對象、常見問題等，實際單元請依資料內容判斷，不要硬套固定框架）。每個單元是這本小書裡的一個內容區塊，之後會各自變成一頁或幾頁，不是整本書的封面或版型規劃。\n\n' +
+    '主要讀者：' + escHtmlNoop(sm.targetAudience) + '\n希望讀者看完後：' + escHtmlNoop(sm.readerTask) + '\n使用情境：' + escHtmlNoop(sm.usageContext) + '\n\n' +
+    '可使用的產品資料（只能使用下面這些，不可以自己新增或延伸）：\n' + factsText + '\n\n' +
+    QUICKBOOK_V4_NO_FABRICATION_CONTRACT + '\n\n' +
+    '每個單元請盡量只使用上面列出的資料，資料不夠支撐的地方請寫進「仍缺少資料」，不要自己延伸內容；這一步不需要規劃封面、頁數或版型，也不需要產出完整整本書。\n\n' +
+    '請用以下固定格式輸出（欄位名稱請照抄，方便使用者複製貼回工作台；請規劃 3～5 個單元）：\n\n' +
+    '【單元1】\n標題：\n目的：（這個單元想讓讀者知道或感受到什麼）\n草稿內容：（根據上面的資料整理出的初步文字，只能使用上面提供的資料）\n來源依據：（這個單元用到了上面哪幾項資料，逐項列出標籤名稱，用頓號分隔）\n仍缺少資料：（如果這個單元的資料還不夠完整，寫出還缺什麼；沒有缺的話留空）\n\n（依此格式重複到 3～5 個單元）\n\n' +
+    buildStepBoundaryBlock('規劃 3～5 個內容單元並輸出以上格式', ['開始撰寫完整頁面內容', '規劃封面或版型', '產生完整電子書'].concat(STEP_BOUNDARY_GENERIC_FORBIDDEN), STEP_BOUNDARY_GENERIC_WAITING),
+    vars
+  );
+}
+
+// Parser 五層 fallback（比盤點階段的三層更寬鬆，因為「規劃單元」比「填固定欄位」更容易讓
+// AI 用自己習慣的格式回覆）：①結構化 JSON ②固定標籤【單元N】③Markdown 標題④自然條列
+// ⑤完全解析不出來時整段保留成一個單元，不遺失內容。
+function quickBookV4ClassifyMissingStatus(missingItems) {
+  return missingItems.length ? QUICKBOOK_V4_CONTENT_STATUS.NEEDS_INPUT : QUICKBOOK_V4_CONTENT_STATUS.NEEDS_CONFIRMATION;
+}
+function quickBookV4SplitList(raw) {
+  return raw ? raw.split(/[、,，\n]/).map(function (s) { return s.trim(); }).filter(Boolean) : [];
+}
+function parseQuickBookV4StructureUnits(content) {
+  const stripped = stripAfterQuickBookStepBoundary(content);
+  const trimmed = stripped.trim();
+  // 第一層：結構化 JSON
+  if (/^[{[]/.test(trimmed)) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      const arr = Array.isArray(parsed) ? parsed : parsed.structureUnits;
+      if (Array.isArray(arr) && arr.length) {
+        const units = arr.map(function (raw) {
+          const u = blankQuickBookV4StructureUnit();
+          u.title = raw.title || ''; u.purpose = raw.purpose || ''; u.draftContent = raw.draftContent || '';
+          u.sourceRefs = Array.isArray(raw.sourceRefs) ? raw.sourceRefs : (raw.sourceRefs ? [raw.sourceRefs] : []);
+          u.missingItems = Array.isArray(raw.missingItems) ? raw.missingItems : (raw.missingItems ? [raw.missingItems] : []);
+          u.contentStatus = quickBookV4ClassifyMissingStatus(u.missingItems);
+          return u;
+        }).filter(function (u) { return u.title; });
+        if (units.length) return { units: units, parseTier: 'json' };
+      }
+    } catch (e) { /* 不是合法 JSON，往下一層 fallback */ }
+  }
+  // 第二層：固定標籤【單元N】
+  const fixedLabelBlocks = stripped.split(/\n(?=\s*【單元\s*\d*】)/).map(function (s) { return s.trim(); }).filter(function (s) { return /^【單元/.test(s); });
+  if (fixedLabelBlocks.length) {
+    const unitFieldLabels = ['標題', '目的', '草稿內容', '來源依據', '仍缺少資料'];
+    const units = fixedLabelBlocks.map(function (block) {
+      const body = block.replace(/^【單元\s*\d*】\s*\n?/, '');
+      function grab(label) { return extractLabeledBlockValue(body, label, unitFieldLabels); }
+      const u = blankQuickBookV4StructureUnit();
+      u.title = grab('標題'); u.purpose = grab('目的'); u.draftContent = grab('草稿內容');
+      u.sourceRefs = quickBookV4SplitList(grab('來源依據'));
+      u.missingItems = quickBookV4SplitList(grab('仍缺少資料'));
+      u.contentStatus = quickBookV4ClassifyMissingStatus(u.missingItems);
+      return u;
+    }).filter(function (u) { return u.title; });
+    if (units.length) return { units: units, parseTier: 'labeled_block' };
+  }
+  // 第三層：Markdown 標題（## 標題 或 ### 標題）
+  const mdBlocks = stripped.split(/\n(?=#{1,3}\s+\S)/).filter(function (s) { return /^#{1,3}\s+/.test(s.trim()); });
+  if (mdBlocks.length) {
+    const unitFieldLabels2 = ['目的', '草稿內容', '來源依據', '仍缺少資料'];
+    const units = mdBlocks.map(function (block) {
+      const lines = block.trim().split('\n');
+      const titleLine = lines[0].replace(/^#{1,3}\s+/, '').replace(/^\d+[.、]?\s*/, '').trim();
+      const body = lines.slice(1).join('\n');
+      function grab(label) { return extractLabeledBlockValue(body, label, unitFieldLabels2); }
+      const u = blankQuickBookV4StructureUnit();
+      u.title = titleLine; u.purpose = grab('目的');
+      u.draftContent = grab('草稿內容') || body.trim();
+      u.sourceRefs = quickBookV4SplitList(grab('來源依據'));
+      u.missingItems = quickBookV4SplitList(grab('仍缺少資料'));
+      u.contentStatus = QUICKBOOK_V4_CONTENT_STATUS.NEEDS_CONFIRMATION;
+      return u;
+    }).filter(function (u) { return u.title; });
+    if (units.length) return { units: units, parseTier: 'markdown_heading' };
+  }
+  // 第四層：自然條列（AI 只給一份沒有明確欄位標籤的清單）
+  const bulletLines = stripped.split('\n').filter(function (line) { return /^\s*(\d+[.、]|[-*])\s*\S/.test(line); });
+  if (bulletLines.length >= 2) {
+    const units = bulletLines.map(function (line) {
+      const cleaned = line.replace(/^\s*(\d+[.、]|[-*])\s*/, '').trim();
+      const sepParts = cleaned.split(/[—–\-－：:]\s*/);
+      const u = blankQuickBookV4StructureUnit();
+      u.title = sepParts[0].trim();
+      u.draftContent = sepParts.length > 1 ? sepParts.slice(1).join('：').trim() : '';
+      u.contentStatus = QUICKBOOK_V4_CONTENT_STATUS.NEEDS_CONFIRMATION;
+      return u;
+    }).filter(function (u) { return u.title; });
+    if (units.length) return { units: units, parseTier: 'natural_bullet' };
+  }
+  // 第五層：完全解析不出來——不遺失內容，整段原文保留成一個單元
+  const fallback = blankQuickBookV4StructureUnit();
+  fallback.title = 'AI 原始回覆（格式無法自動辨識）';
+  fallback.draftContent = stripped;
+  fallback.contentStatus = QUICKBOOK_V4_CONTENT_STATUS.NEEDS_CONFIRMATION;
+  return { units: [fallback], parseTier: 'raw_fallback' };
+}
+
+// ── #7.1 Quick Book v4.0 Phase 2C｜結構卡列表：3～5 個內容單元的排序／編輯／合併／刪除 ──
+let quickBookV4ActiveUnitId = null;
+function renderQuickBookV4Structure() {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const units = v4.sourceMaterial.structureUnits.slice().sort(function (a, b) { return a.displayOrder - b.displayOrder; });
+  const countNotice = document.getElementById('qbv4st-count-notice');
+  if (units.length < 3) countNotice.textContent = '目前只有 ' + units.length + ' 個單元，建議至少 3 個，內容才夠撐起一本小書；可以按下面「新增單元」補上。';
+  else if (units.length > 5) countNotice.textContent = '目前有 ' + units.length + ' 個單元，建議合併成 5 個以內，讀起來會更聚焦；可以用「跟下一個合併」把相近的單元合在一起。';
+  else countNotice.textContent = '目前 ' + units.length + ' 個單元，數量剛好。';
+  document.getElementById('qbv4st-confirmed-count').textContent = units.filter(function (u) { return u.confirmedByUser; }).length + ' / ' + units.length + ' 個單元已確認';
+  document.getElementById('qbv4st-list').innerHTML = units.length ? units.map(function (u, idx) {
+    return '<div class="card" style="margin-top:8px">' +
+      '<div class="line"><b>' + escHtml(u.title || '（未命名單元）') + '</b>　<span style="font-size:11px;opacity:.7">' + QUICKBOOK_V4_CONTENT_STATUS_LABEL[u.contentStatus] + (u.confirmedByUser ? '　✅ 已確認' : '') + '</span></div>' +
+      (u.purpose ? '<div class="line" style="font-size:13px;opacity:.85">目的：' + escHtml(u.purpose) + '</div>' : '') +
+      (u.missingItems.length ? '<div class="line" style="font-size:12px;opacity:.7">仍缺：' + escHtml(u.missingItems.join('、')) + '</div>' : '') +
+      '<div class="action-row" style="margin-top:8px;flex-wrap:wrap">' +
+      '<button class="btn outline" style="width:auto;flex:1;padding:7px;font-size:12px" onclick="openQuickBookV4UnitDetail(\'' + u.unitId + '\')">📝 整理這個單元</button>' +
+      '<button class="btn outline" style="width:auto;padding:7px 10px;font-size:12px" onclick="moveQuickBookV4StructureUnit(\'' + u.unitId + '\',-1)">↑</button>' +
+      '<button class="btn outline" style="width:auto;padding:7px 10px;font-size:12px" onclick="moveQuickBookV4StructureUnit(\'' + u.unitId + '\',1)">↓</button>' +
+      '</div>' +
+      '<div class="action-row" style="margin-top:4px;flex-wrap:wrap">' +
+      '<button class="btn outline" style="width:auto;flex:1;padding:6px;font-size:11px" onclick="editQuickBookV4StructureUnitTitle(\'' + u.unitId + '\')">✏️ 改標題／目的</button>' +
+      (idx < units.length - 1 ? '<button class="btn outline" style="width:auto;flex:1;padding:6px;font-size:11px" onclick="mergeQuickBookV4StructureUnits(\'' + u.unitId + '\',\'' + units[idx + 1].unitId + '\')">🔗 跟下一個合併</button>' : '') +
+      '<button class="btn outline" style="width:auto;padding:6px 10px;font-size:11px" onclick="deleteQuickBookV4StructureUnit(\'' + u.unitId + '\')">🗑</button>' +
+      '</div>' +
+      '</div>';
+  }).join('') : '<div class="notice">目前還沒有內容單元</div>';
+}
+function addQuickBookV4StructureUnit() {
+  const title = prompt('新單元的標題：');
+  if (!title || !title.trim()) return;
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const unit = blankQuickBookV4StructureUnit();
+  unit.title = title.trim();
+  unit.displayOrder = v4.sourceMaterial.structureUnits.length;
+  v4.sourceMaterial.structureUnits.push(unit);
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  renderQuickBookV4Structure();
+}
+function deleteQuickBookV4StructureUnit(unitId) {
+  if (!confirm('確定要刪除這個單元嗎？')) return;
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  v4.sourceMaterial.structureUnits = v4.sourceMaterial.structureUnits.filter(function (u) { return u.unitId !== unitId; });
+  v4.sourceMaterial.structureUnits.forEach(function (u, idx) { u.displayOrder = idx; });
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  renderQuickBookV4Structure();
+  if (v4.sourceMaterial.structureUnits.length < 3) showToast('目前少於 3 個單元，建議補上再繼續');
+}
+function moveQuickBookV4StructureUnit(unitId, direction) {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const units = v4.sourceMaterial.structureUnits.slice().sort(function (a, b) { return a.displayOrder - b.displayOrder; });
+  const idx = units.findIndex(function (u) { return u.unitId === unitId; });
+  const swapIdx = idx + direction;
+  if (idx === -1 || swapIdx < 0 || swapIdx >= units.length) return;
+  const tmp = units[idx].displayOrder;
+  units[idx].displayOrder = units[swapIdx].displayOrder;
+  units[swapIdx].displayOrder = tmp;
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  renderQuickBookV4Structure();
+}
+function editQuickBookV4StructureUnitTitle(unitId) {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const unit = v4.sourceMaterial.structureUnits.find(function (u) { return u.unitId === unitId; });
+  if (!unit) return;
+  const newTitle = prompt('標題：', unit.title);
+  if (newTitle === null) return;
+  const newPurpose = prompt('目的：', unit.purpose || '');
+  if (newPurpose === null) return;
+  unit.title = newTitle.trim();
+  unit.purpose = newPurpose.trim();
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  renderQuickBookV4Structure();
+}
+function mergeQuickBookV4StructureUnits(unitIdA, unitIdB) {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const units = v4.sourceMaterial.structureUnits;
+  const a = units.find(function (u) { return u.unitId === unitIdA; });
+  const b = units.find(function (u) { return u.unitId === unitIdB; });
+  if (!a || !b) return;
+  if (!confirm('確定要把「' + b.title + '」合併進「' + a.title + '」嗎？合併後兩個單元的內容都會保留，但需要重新確認。')) return;
+  a.purpose = [a.purpose, b.purpose].filter(Boolean).join('；');
+  a.draftContent = [a.draftContent, b.draftContent].filter(Boolean).join('\n\n');
+  a.sourceRefs = a.sourceRefs.concat(b.sourceRefs.filter(function (r) { return a.sourceRefs.indexOf(r) === -1; }));
+  a.missingItems = a.missingItems.concat(b.missingItems.filter(function (r) { return a.missingItems.indexOf(r) === -1; }));
+  a.confirmedByUser = false;
+  a.contentStatus = quickBookV4ClassifyMissingStatus(a.missingItems);
+  v4.sourceMaterial.structureUnits = units.filter(function (u) { return u.unitId !== unitIdB; });
+  v4.sourceMaterial.structureUnits.forEach(function (u, idx) { u.displayOrder = idx; });
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  renderQuickBookV4Structure();
+}
+function regenerateQuickBookV4Structure() {
+  quickBookV4Stage = 'structure';
+  showScreen('screen-copy-to-ai');
+}
+
+// ── #7.1 Quick Book v4.0 Phase 2C｜逐單元整理：單一單元的 AI 往返＋9 種使用者操作 ──────
+// quickBookV4UnitRefineExtraInstruction 是「這一次重新整理」的臨時特別提醒（例如使用者標記
+// 「太像廣告文案」），只用一次就清空，不會累積污染之後的一般重新整理。
+let quickBookV4UnitRefineExtraInstruction = '';
+function quickBookV4FindActiveUnit(v4) {
+  return v4.sourceMaterial.structureUnits.find(function (u) { return u.unitId === quickBookV4ActiveUnitId; });
+}
+function quickBookV4ResolveSourceRefsText(sm, sourceRefs) {
+  if (!sourceRefs || !sourceRefs.length) return '（沒有標明來源）';
+  const allItems = (sm.inventory.existing || []).map(function (i) { return { label: i.label, value: i.value }; })
+    .concat((sm.inventory.conflicts || []).filter(function (c) { return c.resolution; }).map(function (c) {
+      return { label: c.label, value: c.resolution === 'use_a' ? c.versionA : c.resolution === 'use_b' ? c.versionB : c.versionA + '／' + c.versionB };
+    }));
+  return sourceRefs.map(function (ref) {
+    const found = allItems.find(function (i) { return i.label === ref; });
+    return found ? ('「' + found.label + '」：' + found.value) : ref;
+  }).join('\n');
+}
+function openQuickBookV4UnitDetail(unitId) {
+  quickBookV4ActiveUnitId = unitId;
+  showScreen('screen-quickbook-v4-practical-unit-detail');
+}
+function renderQuickBookV4UnitDetail() {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const unit = quickBookV4FindActiveUnit(v4);
+  if (!unit) { showScreen('screen-quickbook-v4-practical-structure'); return; }
+  document.getElementById('qbv4ud-title').textContent = unit.title || '（未命名單元）';
+  document.getElementById('qbv4ud-purpose').textContent = unit.purpose || '（未填寫）';
+  document.getElementById('qbv4ud-sources').textContent = quickBookV4ResolveSourceRefsText(v4.sourceMaterial, unit.sourceRefs);
+  document.getElementById('qbv4ud-draft').textContent = unit.draftContent || '（目前還沒有整理稿）';
+  document.getElementById('qbv4ud-missing').textContent = unit.missingItems && unit.missingItems.length ? unit.missingItems.join('、') : '沒有';
+  document.getElementById('qbv4ud-status').textContent = QUICKBOOK_V4_CONTENT_STATUS_LABEL[unit.contentStatus] + (unit.confirmedByUser ? '（已確認）' : '');
+}
+function buildQuickBookV4UnitRefinePrompt(work) {
+  const v4 = ensureQuickBookV4Defaults(work);
+  const sm = v4.sourceMaterial;
+  const unit = quickBookV4FindActiveUnit(v4);
+  const sourcesText = quickBookV4ResolveSourceRefsText(sm, unit ? unit.sourceRefs : []);
+  const vars = { work_name: work.name, goal: work.name };
+  return fillTemplate(
+    '你是產品介紹小書流程中的單元內容整理助手。\n\n請只針對下面這一個內容單元整理文字，不要涉及其他單元，也不要規劃整本書。\n\n' +
+    '單元標題：' + escHtmlNoop(unit ? unit.title : '') + '\n單元目的：' + escHtmlNoop(unit ? unit.purpose : '') + '\n\n可使用的資料：\n' + sourcesText + '\n\n原始資料全文（供對照，不是要你全部塞進來）：\n' + (sm.rawInput || '') + '\n\n' +
+    QUICKBOOK_V4_NO_FABRICATION_CONTRACT + '\n\n' +
+    (quickBookV4UnitRefineExtraInstruction ? ('特別提醒：' + quickBookV4UnitRefineExtraInstruction + '\n\n') : '') +
+    '請直接輸出這個單元的整理稿文字（不需要標題或欄位名稱，直接是內文），如果資料仍然不足以完整表達這個單元，請在文字最後另起一行寫「仍缺少資料：」並說明還缺什麼。\n\n' +
+    buildStepBoundaryBlock('整理這個單元的內容', ['整理其他單元', '規劃整本書結構'].concat(STEP_BOUNDARY_GENERIC_FORBIDDEN), STEP_BOUNDARY_GENERIC_WAITING),
+    vars
+  );
+}
+function parseQuickBookV4UnitDraft(content) {
+  const stripped = stripAfterQuickBookStepBoundary(content).trim();
+  const missingMatch = stripped.match(/仍缺少資料[:：]\s*([\s\S]*)$/);
+  let draftContent = stripped;
+  let missingItems = [];
+  if (missingMatch) {
+    draftContent = stripped.slice(0, missingMatch.index).trim();
+    missingItems = quickBookV4SplitList(missingMatch[1]);
+  }
+  return { draftContent: draftContent, missingItems: missingItems };
+}
+// 1. 直接確認——唯一能把 confirmedByUser 設成 true 的地方，硬規則：AI／Parser 不可以碰這個欄位。
+function confirmQuickBookV4Unit() {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const unit = quickBookV4FindActiveUnit(v4);
+  if (!unit) return;
+  unit.confirmedByUser = true;
+  unit.contentStatus = QUICKBOOK_V4_CONTENT_STATUS.COMPLETE;
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  showToast('已確認這個單元');
+  showScreen('screen-quickbook-v4-practical-structure');
+}
+// 2. 使用者自己動手改文字（不透過 AI）
+function editQuickBookV4UnitDraftManually() {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const unit = quickBookV4FindActiveUnit(v4);
+  if (!unit) return;
+  const edited = prompt('修改這個單元的文字：', unit.draftContent || '');
+  if (edited === null) return;
+  unit.draftContent = edited.trim();
+  unit.confirmedByUser = false;
+  unit.contentStatus = unit.draftContent ? QUICKBOOK_V4_CONTENT_STATUS.NEEDS_CONFIRMATION : QUICKBOOK_V4_CONTENT_STATUS.NEEDS_INPUT;
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  renderQuickBookV4UnitDetail();
+  showToast('已更新，記得確認這個單元');
+}
+// 3. 補充更多資料——併入 rawInput（唯一事實來源），再請 AI 重新整理這個單元
+function requestMoreDataForQuickBookV4Unit() {
+  const extra = prompt('請補充這個單元還需要的資料：');
+  if (!extra || !extra.trim()) return;
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const unit = quickBookV4FindActiveUnit(v4);
+  v4.sourceMaterial.rawInput = (v4.sourceMaterial.rawInput || '') + '\n\n【補充於「' + (unit ? unit.title : '') + '」單元】\n' + extra.trim();
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  quickBookV4UnitRefineExtraInstruction = '使用者剛補充了以下資料，請把這些資料也納入整理：' + extra.trim();
+  quickBookV4Stage = 'unit_refine';
+  showScreen('screen-copy-to-ai');
+}
+// 4. 單純不滿意，請 AI 重新整理（不附加特別提醒）
+function regenerateQuickBookV4Unit() {
+  quickBookV4UnitRefineExtraInstruction = '';
+  quickBookV4Stage = 'unit_refine';
+  showScreen('screen-copy-to-ai');
+}
+// 5. Recovery：這不是我提供的內容——視為可疑內容，先清空避免使用者誤看到，用更嚴格的提醒
+// 重新整理，並把有問題的舊文字附進提醒，讓 AI 知道具體要避免什麼。
+function flagQuickBookV4UnitNotMyContent() {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const unit = quickBookV4FindActiveUnit(v4);
+  if (!unit) return;
+  if (!confirm('這會清除目前這段整理稿，並請 AI 用更嚴格的規則重新整理，確定嗎？')) return;
+  const offendingContent = unit.draftContent;
+  unit.draftContent = '';
+  unit.confirmedByUser = false;
+  unit.contentStatus = QUICKBOOK_V4_CONTENT_STATUS.NEEDS_CONFIRMATION;
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  quickBookV4UnitRefineExtraInstruction = '上一版整理稿裡出現了不是使用者提供的內容（使用者標記「這不是我提供的內容」），請重新檢查「可使用的資料」，絕對不要憑空延伸或推測，沒有明確依據的地方一律寫進「仍缺少資料」。上一版有問題的文字：「' + offendingContent + '」';
+  showToast('已清除，AI 會重新整理這個單元');
+  quickBookV4Stage = 'unit_refine';
+  showScreen('screen-copy-to-ai');
+}
+// 6. Recovery：太像廣告文案——事實可能還算對，只是語氣不對，不清空既有文字，附加語氣提醒重整
+function flagQuickBookV4UnitTooPromotional() {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const unit = quickBookV4FindActiveUnit(v4);
+  if (!unit) return;
+  unit.confirmedByUser = false;
+  unit.contentStatus = QUICKBOOK_V4_CONTENT_STATUS.NEEDS_CONFIRMATION;
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  quickBookV4UnitRefineExtraInstruction = '使用者覺得上一版整理稿「太像廣告文案」，語氣太誇張或太銷售導向。請改用平實、說明性的語氣重新整理，避免誇張形容詞、驚嘆號、過度推銷的用詞，只是把資料清楚說明給讀者看。';
+  showToast('AI 會用更平實的語氣重新整理');
+  quickBookV4Stage = 'unit_refine';
+  showScreen('screen-copy-to-ai');
+}
+// 7. 待確認——先擱置，不代表有問題，只是使用者還沒決定
+function markQuickBookV4UnitNeedsConfirmation() {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const unit = quickBookV4FindActiveUnit(v4);
+  if (!unit) return;
+  unit.confirmedByUser = false;
+  unit.contentStatus = QUICKBOOK_V4_CONTENT_STATUS.NEEDS_CONFIRMATION;
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  showToast('已標記為待確認');
+  showScreen('screen-quickbook-v4-practical-structure');
+}
+// 8. 這個單元先跳過——不放入這本書，但不刪除資料，之後可以再改回來
+function skipQuickBookV4Unit() {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const unit = quickBookV4FindActiveUnit(v4);
+  if (!unit) return;
+  unit.contentStatus = QUICKBOOK_V4_CONTENT_STATUS.NOT_APPLICABLE;
+  unit.canBecomePage = false;
+  unit.confirmedByUser = false;
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  showToast('已標記這個單元先不放入小書');
+  showScreen('screen-quickbook-v4-practical-structure');
+}
+// 9. 先保存，晚點再繼續——單純離開，不改變任何狀態
+function saveQuickBookV4UnitForLater() {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  showToast('已保存');
+  showScreen('screen-quickbook-v4-practical-structure');
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// #7.1 Quick Book v4.0 POC Gate 2 Phase 2D（總策長／CEO 核准，2026-08-06）
+// BookDocumentV1 與 5～8 頁產品介紹小書：已確認的內容單元 → 成書 Gate → Practical
+// Adapter（純函式，不碰 DOM／work）→ BookDocumentV1 → 預覽 → 逐頁確認 → 保存 → 重新開啟
+// → 沿用既有 v3.0 Canva／Google Docs 交接（不另建 Practical 專屬版本）。
+// 硬規則延續 Phase 2C：page.confirmedByUser 只能透過使用者在頁面詳情畫面按「這一頁可以」
+// 直接設定，Adapter／AI／任何自動流程都不可以把這個欄位設成 true。
+// ═══════════════════════════════════════════════════════════════════════════
+
+// ── 成書 Gate（二節）：不符合就擋下、顯示缺少什麼、不清空已完成資料、不自動補造 ──────
+function quickBookV4ReadyUnits(sm) {
+  return (sm.structureUnits || []).filter(function (u) {
+    return u.confirmedByUser && u.contentStatus === QUICKBOOK_V4_CONTENT_STATUS.COMPLETE && u.canBecomePage && u.draftContent && u.draftContent.trim();
+  }).slice().sort(function (a, b) { return a.displayOrder - b.displayOrder; });
+}
+function quickBookV4GuessProductName(sm) {
+  const guess = (sm.inventory.existing || []).find(function (i) { return /產品名稱|品名|^名稱$/.test(i.label || ''); });
+  return guess ? guess.value : '';
+}
+function quickBookV4BookGateCheck(v4) {
+  const sm = v4.sourceMaterial;
+  const errors = [];
+  const readyUnits = quickBookV4ReadyUnits(sm);
+  if ((sm.structureUnits || []).length < 3) errors.push('至少需要 3 個內容單元');
+  if (readyUnits.length < 3) errors.push('至少需要 3 個「已確認且完成」的單元才能成書（目前 ' + readyUnits.length + ' 個）');
+  if (!sm.productName || !sm.productName.trim()) errors.push('尚未確認產品名稱');
+  if (!sm.targetAudience) errors.push('尚未確認主要讀者');
+  if (!sm.readerTask) errors.push('尚未確認希望讀者看完後做什麼');
+  const trulyUnresolvedConflicts = (sm.inventory.conflicts || []).filter(function (c) { return !c.resolution; });
+  if (trulyUnresolvedConflicts.length) errors.push('還有 ' + trulyUnresolvedConflicts.length + ' 項資料衝突尚未處理');
+  return { valid: errors.length === 0, errors: errors, readyUnitsCount: readyUnits.length };
+}
+
+// ── AI Collaboration OS｜書本與影片共用內容素材流程（總策長／CEO 核准，2026-08-06）
+// 頁面視覺素材共用欄位：Practical／Creative 共用同一個 BookDocumentV1 頁面模型，這裡的
+// visualMode 是「書本與影片共用方向」（九節）明確要求保留、未來影片鏡頭也要能共用的欄位，
+// 比 Phase 2D 原本的 imageStatus（5 值）更完整（9 值，涵蓋流程圖／資訊圖表／繪本／截圖）。
+// imageStatus／imageNeeded／imageDescription／imagePrompt／layoutSuggestion 這五個 Phase 2D
+// 已經在用、且 v3.0 Handoff Adapter 依賴的欄位維持不變（只增不刪），visualMode 是新的
+// 主要欄位，兩者透過 quickBookV4VisualModeToLegacyImageStatus() 保持同步，不會各自漂移。
+const QUICKBOOK_V4_VISUAL_MODE = Object.freeze({
+  REAL_PHOTO: 'real_photo', USER_ASSET: 'user_asset', GENERATED_ILLUSTRATION: 'generated_illustration',
+  PICTURE_BOOK: 'picture_book', FLOWCHART: 'flowchart', INFOGRAPHIC: 'infographic',
+  SCREENSHOT: 'screenshot', TEXT_ONLY: 'text_only', ADD_LATER: 'add_later'
+});
+const QUICKBOOK_V4_VISUAL_MODE_LABEL = Object.freeze({
+  real_photo: '使用真實照片', user_asset: '使用現有品牌素材', generated_illustration: '請 AI 協助生成插畫',
+  picture_book: '繪本圖', flowchart: '製作流程圖', infographic: '製作資訊圖表',
+  screenshot: '截圖', text_only: '保持純文字', add_later: '稍後再補'
+});
+function quickBookV4VisualModeToLegacyImageStatus(mode) {
+  const map = {
+    real_photo: 'real_photo', user_asset: 'brand_asset',
+    generated_illustration: 'illustration', picture_book: 'illustration', flowchart: 'illustration', infographic: 'illustration', screenshot: 'illustration',
+    text_only: 'text_only', add_later: 'later'
+  };
+  return map[mode] || 'later';
+}
+// P0 Blocker 補修（CEO 真人驗收，2026-08-07）：試圖生圖／逐頁生圖指令生成都只考慮「使用者
+// 已經在頁面詳情選擇要圖片」的頁面——visualMode 是 text_only／add_later 時，代表使用者
+// 明確選了「保持純文字」或「稍後再補」，不得強制產生 imagePrompt（六節 Prompt 要求第 9
+// 條）。raw fallback／needs_input 的頁面本來就不是正式內容，同樣排除。
+function quickBookV4NeedsImagePage(page) {
+  if (!page) return false;
+  if (quickBookV4IsRawFallbackPage(page)) return false;
+  if (page.contentStatus === QUICKBOOK_V4_CONTENT_STATUS.NEEDS_INPUT) return false;
+  return page.visualMode !== QUICKBOOK_V4_VISUAL_MODE.TEXT_ONLY && page.visualMode !== QUICKBOOK_V4_VISUAL_MODE.ADD_LATER;
+}
+// 測試圖優先用封面（一本書最先定調的畫面），封面不需要圖片時退而找第一個需要圖片的內容頁；
+// 都沒有就回傳 null，畫面顯示白話提示，不假裝有頁面可以測試。
+function quickBookV4TrialImagePage(book) {
+  const pages = (book.pages || []).slice().sort(function (a, b) { return a.pageNumber - b.pageNumber; });
+  const cover = pages.find(function (p) { return p.pageType === 'cover'; });
+  if (cover && quickBookV4NeedsImagePage(cover)) return cover;
+  return pages.find(quickBookV4NeedsImagePage) || null;
+}
+// Quick Book P0 下一輪（CEO／總策長，2026-08-08）四節「Canva 成書導向」：正式主流程是
+// 文稿→分頁→視覺定調→生圖指令→Canva排版→PDF，圖片要朝 Canva 滿頁／滿版規格準備，不要
+// 偏向「小插圖示意」。這裡只加強 Prompt 文字本身，不新增生圖流程／不新增第二套圖片機制
+// ——沿用既有 buildQuickBookV4TrialImagePrompt／buildQuickBookV4ImagePromptGenerationPrompt
+// 兩個既有 Prompt 建構函式。
+const QUICKBOOK_V4_CANVA_FULLPAGE_GUIDANCE = '圖片規格：請以 Canva 整頁／滿版使用為準（full-page、full-bleed），主視覺清楚、構圖完整，適合直接當整頁主圖使用，畫面周圍保留適度安全留白供之後加上文字，風格與全書一致，不要畫成小張置中的插圖示意。';
+// 四節「各作品類型的基本排版導向」：對應既有 QUICKBOOK_V4_PRESENTATION_STYLE enum（本輪
+// 不新增分類），只有列出的三種類型才加對應提醒；純文字小書／相片書不特別加類型提醒。
+const QUICKBOOK_V4_PRESENTATION_STYLE_IMAGE_GUIDANCE = Object.freeze({
+  picture_book: '這本書的呈現方式是繪本：圖文一起排版，圖片盡量佔滿整頁，文字為畫面服務，全書視覺風格必須高度一致。',
+  illustrated_text: '這本書的呈現方式是圖文書：文字為主、圖片輔助說明，適合產品介紹或一般小書的呈現方式。',
+  illustration_book: '這本書的呈現方式是插畫書：插圖用來支援重點內容，不是純繪本形式，但整本書的版面風格需要維持一致。'
+});
+function quickBookV4BuildCanvaImageGuidanceText(book) {
+  const lines = [QUICKBOOK_V4_CANVA_FULLPAGE_GUIDANCE];
+  const styleGuidance = QUICKBOOK_V4_PRESENTATION_STYLE_IMAGE_GUIDANCE[book.presentationStyle];
+  if (styleGuidance) lines.push(styleGuidance);
+  return lines.join('\n');
+}
+// Quick Book 下一輪（CEO／總策長，2026-08-08）一節「排版成圖指令」：跟上面「測試畫風」
+// 用途不同，這裡是要 AI 直接把單一頁面做成一張排好圖文的完整書頁成品圖，所以每種作品
+// 型態要給的是「版面分流規則」而不是「畫風提醒」。同樣對應既有 QUICKBOOK_V4_PRESENTATION_
+// STYLE enum，不新增分類；沒選型態時退化成請 AI 自行判斷，不擋流程。
+const QUICKBOOK_V4_PRESENTATION_STYLE_LAYOUT_GUIDANCE = Object.freeze({
+  picture_book: '這本書是繪本：這一頁請以整頁滿版插圖為主，文字量盡量少，若有文字請直接融入畫面留白處（例如天空、角落），不要做成制式的上圖下文版型。',
+  illustrated_text: '這本書是圖文書：這一頁請用清楚的「上圖下文」或「左圖右文」版面，圖片與標題／正文分區明確，文字要能被完整閱讀。',
+  illustration_book: '這本書是插畫書：這一頁請以文字內容為主角，插圖只作為輔助點綴（例如頁面一角或段落旁），插圖不需要佔滿整頁。',
+  text_only: '這本書是純文字小書：這一頁不需要插圖，請用字體大小層次、對齊與留白，設計出一張有質感的純文字書頁，不要因為沒有圖片就顯得單調空白。',
+  photo_book: '這本書是相片書：這一頁請以真實照片風格的圖像為主，版面簡潔，文字作為圖說或簡短敘述。'
+});
+// Must Fix（CEO 真人驗收，2026-08-10）十五節「Typography 排版規範」：真人驗收發現書名
+// 多行行距太小、主副標太靠近、作者／繪者太擁擠——AI 為了把文字塞進畫面，容易自行壓縮
+// 行距。這是共用的單一 Typography guidance，封面與正文都讀同一份常數，不各自寫一套，
+// 避免以後兩邊标準不一致。只接進「排版成圖」（quickBookV4BuildPageLayoutImagePrompt），
+// 不接純插畫生圖 Prompt（trial／generation）——純圖片不涉及文字排版，沒有行距問題。
+const QUICKBOOK_V4_TYPOGRAPHY_SPACING_GUIDANCE = '文字排版請保持舒適閱讀距離。主標題如果超過一行，行距約為字體大小的 1.15～1.30 倍；副標題行距約 1.25～1.40 倍；正文行距約 1.45～1.70 倍；作者、繪者與其他署名行距約 1.30～1.50 倍。主標、副標、正文與署名區塊之間必須保留清楚段距，不要讓不同層級文字上下黏在一起。文字區塊四周需保留足夠留白，不要貼近頁面邊緣。若版面空間不足，優先適度縮小字級、擴大文字區或重新調整圖文配置，不得用過度壓縮行距的方式硬塞文字。';
+// 十七節「封面專屬 Typography」：文字視覺層級（書名 > 副標 > 作者／繪者／署名），只在
+// pageType==='cover' 才追加，避免混進一般頁。
+const QUICKBOOK_V4_COVER_TYPOGRAPHY_GUIDANCE = '封面文字需有明確視覺層級：書名最突出，其次是副標，作者、繪者與其他署名再次之。書名、副標與署名不可使用幾乎相同的字級與粗細。主標與副標之間必須保留明顯段距，作者／繪者與主要標題區也要保留足夠呼吸空間。請明確避免：主標／副標黏在一起、作者／繪者貼著主標、作者跟主標差不多大、底部署名擠成一團、文字貼近裁切區。';
+// 十八節「正文專屬 Typography」：非 cover page 才追加。
+const QUICKBOOK_V4_BODY_TYPOGRAPHY_GUIDANCE = '頁面標題應比正文明顯，但正文以閱讀舒適為優先。正文較多時，先適度縮小字級、增加文字區域、調整圖文比例或重新配置構圖，不得優先以壓縮行距的方式塞入全部文字。';
+// 一節：整合本頁文案／本頁圖片視覺需求／全書視覺設定／Canva 滿頁規格／作品型態版面
+// 分流／本頁既有版面建議／全書一致性規則，明確要求 AI 直接產出「已排好圖文的完整書頁
+// 圖片」，不是排版建議文字。全部沿用既有欄位（page.pageTitle／pageText／storyboard／
+// visualSuggestion／imagePrompt／layoutSuggestion、book.visualPlan／presentationStyle），
+// 不新增第二套 page model。
+function quickBookV4BuildPageLayoutImagePrompt(book, page) {
+  const isCover = page.pageType === 'cover';
+  const visual = quickBookV4PageVisualFields(book, page);
+  const lines = ['請直接把這一頁製作成一張已經排好圖文、可以直接使用的完整書頁圖片，不是只給排版建議文字。'];
+  // 二節「封面與正文拆分」：封面標題固定讀 book.title（canonical），不讀 page.pageTitle
+  // ——避免舊資料或人工編輯造成兩邊不一致；一般頁維持既有 page.pageTitle。
+  const titleText = isCover ? book.title : page.pageTitle;
+  if (titleText) lines.push('本頁標題：' + titleText);
+  // Must Fix（CEO 真人驗收，2026-08-09）：作者／繪者／其他封面署名是封面排版資訊，只有
+  // 封面頁才附上，「排好圖文的完整書頁」本來就該把這些文字排上去；一般頁完全不受影響，
+  // 這裡明確排除，避免署名被誤植到其他頁的排版指令。
+  if (isCover) {
+    const creditParts = [];
+    if (book.subtitle) creditParts.push('副標：' + book.subtitle);
+    if (book.authorName) creditParts.push('作者：' + book.authorName);
+    if (book.illustratorName) creditParts.push('繪者：' + book.illustratorName);
+    if (book.coverCredit) creditParts.push(book.coverCredit);
+    if (creditParts.length) lines.push('封面排版資訊（請以文字方式排在封面上，不是故事情節）：' + creditParts.join('，'));
+  }
+  const bodyText = quickBookV4CleanPageTextForHandoff(page.pageText).trim();
+  if (bodyText) lines.push('本頁正文：\n' + bodyText);
+  if (quickBookV4NeedsImagePage(page)) {
+    const visualContent = visual.imagePrompt || visual.storyboard || visual.visualSuggestion || '';
+    if (visualContent) lines.push('本頁畫面內容：' + visualContent);
+    lines.push('這一頁需要圖片，請把上面的畫面內容實際畫出來作為這一頁的視覺主體，不要只用文字說明代替畫面。');
+  } else {
+    lines.push('這一頁不需要額外畫插圖，請把重點放在文字排版本身的設計感（字體層次、對齊、留白），做出一張有設計感的純文字書頁。');
+  }
+  const vp = book.visualPlan || {};
+  const vpParts = [];
+  if (vp.visualStyle) vpParts.push('畫風：' + vp.visualStyle);
+  if (vp.colorMood) vpParts.push('色彩氣氛：' + vp.colorMood);
+  if (vp.characterConsistency) vpParts.push('主角／人物設定：' + vp.characterConsistency);
+  if (vp.sceneEra) vpParts.push('場景／年代感：' + vp.sceneEra);
+  if (vpParts.length) lines.push('全書視覺設定（務必跟全書其他頁保持一致）：' + vpParts.join('，'));
+  // Must Fix（CEO，2026-08-08）：avoidElements 是插畫／生圖階段對畫面本身的限制（例如
+  // 「不要出現文字」是在講插畫裡不要出現文字元素），不能無條件套用到「排好圖文的成品
+  // 書頁」——成品書頁本來就要正式呈現標題／正文文字，兩者會互相衝突。不刪除使用者填的
+  // avoidElements 原始資料、不動 book.visualPlan，只在這裡把作用範圍講清楚：avoidElements
+  // 只限制插畫／背景畫面本身，明確排除書頁的標題與正文。純生圖指令（buildQuickBookV4
+  // TrialImagePrompt／buildQuickBookV4ImagePromptGenerationPrompt）本來就只產生插畫本身，
+  // 沒有這個衝突，維持原樣不動。
+  if (vp.avoidElements) {
+    lines.push('插畫／背景避免事項：' + vp.avoidElements);
+    lines.push('注意：以上避免事項只適用於插畫畫面本身；本頁的書名、標題與正文屬於正式排版內容，仍必須完整呈現在書頁上，不得省略或改寫。');
+  }
+  lines.push(QUICKBOOK_V4_CANVA_FULLPAGE_GUIDANCE);
+  lines.push(quickBookV4CanvaSizePromptGuidance(book));
+  lines.push(QUICKBOOK_V4_PRESENTATION_STYLE_LAYOUT_GUIDANCE[book.presentationStyle] || '（尚未選擇作品呈現方式，請依本頁內容自行判斷合適的圖文版面比例）');
+  lines.push(quickBookV4FontStylePromptGuidance(book));
+  // 二十四節「Preset guidance 接入點」：只有真正有差異的 preset（例如 family_story）才會
+  // 附加這兩行，life_story 兩個欄位皆空字串，這裡不會多輸出任何內容。
+  const storyPreset = getStoryBookPreset(book.topicPresetId);
+  if (storyPreset.visualGuidance) lines.push(storyPreset.visualGuidance);
+  // 十五～十八節：Typography 排版規範，只接「排版成圖」這裡，封面與正文共用同一份
+  // spacing guidance，再依 isCover 各自追加專屬層級規則。
+  lines.push(QUICKBOOK_V4_TYPOGRAPHY_SPACING_GUIDANCE);
+  lines.push(isCover ? QUICKBOOK_V4_COVER_TYPOGRAPHY_GUIDANCE : QUICKBOOK_V4_BODY_TYPOGRAPHY_GUIDANCE);
+  if (storyPreset.layoutGuidance) lines.push(storyPreset.layoutGuidance);
+  if (visual.layoutSuggestion) lines.push('這一頁另外的版面建議：' + visual.layoutSuggestion);
+  lines.push('請維持跟全書其他頁一致的頁面比例、視覺風格、字體感、色彩、留白與圖文階層，不要讓每一頁的設計風格差異過大。');
+  return lines.join('\n');
+}
+// 三節「測試圖指令」：純樣板組字，不呼叫 AI，使用者直接複製到外部生圖工具測試風格。
+// 只有真正填過的欄位才輸出（「有值才顯示」跟本輪其他 Handoff 輸出同一個原則），不輸出
+// 「（未指定）」這類 placeholder。
+function buildQuickBookV4TrialImagePrompt(book) {
+  const page = quickBookV4TrialImagePage(book);
+  if (!page) return '';
+  const vp = book.visualPlan || {};
+  const lines = ['請畫一張圖，用途是幫我確認整本書要用的畫風。這是測試用的第一張圖，還沒有要正式使用。'];
+  if (vp.visualStyle) lines.push('全書畫風：' + vp.visualStyle);
+  if (vp.colorMood) lines.push('色彩氣氛：' + vp.colorMood);
+  if (vp.characterConsistency) lines.push('主角／人物設定：' + vp.characterConsistency);
+  if (vp.sceneEra) lines.push('場景／年代感：' + vp.sceneEra);
+  const contentText = quickBookV4CleanPageTextForHandoff(page.pageText).trim() || page.pageTitle;
+  if (contentText) lines.push('這一頁的內容：' + contentText);
+  lines.push('構圖：畫面請對應這一頁的內容，主體明確，方便之後排版加上文字。');
+  // Must Fix（CEO 真人驗收，2026-08-09）：這裡是純插畫生圖 Prompt，不是排版成品——如果
+  // 測試頁剛好是封面，明確提醒作者／繪者這類署名是封面排版資訊，不是要畫進插畫裡的
+  // 故事情節，也不需要把任何文字畫進插畫本身。
+  if (page.pageType === 'cover') lines.push('這一頁是封面：只需要畫出主視覺畫面本身，不需要把書名、作者、繪者這些文字畫進插畫裡，那些是之後排版時才加上的封面資訊，不是故事情節。');
+  lines.push(quickBookV4BuildCanvaImageGuidanceText(book));
+  lines.push(quickBookV4CanvaSizePromptGuidance(book));
+  // 二十四節：只有真正有差異的 preset 才附加（family_story 才有 visualGuidance）。
+  const trialStoryPreset = getStoryBookPreset(book.topicPresetId);
+  if (trialStoryPreset.visualGuidance) lines.push(trialStoryPreset.visualGuidance);
+  if (vp.avoidElements) lines.push('避免事項：' + vp.avoidElements);
+  return lines.join('\n');
+}
+
+// ── 三節｜Practical Adapter：純轉換函式，不直接在 UI render 中拼接 pages ──────────────
+// 輸入 SourceMaterialModel，輸出 BookDocumentV1，沒有任何 DOM／work／AI 呼叫，可以獨立
+// 測試。只使用「已確認」的單元；封面／結尾頁完全用本地已有資料組裝，不呼叫 AI，天生
+// 不會捏造內容（四節「若資料不足，不補造內容，收斂為較少頁數」在這裡的實作方式就是
+// 「沒有 AI 生成步驟」，不是靠額外規則擋下捏造）。
+let quickBookV4NextPageId = 1;
+function blankQuickBookV4BookPage() {
+  return {
+    pageId: 'page_' + (quickBookV4NextPageId++),
+    pageNumber: 0, chapterId: '', pageType: 'feature', pageTitle: '', pageText: '',
+    contentStatus: QUICKBOOK_V4_CONTENT_STATUS.NEEDS_CONFIRMATION,
+    sourceRefs: [], imageStatus: 'later', imageNeeded: true,
+    imageDescription: '', imagePrompt: '', layoutSuggestion: '',
+    confirmedByUser: false,
+    originUnitId: '', // 額外欄位（超出五節最低欄位要求）：記錄這頁是從哪個 structure unit／訪談回答來的，供「返回原始內容」使用
+    // 書本／影片共用視覺素材欄位（P0 只保存需求、文字指令與引用，不做完整資產管理）：
+    visualMode: QUICKBOOK_V4_VISUAL_MODE.ADD_LATER,
+    storyboard: '', // 共用電子書引擎 P0（2026-08-07）新增：分鏡描述，本輪只保留欄位，不做逐頁分鏡生成
+    visualSuggestion: '', photoHint: '', illustrationPrompt: '', diagramContent: '',
+    userAssetRefs: [], generatedAssetRefs: [],
+    visualStatus: 'not_set', // 'not_set' | 'needs_confirmation' | 'confirmed'
+    visualConfirmedByUser: false
+  };
+}
+function quickBookV4PageTypeForUnit(unit) {
+  const t = (unit.title || '') + (unit.purpose || '');
+  if (/適合|對象|讀者|客群/.test(t)) return 'audience';
+  if (/使用方式|怎麼用|如何使用|用法/.test(t)) return 'usage';
+  if (/常見問題|faq|注意事項/i.test(t)) return 'faq';
+  if (/下一步|行動|購買|詢問|聯絡/.test(t)) return 'cta';
+  return 'feature';
+}
+// 技術長審查（2026-08-06）：原本沒有 cta／contactInfo 時會自動塞一句通用結語，跟系統
+// 其餘所有「沒有資料就是待補充」的一致原則不符——使用者可能沒注意到那其實是系統自動
+// 補的填充文字，誤以為是自己確認過的內容。改成沒有資料就留空，contentStatus 交給呼叫端
+// 判斷成 needs_input（跟封面頁 pageText 為空時的處理方式完全一致），使用者要嘛自己用
+// 「修改內文」寫，要嘛保持待補充，不由系統代寫。
+function quickBookV4BuildClosingPageText(sm) {
+  const parts = [];
+  if (sm.cta) parts.push(sm.cta);
+  if (sm.contactInfo) parts.push('聯絡方式：' + sm.contactInfo);
+  return parts.join('\n\n');
+}
+function buildPracticalBookDocument(sm, opts) {
+  opts = opts || {};
+  const book = blankBookDocumentV1();
+  book.flowType = 'practical';
+  const title = sm.productName || opts.workName || '';
+  book.title = title;
+  book.subtitle = sm.oneLineIntro || '';
+  book.authorName = opts.authorName || '';
+  book.cover = { title: title, subtitle: sm.oneLineIntro || '', visualDirection: '', imagePrompt: '', layoutSuggestion: '', completedExternally: false };
+
+  const coverPage = blankQuickBookV4BookPage();
+  coverPage.pageNumber = 1;
+  coverPage.pageType = 'cover';
+  coverPage.pageTitle = title;
+  // 二節「封面與正文拆分」（CEO／總策長，2026-08-09）：cover page 的 pageText 必須留空
+  // ——sm.oneLineIntro 是「一句話介紹」資料，已經完整保留在 book.subtitle（上面已寫入），
+  // 不是正文，不可再重複塞進 coverPage.pageText 讓封面被顯示成「第 1 頁」內容。
+  coverPage.pageText = '';
+  coverPage.contentStatus = title ? QUICKBOOK_V4_CONTENT_STATUS.NEEDS_CONFIRMATION : QUICKBOOK_V4_CONTENT_STATUS.NEEDS_INPUT;
+
+  // 最多取 6 個已確認單元，確保「封面＋內容＋結尾」控制在 5～8 頁區間內，不硬套固定模板
+  // ——單元數少就頁數少（最低 5 頁），單元數多也不會超過 8 頁。
+  const readyUnits = quickBookV4ReadyUnits(sm).slice(0, 6);
+  const contentPages = readyUnits.map(function (unit, idx) {
+    const p = blankQuickBookV4BookPage();
+    p.pageNumber = idx + 2;
+    p.pageType = quickBookV4PageTypeForUnit(unit);
+    p.pageTitle = unit.title;
+    p.pageText = unit.draftContent;
+    p.sourceRefs = unit.sourceRefs.slice();
+    p.originUnitId = unit.unitId;
+    return p;
+  });
+
+  const closingPage = blankQuickBookV4BookPage();
+  closingPage.pageNumber = readyUnits.length + 2;
+  closingPage.pageType = 'cta';
+  closingPage.pageTitle = '下一步';
+  closingPage.pageText = quickBookV4BuildClosingPageText(sm);
+  closingPage.contentStatus = closingPage.pageText ? QUICKBOOK_V4_CONTENT_STATUS.NEEDS_CONFIRMATION : QUICKBOOK_V4_CONTENT_STATUS.NEEDS_INPUT;
+
+  book.pages = [coverPage].concat(contentPages, [closingPage]);
+  // Must Fix：結構單元內容也可能不小心帶進作者／繪者署名（例如使用者原始素材裡有
+  // 「文：X／圖：Y」），一樣不得留在正文。
+  quickBookV4StripCoverCreditFromPages(book);
+  book.createdAt = new Date().toISOString();
+  book.updatedAt = book.createdAt;
+  return book;
+}
+
+// ── proceedToQuickBookV4BookGate：Gate → Adapter → 寫入 v4.book，含轉換失敗 Recovery ──
+function proceedToQuickBookV4BookGate() {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const sm = v4.sourceMaterial;
+  if (!sm.productName || !sm.productName.trim()) {
+    const guess = quickBookV4GuessProductName(sm);
+    const confirmed = prompt('請確認產品名稱（會顯示在封面）：', guess || '');
+    if (confirmed === null) return;
+    if (!confirmed.trim()) { showToast('請先確認產品名稱'); return; }
+    sm.productName = confirmed.trim();
+    v4.updatedAt = new Date().toISOString();
+    saveState();
+  }
+  const gate = quickBookV4BookGateCheck(v4);
+  if (!gate.valid) {
+    alert('還不能製作小書，請先處理：\n\n' + gate.errors.map(function (e) { return '• ' + e; }).join('\n'));
+    return;
+  }
+  try {
+    const book = buildPracticalBookDocument(sm, { workName: work.name });
+    v4.book = book;
+    v4.lastCompletedStep = 'book_built';
+    v4.updatedAt = new Date().toISOString();
+    saveState();
+    showToast('已產生 ' + book.pages.length + ' 頁小書');
+    showScreen('screen-quickbook-v4-preview');
+  } catch (e) {
+    // 轉換失敗 Recovery（十五節）：不動 structureUnits、不動既有 v4.book，只提示錯誤原因。
+    showToast('小書產生失敗，資料未受影響：' + (e && e.message ? e.message : '未知錯誤'));
+  }
+}
+function regenerateQuickBookV4Book() {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const confirmedCount = (v4.book.pages || []).filter(function (p) { return p.confirmedByUser; }).length;
+  if (confirmedCount > 0 && !confirm('目前已有 ' + confirmedCount + ' 頁標記為「這一頁可以」，重新產生會用最新的內容單元整批重建，包含已確認的頁面。確定要繼續嗎？')) return;
+  try {
+    const book = buildPracticalBookDocument(v4.sourceMaterial, { workName: work.name });
+    v4.book = book;
+    v4.updatedAt = new Date().toISOString();
+    saveState();
+    showToast('已重新產生 ' + book.pages.length + ' 頁');
+    renderQuickBookV4Preview();
+  } catch (e) {
+    showToast('重新產生失敗，資料未受影響：' + (e && e.message ? e.message : '未知錯誤'));
+  }
+}
+
+// ── 九節｜預覽：逐頁顯示，清楚標示已完成／待補充／待確認 ─────────────────────────
+// CEO 真人驗收＋技術長裁示（2026-08-07）四節「Creative／Practical 頁型語意隔離」：
+// 共用 Whole Book Fast Path Parser（parseQuickBookV4WholeBook／quickBookV4NormalizePageTypeGuess）
+// 對 Practical 與 Creative 都用同一套 pageType 猜測邏輯（結尾頁一律標成 'cta'），這是故意
+// 共用、不建第二套 page model；問題出在「顯示層」把 pageType==='cta' 固定翻成「下一步
+// 行動」——這是 Practical 產品導購語意，Creative 生命故事書不該出現。這裡改成依 flowType
+// 決定顯示文字，不改 pageType 這個資料值本身，也不新增頁型資料模型。Creative 沒有意義的
+// pageType（例如 feature，本來就代表「一般內容頁」）直接不特別標注，用「故事頁」統稱即可。
+function quickBookV4PageTypeLabel(type, flowType) {
+  if (flowType === 'creative') {
+    return { cover: '封面', cta: '結尾頁', closing: '結尾頁' }[type] || '故事頁';
+  }
+  return { cover: '封面', introduction: '產品介紹', audience: '適合對象', feature: '特色', usage: '使用方式', faq: '常見問題', cta: '下一步行動', closing: '結尾' }[type] || '內容頁';
+}
+function quickBookV4ImageStatusLabel(status) {
+  return { real_photo: '使用真實產品照片', brand_asset: '使用品牌素材', illustration: '使用簡單示意圖', text_only: '保持純文字', later: '稍後再補' }[status] || '稍後再補';
+}
+// 五節「頁碼顯示」：封面永遠顯示「封面」，正文從封面後第一個非封面頁開始重新算「第 1
+// 頁」「第 2 頁」……內部 page.pageNumber／排序方式完全不變，這裡只是顯示層換算，所有
+// 真人會看到的地方（accordion／page detail／Canva 逐頁交接／copy toast／handoff display）
+// 都呼叫這個共用 helper，不各自算一套。
+function getBookPageDisplayLabel(page, book) {
+  if (!page) return '';
+  if (page.pageType === 'cover') return '封面';
+  const bodyPages = (book.pages || []).slice().sort(function (a, b) { return a.pageNumber - b.pageNumber; }).filter(function (p) { return p.pageType !== 'cover'; });
+  const idx = bodyPages.findIndex(function (p) { return p.pageId === page.pageId; });
+  return '第 ' + (idx === -1 ? '?' : idx + 1) + ' 頁';
+}
+// 二十二節「頁數 Soft Guidance」：不 hard block，BookDocument 不設 page 上限。單純的分段
+// 提示文字，Practical／Creative 共用（純文字提示，不影響任何既有驗收通過的流程）。
+const QUICKBOOK_V4_PAGE_COUNT_GUIDANCE_TIERS = [
+  { max: 8, text: '5～8 頁：適合課堂快速完成，最推薦。' },
+  { max: 20, text: '9～20 頁：適合內容較完整的小書。' },
+  { max: Infinity, text: '20 頁以上：可以繼續製作，建議分章或分批完成圖片與排版，操作會比較順。' }
+];
+function quickBookV4PageCountGuidanceText(pageCount) {
+  const tier = QUICKBOOK_V4_PAGE_COUNT_GUIDANCE_TIERS.find(function (t) { return pageCount <= t.max; });
+  return tier ? tier.text : '';
+}
+function renderQuickBookV4Preview() {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const book = v4.book;
+  // 四節「舊 v4 資料 Recovery」：一次性提示，告知使用者封面原本含有的正文內容已經自動
+  // 搬到正文第 1 頁，提示後立刻清旗標，不會每次進畫面都跳。
+  if (book.coverTextRecoveryNotice) {
+    book.coverTextRecoveryNotice = false;
+    saveState();
+    showToast('這本作品的封面原本含有正文內容，已自動移到正文第 1 頁');
+  }
+  document.getElementById('qbv4pv-title').textContent = book.title || '（未命名）';
+  const confirmedCount = book.pages.filter(function (p) { return p.confirmedByUser; }).length;
+  document.getElementById('qbv4pv-progress').textContent = confirmedCount + ' / ' + book.pages.length + ' 頁已確認' +
+    '　·　' + quickBookV4PageCountGuidanceText(book.pages.length);
+  document.getElementById('qbv4pv-list').innerHTML = book.pages.map(function (p) {
+    const isCover = p.pageType === 'cover';
+    const label = getBookPageDisplayLabel(p, book);
+    return '<div class="card" style="margin-top:6px">' +
+      '<div class="line"><b>' + label + (isCover ? '' : '　' + quickBookV4PageTypeLabel(p.pageType, book.flowType)) + '</b>　<span style="font-size:11px;opacity:.7">' + QUICKBOOK_V4_CONTENT_STATUS_LABEL[p.contentStatus] + (p.confirmedByUser ? '　✅ 已確認' : '') + '</span></div>' +
+      (p.pageTitle ? '<div class="line" style="font-size:13px">' + escHtml(p.pageTitle) + '</div>' : '') +
+      (p.pageText ? '<div class="line" style="font-size:12px;opacity:.8">' + escHtml(p.pageText.slice(0, 60)) + (p.pageText.length > 60 ? '…' : '') + '</div>' : '<div class="line" style="font-size:12px;opacity:.6">（尚無內文）</div>') +
+      '<div class="line" style="font-size:11px;opacity:.6">圖片：' + quickBookV4ImageStatusLabel(p.imageStatus) + '</div>' +
+      '<button class="btn outline" style="margin-top:6px;padding:7px;font-size:12px" onclick="openQuickBookV4PageDetail(\'' + p.pageId + '\')">📝 查看／確認這一頁</button>' +
+      '</div>';
+  }).join('');
+  // 十四～十七節：Page Review Gate 狀態，只在 Creative 流程顯示——Practical 是既有已驗收
+  // 流程，這輪不擴大範圍去動它，維持「準備交接」原本直接可用。
+  const gateBlock = document.getElementById('qbv4pv-gate-block');
+  if (gateBlock) {
+    if (v4.flowType !== 'creative') {
+      gateBlock.style.display = 'none';
+    } else {
+      gateBlock.style.display = 'block';
+      const gateStatusEl = document.getElementById('qbv4pv-gate-status');
+      if (gateStatusEl) {
+        if (quickBookV4PageReviewGatePassed(book)) {
+          gateStatusEl.textContent = '✅ 分頁內容已確認，可以繼續設定全書視覺。';
+        } else {
+          const result = validateQuickBookV4PageReviewReady(book);
+          gateStatusEl.textContent = result.valid
+            ? '請檢閱上方每一頁的內容，確認都沒問題後再按下面的按鈕。'
+            : '⚠️ ' + result.errors[0];
+        }
+      }
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 共用電子書引擎 P0 Phase 1（技術長《共用電子書引擎 P0 母規格技術審查》核准，2026-08-07）
+// 章節與分頁管理：從既有的扁平頁面預覽（screen-quickbook-v4-preview）加開一條「依章節
+// 整理」的附加路徑，不改變 CEO 已核准的 Fast Path 主流程本身——生成整本書之後，使用者
+// 一樣先看到扁平頁面清單，想要重新分章節、調整結構時才點進這裡，不是被迫先過章節關卡。
+// ═══════════════════════════════════════════════════════════════════════════
+function openQuickBookV4Chapters() {
+  showScreen('screen-quickbook-v4-chapters');
+}
+function renderQuickBookV4Chapters() {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const book = v4.book;
+  const chapters = book.chapters.slice().sort(function (a, b) { return a.chapterOrder - b.chapterOrder; });
+  document.getElementById('qbv4ch-list').innerHTML = chapters.length ? chapters.map(function (c, idx) {
+    const pageCount = c.pageIds.length;
+    return '<div class="card" style="margin-top:8px">' +
+      '<div class="line"><b>' + escHtml(c.chapterTitle || '（未命名章節）') + '</b>　<span style="font-size:11px;opacity:.7">' + pageCount + ' 頁' + (c.selectedForProduction ? '　✅ 本次製作' : '　⏸ 未選入本次製作') + '</span></div>' +
+      '<div class="action-row" style="margin-top:6px;flex-wrap:wrap">' +
+      '<button class="btn outline" style="width:auto;flex:1;padding:7px;font-size:12px" onclick="openQuickBookV4ChapterPages(\'' + c.chapterId + '\')">📖 進入章節</button>' +
+      '<button class="btn outline" style="width:auto;padding:7px 10px;font-size:12px" onclick="moveQuickBookV4ChapterUp(\'' + c.chapterId + '\')">↑</button>' +
+      '<button class="btn outline" style="width:auto;padding:7px 10px;font-size:12px" onclick="moveQuickBookV4ChapterDown(\'' + c.chapterId + '\')">↓</button>' +
+      '</div>' +
+      '<div class="action-row" style="margin-top:4px;flex-wrap:wrap">' +
+      '<button class="btn outline" style="width:auto;flex:1;padding:6px;font-size:11px" onclick="renameQuickBookV4Chapter(\'' + c.chapterId + '\')">✏️ 改名</button>' +
+      '<button class="btn outline" style="width:auto;flex:1;padding:6px;font-size:11px" onclick="toggleQuickBookV4ChapterSelectedForProduction(\'' + c.chapterId + '\')">' + (c.selectedForProduction ? '⏸ 移出本次製作' : '✅ 加入本次製作') + '</button>' +
+      '<button class="btn outline" style="width:auto;padding:6px 10px;font-size:11px" onclick="deleteQuickBookV4Chapter(\'' + c.chapterId + '\')">🗑</button>' +
+      '</div>' +
+      '</div>';
+  }).join('') : '<div class="notice">目前還沒有章節</div>';
+}
+function addQuickBookV4Chapter() {
+  const title = prompt('新章節的名稱：');
+  if (!title || !title.trim()) return;
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const chapter = blankQuickBookV4Chapter();
+  chapter.chapterTitle = title.trim();
+  chapter.chapterOrder = v4.book.chapters.length;
+  chapter.createdAt = new Date().toISOString();
+  v4.book.chapters.push(chapter);
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  renderQuickBookV4Chapters();
+}
+function renameQuickBookV4Chapter(chapterId) {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const chapter = v4.book.chapters.find(function (c) { return c.chapterId === chapterId; });
+  if (!chapter) return;
+  const title = prompt('章節名稱：', chapter.chapterTitle || '');
+  if (title === null) return;
+  chapter.chapterTitle = title.trim();
+  chapter.updatedAt = new Date().toISOString();
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  renderQuickBookV4Chapters();
+}
+function moveQuickBookV4ChapterUp(chapterId) { quickBookV4MoveChapter(chapterId, -1); }
+function moveQuickBookV4ChapterDown(chapterId) { quickBookV4MoveChapter(chapterId, 1); }
+function quickBookV4MoveChapter(chapterId, direction) {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const chapters = v4.book.chapters.slice().sort(function (a, b) { return a.chapterOrder - b.chapterOrder; });
+  const idx = chapters.findIndex(function (c) { return c.chapterId === chapterId; });
+  const swapIdx = idx + direction;
+  if (idx === -1 || swapIdx < 0 || swapIdx >= chapters.length) return;
+  const tmp = chapters[idx].chapterOrder;
+  chapters[idx].chapterOrder = chapters[swapIdx].chapterOrder;
+  chapters[swapIdx].chapterOrder = tmp;
+  renumberQuickBookV4BookPages(v4.book);
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  renderQuickBookV4Chapters();
+}
+function toggleQuickBookV4ChapterSelectedForProduction(chapterId) {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const chapter = v4.book.chapters.find(function (c) { return c.chapterId === chapterId; });
+  if (!chapter) return;
+  chapter.selectedForProduction = !chapter.selectedForProduction;
+  chapter.updatedAt = new Date().toISOString();
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  renderQuickBookV4Chapters();
+}
+// 二節：刪除章節的頁面處理採方案 B（先要求使用者把頁面移到其他章節），不採方案 A
+// （連同頁面一起刪除）——「不會誤刪內容」是指令明訂的優先判準，方案 B 唯一的代價是
+// 使用者要多一步「先搬頁面」，但保證正文永遠不會因為刪錯章節而消失，方案 A 一旦誤觸
+// 就是不可逆的內容遺失，兩者權衡下方案 B 更安全，程式邏輯也更單純（不用同時處理
+// 「刪章節＋批次刪頁」兩種操作疊在一起的邊界情況）。
+function deleteQuickBookV4Chapter(chapterId) {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const chapter = v4.book.chapters.find(function (c) { return c.chapterId === chapterId; });
+  if (!chapter) return;
+  if (chapter.pageIds.length > 0) {
+    showToast('這個章節還有 ' + chapter.pageIds.length + ' 頁，請先把頁面移到其他章節，才能刪除這個章節');
+    return;
+  }
+  if (v4.book.chapters.length <= 1) {
+    showToast('至少需要保留一個章節');
+    return;
+  }
+  if (!confirm('確定要刪除章節「' + (chapter.chapterTitle || '（未命名章節）') + '」嗎？')) return;
+  v4.book.chapters = v4.book.chapters.filter(function (c) { return c.chapterId !== chapterId; });
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  renderQuickBookV4Chapters();
+}
+
+// ── 章節內頁面列表：頁碼／標題／狀態／上移／下移／移到其他章節／刪除／開啟頁面 ──────
+let quickBookV4ActiveChapterId = null;
+function openQuickBookV4ChapterPages(chapterId) {
+  quickBookV4ActiveChapterId = chapterId;
+  showScreen('screen-quickbook-v4-chapter-pages');
+}
+function quickBookV4ActiveChapter(v4) {
+  return v4.book.chapters.find(function (c) { return c.chapterId === quickBookV4ActiveChapterId; });
+}
+function renderQuickBookV4ChapterPages() {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const chapter = quickBookV4ActiveChapter(v4);
+  if (!chapter) { showScreen('screen-quickbook-v4-chapters'); return; }
+  document.getElementById('qbv4chp-title').textContent = chapter.chapterTitle || '（未命名章節）';
+  const pages = chapter.pageIds.map(function (pid) { return v4.book.pages.find(function (p) { return p.pageId === pid; }); }).filter(Boolean);
+  document.getElementById('qbv4chp-list').innerHTML = pages.length ? pages.map(function (p, idx) {
+    return '<div class="card" style="margin-top:6px">' +
+      '<div class="line"><b>' + getBookPageDisplayLabel(p, v4.book) + '　' + escHtml(p.pageTitle || '（未命名）') + '</b></div>' +
+      '<div class="line" style="font-size:11px;opacity:.7">' + QUICKBOOK_V4_CONTENT_STATUS_LABEL[p.contentStatus] + (p.confirmedByUser ? '　✅ 已確認' : '') + '</div>' +
+      '<div class="action-row" style="margin-top:6px;flex-wrap:wrap">' +
+      '<button class="btn outline" style="width:auto;flex:1;padding:7px;font-size:12px" onclick="openQuickBookV4PageDetail(\'' + p.pageId + '\')">📝 開啟頁面</button>' +
+      '<button class="btn outline" style="width:auto;padding:7px 10px;font-size:12px" onclick="moveQuickBookV4ChapterPageUp(\'' + p.pageId + '\')">↑</button>' +
+      '<button class="btn outline" style="width:auto;padding:7px 10px;font-size:12px" onclick="moveQuickBookV4ChapterPageDown(\'' + p.pageId + '\')">↓</button>' +
+      '</div>' +
+      '<div class="action-row" style="margin-top:4px;flex-wrap:wrap">' +
+      '<button class="btn outline" style="width:auto;flex:1;padding:6px;font-size:11px" onclick="moveQuickBookV4PageToChapter(\'' + p.pageId + '\')">➡️ 移到其他章節</button>' +
+      '<button class="btn outline" style="width:auto;padding:6px 10px;font-size:11px" onclick="deleteQuickBookV4ChapterPage(\'' + p.pageId + '\')">🗑</button>' +
+      '</div>' +
+      '</div>';
+  }).join('') : '<div class="notice">這個章節目前還沒有頁面</div>';
+}
+function addQuickBookV4ChapterPage() {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const chapter = quickBookV4ActiveChapter(v4);
+  if (!chapter) return;
+  const title = prompt('新分頁的標題（可留空）：') || '';
+  const page = blankQuickBookV4BookPage();
+  page.pageTitle = title.trim();
+  page.chapterId = chapter.chapterId;
+  page.contentStatus = QUICKBOOK_V4_CONTENT_STATUS.NEEDS_INPUT;
+  v4.book.pages.push(page);
+  chapter.pageIds.push(page.pageId);
+  renumberQuickBookV4BookPages(v4.book);
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  renderQuickBookV4ChapterPages();
+}
+function deleteQuickBookV4ChapterPage(pageId) {
+  if (!confirm('確定要刪除這一頁嗎？這個動作無法復原。')) return;
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  v4.book.pages = v4.book.pages.filter(function (p) { return p.pageId !== pageId; });
+  v4.book.chapters.forEach(function (c) { c.pageIds = c.pageIds.filter(function (pid) { return pid !== pageId; }); });
+  renumberQuickBookV4BookPages(v4.book);
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  renderQuickBookV4ChapterPages();
+}
+function moveQuickBookV4ChapterPageUp(pageId) { quickBookV4MoveChapterPage(pageId, -1); }
+function moveQuickBookV4ChapterPageDown(pageId) { quickBookV4MoveChapterPage(pageId, 1); }
+function quickBookV4MoveChapterPage(pageId, direction) {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const chapter = quickBookV4ActiveChapter(v4);
+  if (!chapter) return;
+  const idx = chapter.pageIds.indexOf(pageId);
+  const swapIdx = idx + direction;
+  if (idx === -1 || swapIdx < 0 || swapIdx >= chapter.pageIds.length) return;
+  const tmp = chapter.pageIds[idx];
+  chapter.pageIds[idx] = chapter.pageIds[swapIdx];
+  chapter.pageIds[swapIdx] = tmp;
+  renumberQuickBookV4BookPages(v4.book);
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  renderQuickBookV4ChapterPages();
+}
+// 手機端不依賴拖曳：用 prompt() 列出章節編號讓使用者輸入，跟全流程既有的簡單輸入模式
+// 一致（章節數量在 P0 階段預期不多，用編號輸入比下拉選單在手機上更好點）。
+function moveQuickBookV4PageToChapter(pageId) {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const currentChapter = quickBookV4ActiveChapter(v4);
+  const chapters = v4.book.chapters.slice().sort(function (a, b) { return a.chapterOrder - b.chapterOrder; });
+  const listText = chapters.map(function (c, idx) { return (idx + 1) + '. ' + (c.chapterTitle || '（未命名章節）'); }).join('\n');
+  const answer = prompt('要移到哪個章節？請輸入編號：\n' + listText);
+  if (answer === null) return;
+  const choice = parseInt(answer.trim(), 10);
+  if (!Number.isFinite(choice) || choice < 1 || choice > chapters.length) { showToast('請輸入有效的章節編號'); return; }
+  const targetChapter = chapters[choice - 1];
+  if (!targetChapter || (currentChapter && targetChapter.chapterId === currentChapter.chapterId)) return;
+  if (currentChapter) currentChapter.pageIds = currentChapter.pageIds.filter(function (pid) { return pid !== pageId; });
+  targetChapter.pageIds.push(pageId);
+  const page = v4.book.pages.find(function (p) { return p.pageId === pageId; });
+  if (page) page.chapterId = targetChapter.chapterId;
+  renumberQuickBookV4BookPages(v4.book);
+  v4.updatedAt = new Date().toISOString();
+  saveState();
+  showToast('已移到「' + (targetChapter.chapterTitle || '（未命名章節）') + '」');
+  renderQuickBookV4ChapterPages();
+}
+
+// ── 十節｜逐頁確認：7 種操作，跟 Phase 2C 單元操作同一套硬規則（只有使用者能設 confirmedByUser） ──
+let quickBookV4ActivePageId = null;
+function quickBookV4FindActivePage(v4) {
+  return v4.book.pages.find(function (p) { return p.pageId === quickBookV4ActivePageId; });
+}
+function openQuickBookV4PageDetail(pageId) {
+  quickBookV4ActivePageId = pageId;
+  showScreen('screen-quickbook-v4-page-detail');
+}
+function renderQuickBookV4PageDetail() {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const page = quickBookV4FindActivePage(v4);
+  if (!page) { showScreen('screen-quickbook-v4-preview'); return; }
+  const isCover = page.pageType === 'cover';
+  // 五節「頁碼顯示」：封面顯示「封面」，正文從封面後第一個非封面頁開始顯示「第 1 頁」
+  // 「第 2 頁」……不再顯示成「第 1 頁　封面」。
+  document.getElementById('qbv4pd-title').textContent = isCover ? '封面' : (getBookPageDisplayLabel(page, v4.book) + '　' + quickBookV4PageTypeLabel(page.pageType, v4.book.flowType));
+  // Quick Book P0 下一輪（CEO／總策長，2026-08-08）三節「封面完整化」：封面不能再只顯示
+  // 跟一般內頁一樣的「頁面標題／頁面正文」，改顯示主標／副標／作者／封面主視覺／Canva
+  // 排版指引／封面生圖指令／完成狀態，並提供獨立的複製封面內容／複製封面生圖指令。一般
+  // 頁面維持原本的頁面標題／頁面內文顯示，兩個區塊互斥切換，不新增第二套頁面模型。
+  const genericBlock = document.getElementById('qbv4pd-generic-block');
+  const coverBlock = document.getElementById('qbv4pd-cover-block');
+  if (genericBlock) genericBlock.style.display = isCover ? 'none' : 'block';
+  if (coverBlock) coverBlock.style.display = isCover ? 'block' : 'none';
+  if (isCover) {
+    renderQuickBookV4CoverPageDetail(v4.book, page);
+  } else {
+    document.getElementById('qbv4pd-page-title').textContent = page.pageTitle || '（未命名）';
+    document.getElementById('qbv4pd-page-text').textContent = page.pageText || '（尚無內容）';
+  }
+  document.getElementById('qbv4pd-image').textContent = quickBookV4ImageStatusLabel(page.imageStatus) + (page.imageDescription ? '：' + page.imageDescription : '');
+  document.getElementById('qbv4pd-status').textContent = QUICKBOOK_V4_CONTENT_STATUS_LABEL[page.contentStatus] + (page.confirmedByUser ? '（已確認）' : '');
+  document.getElementById('qbv4pd-cover-btn').style.display = isCover ? 'block' : 'none';
+  // CEO 真人驗收＋技術長裁示（2026-08-07）八節「UI 減法」：進階操作每次開啟頁面詳情都
+  // 重設回收合狀態，只做畫面呈現層的 progressive disclosure，不刪除任何底層能力——修改
+  // 標題／修改內文／補一句／重新整理／查看來源／三種 Recovery 標記／先保存都還是原本
+  // 的函式，只是預設不放在第一層。
+  const moreSection = document.getElementById('qbv4pd-more-section');
+  if (moreSection) moreSection.classList.remove('open');
+}
+// 封面頁面詳情：主標／副標／作者沿用書籍基本資料（book.title／subtitle／authorName）；
+// 封面主視覺／Canva 排版指引／封面生圖指令改讀 book.cover（二節 Canonical 規則，見
+// quickBookV4PageVisualFields 註解），Canva 尺寸／畫面風格／字體風格為十四節新增顯示
+// 欄位，沿用既有 book.layoutProfile／book.visualPlan.visualStyle，不新增第二套 cover
+// model。缺資料時顯示「待補」／「尚未產生」，不留空白也不假裝已完成。
+function renderQuickBookV4CoverPageDetail(book, page) {
+  document.getElementById('qbv4pd-cover-title').textContent = book.title || '待補';
+  document.getElementById('qbv4pd-cover-subtitle').textContent = book.subtitle || '待補';
+  document.getElementById('qbv4pd-cover-author').textContent = book.authorName || '待補';
+  const illustratorEl = document.getElementById('qbv4pd-cover-illustrator');
+  if (illustratorEl) illustratorEl.textContent = book.illustratorName || '待補';
+  const creditEl = document.getElementById('qbv4pd-cover-credit');
+  if (creditEl) creditEl.textContent = book.coverCredit || '（無）';
+  const visual = quickBookV4PageVisualFields(book, page);
+  document.getElementById('qbv4pd-cover-visual').textContent = visual.storyboard || '尚未產生';
+  document.getElementById('qbv4pd-cover-layout').textContent = visual.layoutSuggestion || '尚未產生';
+  const lp = book.layoutProfile || QUICKBOOK_V4_DEFAULT_LAYOUT_PROFILE;
+  const sizeEl = document.getElementById('qbv4pd-cover-canvasize');
+  if (sizeEl) sizeEl.textContent = lp.label || '待補';
+  const fontEl = document.getElementById('qbv4pd-cover-fontstyle');
+  if (fontEl) fontEl.textContent = (QUICKBOOK_V4_FONT_STYLE_CATALOG[lp.fontStyle] || {}).label || '待補';
+  const styleEl = document.getElementById('qbv4pd-cover-visualstyle');
+  if (styleEl) styleEl.textContent = book.visualPlan.visualStyle || '待補';
+  const promptText = visual.imagePrompt;
+  document.getElementById('qbv4pd-cover-imageprompt').textContent = promptText || '尚未產生';
+  document.getElementById('qbv4pd-cover-status').textContent = QUICKBOOK_V4_CONTENT_STATUS_LABEL[page.contentStatus] + (page.confirmedByUser ? '（已確認）' : '（尚未確認）');
+  const contentCopyText = quickBookV4BuildCoverContentCopyText(book, page);
+  let html = quickBookV4HandoffCopyBlockHtml(contentCopyText, '已複製封面內容', '📋 複製封面內容');
+  if (promptText) {
+    html += quickBookV4HandoffCopyBlockHtml(promptText, '已複製封面生圖指令', '🖼️ 複製封面生圖指令');
+  } else {
+    html += '<div class="notice" style="margin-top:8px">尚未產生生圖指令，請先到「準備交接」完成全書視覺定調→測試圖片→逐頁生圖指令。</div>';
+  }
+  // 十四節：第 3 顆按鈕，跟一般頁的「複製排版成圖指令」同一個 formatter
+  // （quickBookV4BuildPageLayoutImagePrompt 已支援封面分流），封面所有 formatter 不得帶
+  // 正文第 1 頁內容——這裡沒有另外傳入其他頁資料，天生做不到。
+  const layoutImagePrompt = quickBookV4BuildPageLayoutImagePrompt(book, page);
+  html += quickBookV4HandoffCopyBlockHtml(layoutImagePrompt, '已複製封面排版成圖指令', '🎨 複製封面排版成圖指令');
+  document.getElementById('qbv4pd-cover-copy-buttons').innerHTML = html;
+}
+// 1. 這一頁可以——唯一能把 confirmedByUser 設成 true 的地方
+function confirmQuickBookV4Page() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  const page = quickBookV4FindActivePage(v4); if (!page) return;
+  page.confirmedByUser = true; page.contentStatus = QUICKBOOK_V4_CONTENT_STATUS.COMPLETE;
+  v4.updatedAt = new Date().toISOString(); saveState();
+  showToast('這一頁已確認');
+  showScreen('screen-quickbook-v4-preview');
+}
+// 2. 修改標題
+function editQuickBookV4PageTitle() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  const page = quickBookV4FindActivePage(v4); if (!page) return;
+  const t = prompt('頁面標題：', page.pageTitle || '');
+  if (t === null) return;
+  page.pageTitle = t.trim();
+  page.confirmedByUser = false;
+  page.contentStatus = QUICKBOOK_V4_CONTENT_STATUS.NEEDS_CONFIRMATION;
+  v4.updatedAt = new Date().toISOString(); saveState();
+  renderQuickBookV4PageDetail();
+  showToast('已更新，記得確認這一頁');
+}
+// 3. 修改內文
+function editQuickBookV4PageText() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  const page = quickBookV4FindActivePage(v4); if (!page) return;
+  const t = prompt('頁面內文：', page.pageText || '');
+  if (t === null) return;
+  page.pageText = t.trim();
+  page.confirmedByUser = false;
+  page.contentStatus = page.pageText ? QUICKBOOK_V4_CONTENT_STATUS.NEEDS_CONFIRMATION : QUICKBOOK_V4_CONTENT_STATUS.NEEDS_INPUT;
+  v4.updatedAt = new Date().toISOString(); saveState();
+  renderQuickBookV4PageDetail();
+  showToast('已更新，記得確認這一頁');
+}
+// 4. 返回來源單元（封面／結尾頁沒有對應單元）
+// 查看原始來源（十一節，AI Collaboration OS 回合更新為共用邏輯）：舊版 Phase 2C 逐單元
+// 流程產生的頁面有 originUnitId，直接跳去那個單元的詳情畫面；Whole Book Fast Path／
+// Creative Fast Path 產生的頁面沒有對應單元，改顯示共用的原始來源畫面（Practical 顯示
+// rawInput，Creative 顯示訪談回答或貼入的故事全文）。
+function backToQuickBookV4SourceUnit() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  const page = quickBookV4FindActivePage(v4);
+  if (page && page.originUnitId) { openQuickBookV4UnitDetail(page.originUnitId); return; }
+  showScreen('screen-quickbook-v4-source-view');
+}
+function renderQuickBookV4SourceView() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  const box = document.getElementById('qbv4sv-content');
+  if (v4.flowType === 'creative') {
+    const cs = v4.creativeSeed;
+    if (cs.mode === 'has_story') {
+      box.innerHTML = '<div class="card"><div class="line" style="white-space:pre-line">' + escHtml(cs.storySource.originalInput || '（無）') + '</div></div>';
+    } else {
+      box.innerHTML = (cs.storySource.interviewAnswers.length ? cs.storySource.interviewAnswers.map(function (a) {
+        return '<div class="card" style="margin-top:6px"><div class="line"><b>' + escHtml(a.question) + '</b></div><div class="line">' + (a.skipped ? '（略過）' : escHtml(a.answer)) + '</div></div>';
+      }).join('') : '<div class="notice">目前沒有回答</div>');
+    }
+  } else {
+    box.innerHTML = '<div class="card"><div class="line" style="white-space:pre-line">' + escHtml(v4.sourceMaterial.rawInput || '（無）') + '</div></div>';
+  }
+}
+// 補一句：低摩擦的手機操作，不用整段重寫，只在既有內容後面加一句，加完仍要重新確認。
+function appendSentenceToQuickBookV4Page() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  const page = quickBookV4FindActivePage(v4); if (!page) return;
+  const extra = prompt('要補上的一句話：');
+  if (!extra || !extra.trim()) return;
+  page.pageText = (page.pageText ? page.pageText + '\n' : '') + extra.trim();
+  page.confirmedByUser = false;
+  page.contentStatus = QUICKBOOK_V4_CONTENT_STATUS.NEEDS_CONFIRMATION;
+  v4.updatedAt = new Date().toISOString(); saveState();
+  renderQuickBookV4PageDetail();
+  showToast('已補上一句，記得確認這一頁');
+}
+// 重新整理：針對「目前這一頁」單獨請 AI 重新整理，不影響書中其他頁面（Whole Book Fast
+// Path 產生的頁面沒有像 Phase 2C 單元那樣各自獨立的 AI 往返，所以這裡補上頁面等級的
+// AI 重新整理，Practical／Creative 共用同一個 Prompt 建構函式）。
+let quickBookV4PageRefineExtraInstruction = '';
+function buildQuickBookV4PageRefinePrompt(work) {
+  const v4 = ensureQuickBookV4Defaults(work);
+  const page = quickBookV4FindActivePage(v4);
+  const sourceText = v4.flowType === 'practical'
+    ? (v4.sourceMaterial.rawInput || '')
+    : ((v4.creativeSeed.storyDraft && v4.creativeSeed.storyDraft.fullText) || v4.creativeSeed.storySource.originalInput || '');
+  const contract = v4.flowType === 'practical' ? QUICKBOOK_V4_NO_FABRICATION_CONTRACT : QUICKBOOK_V4_CREATIVE_NO_FABRICATION_CONTRACT;
+  const vars = { work_name: work.name, goal: work.name };
+  return fillTemplate(
+    '你是小書流程中的單頁內容整理助手。請只針對下面這一頁重新整理文字，不要涉及其他頁。\n\n' +
+    '頁面標題：' + escHtmlNoop(page ? page.pageTitle : '') + '\n目前內文：' + escHtmlNoop(page ? page.pageText : '') + '\n\n可參考的原始資料／完整文稿：\n' + sourceText + '\n\n' +
+    contract + '\n\n' +
+    (quickBookV4PageRefineExtraInstruction ? ('特別提醒：' + quickBookV4PageRefineExtraInstruction + '\n\n') : '') +
+    '請直接輸出這一頁的正文文字（不需要標題或欄位名稱，直接是內文）。\n\n' +
+    buildStepBoundaryBlock('重新整理這一頁的內容', ['整理其他頁面'].concat(STEP_BOUNDARY_GENERIC_FORBIDDEN), STEP_BOUNDARY_GENERIC_WAITING),
+    vars
+  );
+}
+function regenerateQuickBookV4Page() {
+  quickBookV4PageRefineExtraInstruction = '';
+  quickBookV4Stage = 'page_refine';
+  showScreen('screen-copy-to-ai');
+}
+// Recovery：太像 AI（語氣制式、像機器人）——跟「太像廣告」是不同的問題（語氣機械 vs.
+// 語氣太銷售導向），保留既有文字不清空，只附加語氣提醒重新整理。
+function flagQuickBookV4PageTooAiSounding() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  const page = quickBookV4FindActivePage(v4); if (!page) return;
+  page.contentStatus = QUICKBOOK_V4_CONTENT_STATUS.NEEDS_CONFIRMATION;
+  page.confirmedByUser = false;
+  v4.updatedAt = new Date().toISOString(); saveState();
+  quickBookV4PageRefineExtraInstruction = '使用者覺得上一版文字「太像AI」，語氣太制式、太像機器人寫的，套版式開場白或結語太明顯。請改用更自然、更有溫度、更像真人會這樣說話的語氣重新整理這一頁，不要新增或刪除原本的事實內容，只調整語氣。';
+  showToast('AI 會用更自然的語氣重新整理');
+  quickBookV4Stage = 'page_refine';
+  showScreen('screen-copy-to-ai');
+}
+// 5. Recovery：這不是我提供的內容——標示待確認，引導回來源單元處理，不在頁面這裡清空原文
+// （原文可能是使用者自己在頁面手動改的，不一定跟單元有關，清空風險比 Phase 2C 單元層級更高，
+// 所以這裡只標示狀態＋引導，不直接清空 pageText）
+function flagQuickBookV4PageNotMyContent() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  const page = quickBookV4FindActivePage(v4); if (!page) return;
+  if (!confirm('這會把這一頁標記為待確認，並建議你回到來源單元修正後重新產生小書，確定嗎？')) return;
+  page.contentStatus = QUICKBOOK_V4_CONTENT_STATUS.NEEDS_CONFIRMATION;
+  page.confirmedByUser = false;
+  v4.updatedAt = new Date().toISOString(); saveState();
+  showToast('已標記待確認，建議回到來源單元修正');
+  renderQuickBookV4PageDetail();
+}
+// 6. Recovery：太像廣告——同樣引導回來源單元用平實語氣重新整理，不在頁面自動改寫語氣
+function flagQuickBookV4PageTooPromotional() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  const page = quickBookV4FindActivePage(v4); if (!page) return;
+  page.contentStatus = QUICKBOOK_V4_CONTENT_STATUS.NEEDS_CONFIRMATION;
+  page.confirmedByUser = false;
+  v4.updatedAt = new Date().toISOString(); saveState();
+  showToast('已標記待確認，建議回到來源單元用平實語氣重新整理');
+  renderQuickBookV4PageDetail();
+}
+// 7. 先保存，晚點再繼續
+function saveQuickBookV4PageForLater() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  v4.updatedAt = new Date().toISOString(); saveState();
+  showToast('已保存');
+  showScreen('screen-quickbook-v4-preview');
+}
+// 圖片方式（七節）：五選項直接設定，不自動生成虛構描述
+// 六節「視覺」7 個操作按鈕直接對應這 9 值中的 7 個（picture_book／screenshot 保留給
+// Practical／未來影片鏡頭需要時使用，本輪 Creative 的按鈕先只開放最常用的 7 個，避免
+// 選項過多造成使用者負擔）。imageStatus／imageNeeded 同步更新，維持 v3.0 Handoff Adapter
+// 可以正常讀到資料，不用另外改 v3.0。可選圖片不強制阻塞純文字書（八節／十一節）：這裡
+// 純粹是設定意願，不會擋住任何後續操作。
+function setQuickBookV4PageVisualMode(mode) {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  const page = quickBookV4FindActivePage(v4); if (!page) return;
+  page.visualMode = mode;
+  page.imageStatus = quickBookV4VisualModeToLegacyImageStatus(mode);
+  page.imageNeeded = mode !== 'text_only';
+  page.visualStatus = mode === 'add_later' ? 'not_set' : 'needs_confirmation';
+  page.visualConfirmedByUser = false;
+  v4.updatedAt = new Date().toISOString(); saveState();
+  renderQuickBookV4PageDetail();
+  showToast('已更新視覺方式：' + QUICKBOOK_V4_VISUAL_MODE_LABEL[mode]);
+}
+// Must Fix（CEO 真人驗收，2026-08-09）：上一輪封面 UI 只做到「顯示」，沒有真正可填的
+// 入口，導致主標／副標／作者永遠是「待補」。第一版不做複雜 metadata editor，沿用整個
+// 專案既有的「一顆按鈕→依序 prompt() 編輯」手勢（跟 editQuickBookV4VisualPlanField 等
+// 同一種寫法），任何一步按取消就整段中止、不套用部分修改。書名同時寫回 book.title 與
+// 封面頁的 pageTitle，保持跟頁面詳情／accordion／Canva 逐頁複製顯示一致。
+function editQuickBookV4CoverContent() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  const book = v4.book;
+  const page = quickBookV4FindActivePage(v4); if (!page) return;
+  const title = prompt('主標／書名：', book.title || '');
+  if (title === null) return;
+  const subtitle = prompt('副標（可留空）：', book.subtitle || '');
+  if (subtitle === null) return;
+  const author = prompt('作者（可留空）：', book.authorName || '');
+  if (author === null) return;
+  const illustrator = prompt('繪者（可留空）：', book.illustratorName || '');
+  if (illustrator === null) return;
+  const credit = prompt('其他封面署名（可留空，例如：翻譯／企劃／出版）：', book.coverCredit || '');
+  if (credit === null) return;
+  book.title = title.trim();
+  book.subtitle = subtitle.trim();
+  book.authorName = author.trim();
+  book.illustratorName = illustrator.trim();
+  book.coverCredit = credit.trim();
+  page.pageTitle = book.title;
+  page.confirmedByUser = false;
+  v4.updatedAt = new Date().toISOString(); saveState();
+  showToast('已更新封面內容');
+  renderQuickBookV4PageDetail();
+}
+// 封面視覺方向（六節）：使用者手動輸入，不由 AI 自行創作。
+// Quick Book 下一輪（CEO／總策長，2026-08-09）二節 Canonical 規則：book.cover 是封面
+// 專屬 canonical source，這裡改成透過 quickBookV4WritePageVisualFields() 寫回
+// book.cover.visualDirection（該 helper 對 pageType==='cover' 一律寫 book.cover，不會誤寫
+// 一般頁），跟封面詳情畫面實際顯示、Canva 逐頁複製、分鏡文稿共用同一個讀取點，只有一份
+// 資料，不會像上一輪那樣兩邊互相矛盾。
+function editQuickBookV4CoverVisualDirection() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  const page = quickBookV4FindActivePage(v4); if (!page) return;
+  const current = quickBookV4PageVisualFields(v4.book, page).storyboard;
+  const t = prompt('封面主視覺（例如：淺色背景搭配產品實拍照，簡潔留白）：', current);
+  if (t === null) return;
+  quickBookV4WritePageVisualFields(v4.book, page, { storyboard: t.trim() });
+  page.confirmedByUser = false;
+  v4.updatedAt = new Date().toISOString(); saveState();
+  showToast('已更新封面主視覺');
+  renderQuickBookV4PageDetail();
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// P0 Blocker 補修（技術長真人路徑 Trace＋根因分析，CEO 真人驗收，2026-08-07）：
+// buildBookHandoffImageProduction() 的 Gate 判斷本身沒問題，但真人完全沒有畫面可以走到
+// styleConfirmed／trialImageConfirmed 變成 true，Gate 永遠打不開。本節補上最短真人路徑：
+// 完整文稿 → 分鏡（既有頁面詳情）→ 全書視覺定調 → 測試圖指令 → 確認風格 → 逐頁生圖指令。
+// 只新增最小 UI，沿用既有 book.visualPlan／pages[] 欄位，不建第二套圖片模型或圖片資產庫，
+// 不串外部生圖 API——「產生圖片」永遠是指「產生可以貼到生圖 AI 的文字指令」。
+// ═══════════════════════════════════════════════════════════════════════════
+
+// 五節「全書視覺定調」：五個欄位＋一個確認按鈕，不做大型設定頁，逐欄位用 prompt() 編輯
+// （跟頁面標題／內文等既有編輯方式同一種手勢，不新增表單元件）。
+const QUICKBOOK_V4_VISUAL_PLAN_FIELD_LABELS = Object.freeze({
+  visualStyle: '全書畫風（例如：溫暖手繪插畫風、水彩繪本風）',
+  colorMood: '色彩氣氛（例如：暖色調、柔和粉彩）',
+  // 九節「Character Anchor」（CEO／總策長，2026-08-11）：本輪不改 schema，沿用同一個
+  // characterConsistency 欄位承接——只是把提示文字寫得更完整，引導使用者一次把角色固定
+  // 設定（名稱／年齡／類型／外觀／髮型或毛色／固定服裝／固定配件／特殊識別／不可改變
+  // 事項）寫進同一段文字，不是拆成一大堆欄位的角色管理器，也不用另外存一個 Character
+  // Bible 物件。這段文字本來就已經會被帶進試圖／逐頁生圖／排版成圖三處 Prompt。
+  characterConsistency: '主角／人物一致性（可包含：名稱、年齡、外觀、髮型或毛色、固定服裝、固定配件、特殊識別、不可改變的事項，例如：小美，8歲，短髮女孩，穿黃色外套，總是背著紅色書包，眼睛是圓的）',
+  sceneEra: '場景／年代感（例如：現代、90 年代台灣鄉村）',
+  avoidElements: '避免元素（例如：不要出現文字、不要驚悚畫面）'
+});
+function openQuickBookV4VisualPlan() {
+  if (!quickBookV4RequirePageReviewGate()) return;
+  showScreen('screen-quickbook-v4-visual-plan');
+}
+function renderQuickBookV4VisualPlan() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  const book = v4.book;
+  const vp = book.visualPlan;
+  Object.keys(QUICKBOOK_V4_VISUAL_PLAN_FIELD_LABELS).forEach(function (key) {
+    const el = document.getElementById('qbv4vp-' + key);
+    if (el) el.textContent = vp[key] || (key === 'avoidElements' ? '（無）' : '（尚未填寫）');
+  });
+  document.getElementById('qbv4vp-confirmed-notice').textContent = vp.styleConfirmed ? '✅ 風格已確認，可以繼續做測試圖' : '五個欄位不一定要全部填滿，先確認整體方向即可，之後仍可調整。';
+  renderQuickBookV4LayoutProfilePickers(book);
+}
+// 六～八節：Canva 尺寸／畫面風格範本／字體風格的畫面渲染集中在這裡，跟 visualPlan 五
+// 欄位共用同一個「全書視覺定調」畫面，因為都是 book-level、全書共用一份的設定。
+function renderQuickBookV4LayoutProfilePickers(book) {
+  const lp = book.layoutProfile || QUICKBOOK_V4_DEFAULT_LAYOUT_PROFILE;
+  const sizeBox = document.getElementById('qbv4vp-size-options');
+  if (sizeBox) {
+    sizeBox.innerHTML = Object.keys(QUICKBOOK_V4_CANVA_SIZE_CATALOG).map(function (id) {
+      const entry = QUICKBOOK_V4_CANVA_SIZE_CATALOG[id];
+      const selected = lp.canvaSizeId === id;
+      return '<div class="card" style="margin-top:6px;cursor:pointer' + (selected ? ';border-color:var(--green-dark)' : '') + '" onclick="chooseQuickBookV4CanvaSize(\'' + id + '\')">' +
+        '<div class="line"><b>' + entry.label + '</b>' + (selected ? '　✅ 已選擇' : '') + '</div>' +
+        '<div class="notice" style="margin-top:2px;font-size:12px">' + entry.hint + '</div>' +
+        '</div>';
+    }).join('');
+  }
+  const recommendEl = document.getElementById('qbv4vp-size-recommend');
+  if (recommendEl) {
+    const recommended = getRecommendedLayoutProfile(book.presentationStyle);
+    recommendEl.textContent = book.presentationStyle ? ('系統建議：' + recommended.label + '（可自行更改，選定後全書固定）') : '尚未選擇作品呈現方式，先用預設 A4 直式即可，之後仍可調整。';
+  }
+  const styleBox = document.getElementById('qbv4vp-style-presets');
+  if (styleBox) {
+    styleBox.innerHTML = QUICKBOOK_V4_VISUAL_STYLE_PRESETS.map(function (preset) {
+      const selected = book.visualPlan.visualStyle === preset.value;
+      return '<div class="card" style="margin-top:6px;cursor:pointer' + (selected ? ';border-color:var(--green-dark)' : '') + '" onclick="chooseQuickBookV4VisualStylePreset(\'' + preset.id + '\')">' +
+        '<div class="line"><b>' + preset.label + '</b>' + (selected ? '　✅ 已選擇' : '') + '</div>' +
+        '<div class="notice" style="margin-top:2px;font-size:12px">' + preset.hint + '</div>' +
+        '</div>';
+    }).join('');
+  }
+  const fontBox = document.getElementById('qbv4vp-font-options');
+  if (fontBox) {
+    fontBox.innerHTML = Object.keys(QUICKBOOK_V4_FONT_STYLE_CATALOG).map(function (id) {
+      const entry = QUICKBOOK_V4_FONT_STYLE_CATALOG[id];
+      const selected = lp.fontStyle === id;
+      return '<div class="card" style="margin-top:6px;cursor:pointer' + (selected ? ';border-color:var(--green-dark)' : '') + '" onclick="chooseQuickBookV4FontStyle(\'' + id + '\')">' +
+        '<div class="line"><b>' + entry.label + '</b>' + (selected ? '　✅ 已選擇' : '') + '</div>' +
+        '<div class="notice" style="margin-top:2px;font-size:12px">' + entry.hint + '</div>' +
+        '</div>';
+    }).join('');
+  }
+}
+// 七節：選定 Canva 尺寸整包覆蓋寫入 layoutProfile（canvaSizeId／pageOrientation／
+// aspectRatio／label 一起換），fontStyle 不受影響；八節「推薦但不硬鎖」——這裡是使用者
+// 自己選，不是系統強制，隨時可以改，改了立刻對全書生效（layoutProfile 是 book-level
+// 單一份設定，沒有每頁各自一份）。
+function chooseQuickBookV4CanvaSize(sizeId) {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  const entry = QUICKBOOK_V4_CANVA_SIZE_CATALOG[sizeId];
+  if (!entry) return;
+  const fontStyle = v4.book.layoutProfile.fontStyle;
+  v4.book.layoutProfile = Object.assign({}, entry, { fontStyle: fontStyle });
+  v4.updatedAt = new Date().toISOString(); saveState();
+  showToast('已選擇 ' + entry.label);
+  renderQuickBookV4VisualPlan();
+}
+// 十一節：畫面風格範本直接寫進既有 visualPlan.visualStyle（跟手動編輯同一個欄位），
+// 不另存 preset id／preset object；沿用 editQuickBookV4VisualPlanField() 同一套「改了
+// 已確認的風格要重設 Gate」規則，不重複寫一次判斷邏輯。
+function chooseQuickBookV4VisualStylePreset(presetId) {
+  const preset = QUICKBOOK_V4_VISUAL_STYLE_PRESETS.find(function (p) { return p.id === presetId; });
+  if (!preset) return;
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  const vp = v4.book.visualPlan;
+  const changed = (vp.visualStyle || '') !== preset.value;
+  vp.visualStyle = preset.value;
+  if (changed && (vp.styleConfirmed || vp.trialImageConfirmed)) {
+    vp.styleConfirmed = false;
+    vp.trialImageConfirmed = false;
+    showToast('風格已調整，需要重新確認');
+  }
+  v4.updatedAt = new Date().toISOString(); saveState();
+  renderQuickBookV4VisualPlan();
+}
+// 十二節：字體風格只存語意 id，不存實際字型；跟 Canva 尺寸一樣是 book-level 單一份設定。
+function chooseQuickBookV4FontStyle(fontStyleId) {
+  if (!QUICKBOOK_V4_FONT_STYLE_CATALOG[fontStyleId]) return;
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  v4.book.layoutProfile.fontStyle = fontStyleId;
+  v4.updatedAt = new Date().toISOString(); saveState();
+  showToast('已選擇 ' + QUICKBOOK_V4_FONT_STYLE_CATALOG[fontStyleId].label);
+  renderQuickBookV4VisualPlan();
+}
+// 編輯後如果原本已經確認過風格，代表這是「調整風格」情境——連動重設 styleConfirmed／
+// trialImageConfirmed，避免使用者改了畫風設定，但 Gate 卻還停留在舊風格的確認狀態。
+function editQuickBookV4VisualPlanField(key) {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  const vp = v4.book.visualPlan;
+  const t = prompt(QUICKBOOK_V4_VISUAL_PLAN_FIELD_LABELS[key] + '：', vp[key] || '');
+  if (t === null) return;
+  const changed = (vp[key] || '') !== t.trim();
+  vp[key] = t.trim();
+  if (changed && (vp.styleConfirmed || vp.trialImageConfirmed)) {
+    vp.styleConfirmed = false;
+    vp.trialImageConfirmed = false;
+    showToast('風格已調整，需要重新確認');
+  }
+  v4.updatedAt = new Date().toISOString(); saveState();
+  renderQuickBookV4VisualPlan();
+}
+function confirmQuickBookV4VisualPlanStyle() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  if (!v4.book.visualPlan.visualStyle) { showToast('請先填寫全書畫風'); return; }
+  v4.book.visualPlan.styleConfirmed = true;
+  v4.updatedAt = new Date().toISOString(); saveState();
+  showToast('已確認風格定調');
+  showScreen('screen-quickbook-v4-trial-image');
+}
+
+// 三／四節「測試圖指令＋確認測試風格」：先試做一張圖，使用者按「這個畫風可以」才算
+// trialImageConfirmed，不自動確認；「調整風格」直接回上一頁修改，不做複雜版本管理。
+function openQuickBookV4TrialImage() {
+  if (!quickBookV4RequirePageReviewGate()) return;
+  showScreen('screen-quickbook-v4-trial-image');
+}
+function renderQuickBookV4TrialImage() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  const book = v4.book;
+  const promptText = buildQuickBookV4TrialImagePrompt(book);
+  const noPageNotice = document.getElementById('qbv4ti-no-page-notice');
+  const promptBox = document.getElementById('qbv4ti-prompt-box');
+  const confirmBtn = document.getElementById('qbv4ti-confirm-btn');
+  if (!promptText) {
+    noPageNotice.style.display = '';
+    noPageNotice.textContent = '目前還沒有頁面選擇要圖片。請先回到頁面詳情選「要圖片」，再回來試做測試圖。';
+    promptBox.innerHTML = '';
+    confirmBtn.style.display = 'none';
+  } else {
+    noPageNotice.style.display = 'none';
+    promptBox.innerHTML = copyReadyActionsHtml(promptText, '已複製測試圖指令');
+    confirmBtn.style.display = book.visualPlan.trialImageConfirmed ? 'none' : 'block';
+  }
+  document.getElementById('qbv4ti-confirmed-notice').textContent = book.visualPlan.trialImageConfirmed ? '✅ 這個畫風已確認' : '';
+  document.getElementById('qbv4ti-generate-section').style.display = (book.visualPlan.styleConfirmed && book.visualPlan.trialImageConfirmed) ? 'block' : 'none';
+}
+function confirmQuickBookV4TrialImageStyle() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  v4.book.visualPlan.trialImageConfirmed = true;
+  v4.updatedAt = new Date().toISOString(); saveState();
+  showToast('已確認這個畫風，可以產生全書逐頁生圖指令了');
+  renderQuickBookV4TrialImage();
+}
+
+// 五節「產生全書逐頁生圖指令」：只有 Gate 通過才允許進入，沿用既有 screen-copy-to-ai／
+// screen-paste-back 機制（跟其他 v4 Fast Path Prompt 同一套往返流程），不新增第二套資料
+// 容器，不借用 v3.0 work.quickBook。
+function proceedToQuickBookV4ImagePromptGeneration() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  const vp = v4.book.visualPlan;
+  if (!vp.styleConfirmed || !vp.trialImageConfirmed) { showToast('請先完成風格定調與測試圖確認'); return; }
+  const eligiblePages = v4.book.pages.filter(quickBookV4NeedsImagePage);
+  if (!eligiblePages.length) { showToast('目前沒有頁面選擇要圖片，請先在頁面詳情選「要圖片」'); return; }
+  quickBookV4Stage = 'image_prompt_generation';
+  showScreen('screen-copy-to-ai');
+}
+// Prompt：只包含選了「要圖片」的頁面（六節第 9 條——純文字／稍後再補的頁面不強制產
+// imagePrompt），輸出格式沿用全書共用的【第N頁】固定標籤，跟其他 v4 Whole Book Prompt
+// 同一套慣例，不另外發明新格式。Practical／Creative 依 flowType 各自套用對應的反捏造契約。
+function buildQuickBookV4ImagePromptGenerationPrompt(work) {
+  const v4 = ensureQuickBookV4Defaults(work);
+  const book = v4.book;
+  const vp = book.visualPlan;
+  const pages = book.pages.filter(quickBookV4NeedsImagePage).slice().sort(function (a, b) { return a.pageNumber - b.pageNumber; });
+  const stylePart = ['全書畫風：' + (vp.visualStyle || '（未指定）'),
+    '色彩氣氛：' + (vp.colorMood || '（未指定）'),
+    '主角／人物一致性：' + (vp.characterConsistency || '（無特定人物，請勿自行創造人物）'),
+    '場景／年代感：' + (vp.sceneEra || '（未指定）'),
+    '避免元素：' + (vp.avoidElements || '（無）')].join('\n');
+  const pagesText = pages.map(function (p) {
+    // 二節 Canonical 規則：封面沒有 visualSuggestion 這個概念，改用 book.cover.visualDirection
+    // 當作圖片建議提示（quickBookV4PageVisualFields 對封面回傳 storyboard=visualDirection）。
+    const visual = quickBookV4PageVisualFields(book, p);
+    const visualHint = visual.visualSuggestion || visual.storyboard;
+    return '【第' + p.pageNumber + '頁】\n頁面標題：' + (p.pageTitle || '') + '\n正文：' + (p.pageText || '') + (visualHint ? '\n圖片建議：' + visualHint : '');
+  }).join('\n\n');
+  const contract = book.flowType === 'creative' ? QUICKBOOK_V4_CREATIVE_NO_FABRICATION_CONTRACT : QUICKBOOK_V4_NO_FABRICATION_CONTRACT;
+  const canvaGuidance = quickBookV4BuildCanvaImageGuidanceText(book);
+  const sizeGuidance = quickBookV4CanvaSizePromptGuidance(book);
+  // Must Fix（CEO 真人驗收，2026-08-09）：純插畫生圖 Prompt，如果列表裡有封面，額外提醒
+  // 作者／繪者是封面排版資訊，不是故事情節，不需要畫進插畫裡。
+  const hasCover = pages.some(function (p) { return p.pageType === 'cover'; });
+  // 二十四節：只有真正有差異的 preset 才附加（family_story 才有 visualGuidance）。
+  const genStoryPreset = getStoryBookPreset(book.topicPresetId);
+  const vars = { work_name: work.name, goal: work.name };
+  return fillTemplate(
+    '你是小書流程中的逐頁生圖指令產生器。請根據下面「全書視覺設定」，為每一個列出的頁面各自產生一段可以直接貼到生圖 AI（例如 Midjourney／DALL·E／ChatGPT 圖片功能）使用的生圖指令。\n\n' +
+    '全書視覺設定：\n' + stylePart + '\n\n' +
+    canvaGuidance + '\n\n' + sizeGuidance + '\n\n' +
+    (genStoryPreset.visualGuidance ? (genStoryPreset.visualGuidance + '\n\n') : '') +
+    '請確保：\n- 每一頁的生圖指令要對應該頁內容各自不同，不是同一段話套用到每一頁\n- 全書畫風、人物外觀維持一致\n- 不得捏造原文沒有的情節，也不得自行加入原文沒有出現的人物\n- 除非使用者特別指定，否則不需要把文字畫進圖片裡\n- 每頁生圖指令長度適中，方便直接複製貼入生圖 AI，不需要落落長' +
+    (hasCover ? '\n- 列表中的封面只需要畫主視覺畫面本身，書名／作者／繪者是封面排版資訊，不是故事情節，不需要畫進插畫裡' : '') + '\n\n' +
+    '需要圖片的頁面：\n\n' + pagesText + '\n\n' +
+    contract + '\n\n' +
+    '請用以下固定格式輸出，每頁一個區塊，用「【第N頁】」開頭分隔（N 對應上面列出的頁碼）：\n\n' +
+    '【第N頁】\n生圖指令：（一段可以直接貼到生圖AI的完整指令，需包含畫風、色彩、人物設定、場景、該頁內容、構圖、避免事項）\n畫面構想：（簡短一句話描述這一頁想呈現的畫面，可留空）\n排版建議：（可留空）\n\n（依此格式重複到上面列出的所有頁面）\n\n' +
+    buildStepBoundaryBlock('完成逐頁生圖指令並輸出以上格式', ['產生實際圖片', '規劃未列出頁面的圖片指令'].concat(STEP_BOUNDARY_GENERIC_FORBIDDEN), STEP_BOUNDARY_GENERIC_WAITING),
+    vars
+  );
+}
+// Parser：跟 parseQuickBookV4WholeBook 的固定標籤層同一種寫法（extractLabeledBlockValue／
+// 【第N頁】），依頁碼比對回真正的頁面物件，寫回時只認頁碼、不管 AI 回覆的順序。
+function parseQuickBookV4ImagePromptGeneration(content) {
+  const stripped = stripAfterQuickBookStepBoundary(content);
+  const blocks = stripped.split(/\n(?=\s*【第\s*\d+\s*頁】)/).filter(function (s) { return /【第\s*\d+\s*頁】/.test(s); });
+  const fieldLabels = ['生圖指令', '畫面構想', '排版建議'];
+  return blocks.map(function (block) {
+    const numMatch = block.match(/【第\s*(\d+)\s*頁】/);
+    const pageNumber = numMatch ? parseInt(numMatch[1], 10) : 0;
+    const body = block.replace(/^\s*【第\s*\d+\s*頁】\s*\n?/, '');
+    function grab(label) { return extractLabeledBlockValue(body, label, fieldLabels); }
+    return { pageNumber: pageNumber, imagePrompt: grab('生圖指令'), storyboard: grab('畫面構想'), layoutSuggestion: grab('排版建議') };
+  }).filter(function (r) { return r.pageNumber && r.imagePrompt; });
+}
+
+// ── 十二～十四節｜External Tool Handoff（歷史 adapter，v4 正式畫面已不使用）──
+// 技術長 Gate A Must Fix（2026-08-07）：v4 使用者實際交接畫面（renderQuickBookV4Handoff）
+// 已改成直接呼叫共用電子書引擎 P0 的 buildBookHandoff(v4.book, target, options)，不再
+// 呼叫這裡的 quickBookV4BuildLegacyHandoffWork()。這個 adapter 本身保留、不刪除——只作為
+// 舊測試（test_quickbook_v4_phase2d.js 等）與尚未搬遷路徑的相容層，不得再被任何 v4 正式
+// 畫面呼叫。
+// quickBookV4BuildLegacyHandoffWork：把 BookDocumentV1 轉成 v3.0 buildQuickBookCoverHandoffText／
+// buildQuickBookPagesHandoffText／buildQuickBookIllustrationHandoffText／
+// buildQuickBookManuscriptText 期待的 qb 形狀。這些函式內部都是呼叫 ensureQuickBookDefaults(work)
+// 讀資料，所以需要一個帶著 quickBook 欄位的 work-shaped 物件——但刻意不寫回真正的 v4
+// work 物件本身，而是回傳一個「這次呼叫用完即丟」的淺層複本（技術長審查，2026-08-06：
+// 原本直接寫 work.quickBook 會在使用者之後任何一次操作觸發 saveState() 時，把這份只在畫面
+// 顯示當下才正確的快照一起存進 localStorage——但這個快照沒有任何後續程式碼會再更新它，
+// 變成一份不會同步、卻永久留著的「幽靈資料」，就是技術長說的永久雙狀態風險）。改成回傳
+// 複本後：①真正的 work.quickBook 永遠不會被建立，不會被 saveState() 序列化 ②每次進交接
+// 畫面都是從 v4.book 重新算一次，不可能跟 v4.book 不同步，因為它根本不是「存起來的另一份
+// 資料」，只是「這一刻的計算結果」。不直接修改 v3.0 共用函式，是「建立 adapter」不是
+// 「大改 v3.0」。
+function quickBookV4LegacyPageType(pageType) {
+  if (pageType === 'cover') return 'cover';
+  if (pageType === 'cta' || pageType === 'closing') return 'ending';
+  return 'content';
+}
+function quickBookV4DeriveLegacyVisualMode(pages) {
+  if (!pages.some(function (p) { return p.imageNeeded; })) return 'text';
+  if (pages.some(function (p) { return p.imageStatus === 'real_photo' || p.imageStatus === 'brand_asset'; })) return 'photo';
+  return 'illustrated';
+}
+function quickBookV4BuildLegacyHandoffWork(work, includeUnconfirmed) {
+  const v4 = ensureQuickBookV4Defaults(work);
+  const book = v4.book;
+  const sourcePages = includeUnconfirmed ? book.pages : book.pages.filter(function (p) { return p.confirmedByUser; });
+  const legacyPages = sourcePages.map(function (p, idx) {
+    return {
+      pageNumber: includeUnconfirmed ? p.pageNumber : idx + 1,
+      pageType: quickBookV4LegacyPageType(p.pageType),
+      pageTitle: (includeUnconfirmed && !p.confirmedByUser ? '【待確認】' : '') + (p.pageTitle || ''),
+      pageText: p.pageText,
+      imageNeeded: p.imageNeeded, imageStatus: p.imageStatus, imageDescription: p.imageDescription,
+      imagePrompt: p.imagePrompt, layoutSuggestion: p.layoutSuggestion,
+      photoDescription: (p.imageStatus === 'real_photo' || p.imageStatus === 'brand_asset') ? p.imageDescription : '',
+      placement: '', cropSuggestion: '', captionSuggestion: ''
+    };
+  });
+  const legacyVisualMode = quickBookV4DeriveLegacyVisualMode(legacyPages);
+  // Creative／Practical 各自的「主要讀者」「希望讀者得到什麼」欄位放在不同容器裡
+  // （sourceMaterial vs. creativeSeed.storySource），這裡統一映射成 v3.0 handoff 函式
+  // 期待的 targetReader／takeaway，兩邊都能安全交接，不用另建 Creative 專屬 adapter。
+  const targetReader = v4.flowType === 'practical'
+    ? ((v4.sourceMaterial && v4.sourceMaterial.targetAudience) || '')
+    : ((v4.creativeSeed && v4.creativeSeed.storySource.targetReader) || '');
+  const takeaway = v4.flowType === 'practical'
+    ? ((v4.sourceMaterial && v4.sourceMaterial.readerTask) || '')
+    : ((v4.creativeSeed && v4.creativeSeed.storySource.intendedFeeling) || '');
+  const legacyQb = {
+    schemaVersion: 1, bookId: '', mode: 'text',
+    title: book.title, subtitle: book.subtitle, authorName: book.authorName || '',
+    targetReader: targetReader, pageCount: legacyPages.length,
+    pages: legacyPages,
+    cover: { title: book.cover.title, subtitle: book.cover.subtitle, visualDirection: book.cover.visualDirection, imagePrompt: book.cover.imagePrompt, layoutSuggestion: book.cover.layoutSuggestion, completedExternally: book.cover.completedExternally },
+    visualPlan: { visualMode: legacyVisualMode, visualModeSource: 'ai_recommended', visualModeConfirmed: true, visualModeUpdatedAt: '', visualStyle: '', characterConsistency: '', mainSubjectDescription: '', colorMood: '', imageToolSuggestion: '', pageIllustrations: [], pagePhotos: [] },
+    delivery: { coverConfirmed: false, illustrationsConfirmed: false, editableManuscriptConfirmed: false, pdfConfirmed: false, backupConfirmed: false },
+    shareChoice: '', shareScope: '', fileNotes: '',
+    authorProfileId: '', themes: [], sourceBookIds: [], expandable: true, seriesId: '',
+    architecture: [], architectureArrangement: '', architectureConfirmed: true, firstPageConfirmed: true,
+    saveShareStep: 0,
+    mainContent: book.subtitle || '', takeaway: takeaway,
+    createdAt: book.createdAt || new Date().toISOString(), updatedAt: new Date().toISOString()
+  };
+  // 淺層複本：帶著原本 work 的所有欄位（供 v3.0 函式讀 work.name 等 fallback 用），但
+  // quickBook 只存在這個複本上——這個複本不在 state.works 陣列裡，saveState() 不會碰到它。
+  return Object.assign({}, work, { quickBook: legacyQb });
+}
+let quickBookV4HandoffIncludeUnconfirmed = false;
+function toggleQuickBookV4HandoffIncludeUnconfirmed() {
+  quickBookV4HandoffIncludeUnconfirmed = !quickBookV4HandoffIncludeUnconfirmed;
+  renderQuickBookV4Handoff();
+}
+// 十三節「素材準備頁」：文字／素材簡單清單＋三個選項，可選素材不得阻塞成書——三個按鈕
+// 全部都只是導覽或一次性批次設定，沒有任何一個會擋住使用者離開這個畫面。
+function quickBookV4MaterialsChecklistSummary(book) {
+  const counts = { real_photo: 0, user_asset: 0, generated_illustration: 0, picture_book: 0, flowchart: 0, infographic: 0, screenshot: 0, text_only: 0, add_later: 0 };
+  (book.pages || []).forEach(function (p) { counts[p.visualMode] = (counts[p.visualMode] || 0) + 1; });
+  return counts;
+}
+function quickBookV4MarkAllPagesTextOnly() {
+  const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
+  if (!confirm('這會把全書所有頁面的視覺方式都改成「保持純文字」，確定嗎？（頁面文字內容不會被改動）')) return;
+  v4.book.pages.forEach(function (p) { p.visualMode = 'text_only'; p.imageStatus = 'text_only'; p.imageNeeded = false; });
+  v4.updatedAt = new Date().toISOString(); saveState();
+  showToast('已將全書設為純文字版本');
+  renderQuickBookV4Handoff();
+}
+// 技術長 Gate A Must Fix（2026-08-07，共用電子書引擎 P0 Phase 1 複審）：實際交接畫面
+// 改成直接呼叫正式共用入口 buildBookHandoff(v4.book, target, options)，不再走
+// quickBookV4BuildLegacyHandoffWork()／v3.0 handoff 函式——那組函式只保留給舊測試與
+// v3.0 自己的畫面（screen-work-detail Step5），v4 使用者交接畫面不再依賴它，也不會建立
+// 第二套 quickBook 狀態。呼叫端只負責把 buildBookHandoff() 的回傳字串原樣交給複製元件，
+// 不自行拼接或加工文字。
+//
+// 技術長 Gate A UX Must Fix（2026-08-07，Gate A PASS 附帶）：畫面呈現改成「Canva 主動作
+// →完整文稿第二層→其他輸出收合」的單一主線，底層四個 target／buildBookHandoff 呼叫完全
+// 不變，只調整順序、文字與按鈕權重——不是新流程。
+const QUICKBOOK_V4_HANDOFF_TARGETS = [
+  { target: 'canva_pages', elId: 'qbv4h-canva', toast: '已複製 Canva 逐頁交接包' },
+  { target: 'google_docs_full', elId: 'qbv4h-googledocs', toast: '已複製完整製作資料' },
+  { target: 'plain_text', elId: 'qbv4h-plaintext', toast: '已複製完整文稿' },
+  { target: 'image_production', elId: 'qbv4h-image', toast: '已複製圖片素材資訊' }
+];
+// UX Must Fix：每個交接區塊先只突出「複製」，「預覽」「匯出 TXT」收進「更多操作」，
+// 不讓三個同權重按鈕同時擠在手機畫面上；複製動作仍是全系統共用的 copyReady()，
+// 沒有另外寫一套複製邏輯。
+function quickBookV4HandoffCopyBlockHtml(text, toastMessage, label) {
+  return '<div style="margin-top:6px" data-copy-text="' + escAttr(text) + '" data-copy-toast="' + escAttr(toastMessage) + '">' +
+    '<button class="btn gold" style="width:100%;padding:11px;margin-top:0" onclick="copyReady(this.parentElement.dataset.copyText,this.parentElement.dataset.copyToast,event)">' + (label || '📋 複製') + '</button>' +
+    '<div style="font-size:12px;color:var(--text-dim);cursor:pointer;margin-top:6px;text-align:right" onclick="toggleQuickBookV4HandoffMore(this)">更多操作 ▾</div>' +
+    '<div style="display:none;gap:6px;margin-top:4px">' +
+    '<button class="btn outline" style="width:auto;flex:1;padding:8px;font-size:12px;margin-top:0" onclick="previewCopyReadyText(this.closest(\'[data-copy-text]\').dataset.copyText)">👁 預覽</button>' +
+    '<button class="btn outline" style="width:auto;flex:1;padding:8px;font-size:12px;margin-top:0" onclick="exportCopyReadyTextAsTxt(this.closest(\'[data-copy-text]\').dataset.copyText)">⬇ 匯出 TXT</button>' +
+    '</div>' +
+    '</div>';
+}
+function toggleQuickBookV4HandoffMore(triggerEl) {
+  const wrap = triggerEl.nextElementSibling;
+  if (!wrap) return;
+  const isOpen = wrap.style.display === 'flex';
+  wrap.style.display = isOpen ? 'none' : 'flex';
+  triggerEl.textContent = isOpen ? '更多操作 ▾' : '更多操作 ▴';
+}
+function renderQuickBookV4Handoff() {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  const book = v4.book;
+
+  // UX Must Fix：未確認內容只用一套白話說法（不再同時出現「X 頁尚未確認」跟「未完成
+  // 章節」兩套概念），沒有未確認內容時整個開關區塊直接隱藏，不用讓使用者多看一眼。
+  const unconfirmedCount = book.pages.filter(function (p) { return !p.confirmedByUser; }).length;
+  const toggleWrap = document.getElementById('qbv4h-include-toggle-wrap');
+  const toggleSub = document.getElementById('qbv4h-include-toggle-sub');
+  const toggleCheckbox = document.getElementById('qbv4h-include-toggle-checkbox');
+  if (unconfirmedCount > 0) {
+    document.getElementById('qbv4h-unconfirmed-notice').textContent = '這本書還有部分內容沒有確認。正式排版時，建議先使用已確認內容。';
+    toggleWrap.style.display = 'flex';
+    toggleSub.style.display = '';
+    toggleCheckbox.checked = quickBookV4HandoffIncludeUnconfirmed;
+  } else {
+    document.getElementById('qbv4h-unconfirmed-notice').textContent = '所有內容都已確認。';
+    toggleWrap.style.display = 'none';
+    toggleSub.style.display = 'none';
+  }
+
+  // 素材準備狀態收進「查看圖片與素材準備狀態」收合區塊，預設收合，跟主動作分開。
+  const counts = quickBookV4MaterialsChecklistSummary(book);
+  document.getElementById('qbv4h-checklist').innerHTML =
+    '<div class="notice">文字素材：書名與副標、完整文稿、每頁標題、每頁正文、結尾內容——以上都已經在書中，交接包會自動帶入。</div>' +
+    '<div class="notice" style="margin-top:8px">素材狀態：已有真實照片 ' + counts.real_photo + '　品牌素材 ' + counts.user_asset + '　已規劃插畫 ' + (counts.generated_illustration + counts.picture_book) + '　流程圖 ' + counts.flowchart + '　資訊圖表 ' + counts.infographic + '　純文字 ' + counts.text_only + '　待補 ' + counts.add_later + '。缺少的素材可以先標示「稍後補」，不自動捏造，仍然可以先匯出純文字與排版指引。</div>' +
+    '<div class="action-row" style="margin-top:8px;flex-wrap:wrap">' +
+    '<button class="btn gold" style="width:auto;flex:1" onclick="showToast(\'素材已足夠，準備好了就可以開始用上面的交接包製作\')">✅ 素材已足夠，開始製作</button>' +
+    '<button class="btn outline" style="width:auto;flex:1" onclick="quickBookV4MarkAllPagesTextOnly()">📝 先完成純文字版本</button>' +
+    '<button class="btn outline" style="width:auto;flex:1" onclick="showScreen(\'screen-quickbook-v4-preview\')">🖼️ 繼續準備素材</button>' +
+    '</div>';
+
+  // 四種 target 產生前都先跑一次共用 Validator——結構有問題就不靜默輸出，改顯示白話
+  // 錯誤，不修改書籍內容，也不顯示 target／contract／validator 這類工程字樣。
+  const validation = validateBookDocumentStructure(book);
+  const errorBox = document.getElementById('qbv4h-structure-error');
+  const targetsBox = document.getElementById('qbv4h-targets');
+  if (!validation.valid) {
+    errorBox.style.display = '';
+    errorBox.innerHTML = '<div class="notice" style="border-color:#c0392b">目前書籍的章節或頁面資料有點不一致，暫時無法產生交接包。請先返回檢查頁面內容，確認章節與頁面沒有重複或遺漏。</div>';
+    targetsBox.style.display = 'none';
+    return;
+  }
+  errorBox.style.display = 'none';
+  targetsBox.style.display = '';
+  const options = { includeUnconfirmed: quickBookV4HandoffIncludeUnconfirmed };
+  const now = new Date().toISOString();
+  let producedAny = false;
+  QUICKBOOK_V4_HANDOFF_TARGETS.forEach(function (t) {
+    const text = buildBookHandoff(book, t.target, options);
+    document.getElementById(t.elId).innerHTML = text
+      ? quickBookV4HandoffCopyBlockHtml(text, t.toast)
+      : '<div class="notice">目前還沒有可交接的內容（已完成章節內還沒有可輸出的頁面）。</div>';
+    // 成功產生交接內容才記錄時間戳記；只寫 handoffStatus，不動正文、不動
+    // confirmedByUser、不動 contentStatus，不建立第二套 quickBook 狀態。
+    if (text) { book.handoffStatus[t.target] = now; producedAny = true; }
+  });
+  if (producedAny) saveState();
+
+  // 2｜分鏡文稿：直接從 pages[] 即時計算，Gate 前後自動顯示對應欄位。
+  const storyboardText = buildQuickBookV4StoryboardText(book, validation);
+  document.getElementById('qbv4h-storyboard').innerHTML = storyboardText
+    ? quickBookV4HandoffCopyBlockHtml(storyboardText, '已複製分鏡文稿')
+    : '<div class="notice">目前還沒有可顯示的分鏡內容。</div>';
+
+  quickBookV4RenderGateStatuses(book);
+  renderQuickBookV4CanvaPerPage(book, validation);
+}
+// 3｜4｜5：全書視覺定調／測試圖片／逐頁生圖指令的進度狀態，全部從既有資料（visualPlan
+// 旗標、pages[] 是否已有 imagePrompt）現場判斷，不新增 state machine，也不把 Gate 技術
+// 名稱（styleConfirmed／trialImageConfirmed）顯示給使用者。
+function quickBookV4RenderGateStatuses(book) {
+  const vp = book.visualPlan;
+
+  const styleStatus = document.getElementById('qbv4h-style-status');
+  if (!vp.styleConfirmed) styleStatus.textContent = '尚未確認全書畫風';
+  else if (!vp.trialImageConfirmed) styleStatus.textContent = '畫風已設定，下一步先做一張測試圖';
+  else styleStatus.textContent = '✅ 畫風已確認';
+
+  const trialStatus = document.getElementById('qbv4h-trial-status');
+  trialStatus.textContent = vp.trialImageConfirmed ? '✅ 測試畫風已確認' : '先試做一張圖，確認這個畫風適合整本書。';
+
+  const eligiblePages = book.pages.filter(quickBookV4NeedsImagePage);
+  const hasGenerated = eligiblePages.some(function (p) { return !!p.imagePrompt; });
+  const generateStatus = document.getElementById('qbv4h-generate-status');
+  const generateBtn = document.getElementById('qbv4h-generate-btn');
+  const gatePassed = vp.styleConfirmed && vp.trialImageConfirmed;
+  if (!gatePassed) {
+    generateStatus.textContent = '請先完成全書視覺定調與測試圖確認，才能產生逐頁生圖指令。';
+    generateBtn.style.display = 'none';
+  } else if (!hasGenerated) {
+    generateStatus.textContent = '';
+    generateBtn.textContent = '🖼️ 產生全書逐頁生圖指令';
+    generateBtn.style.display = 'block';
+  } else {
+    generateStatus.textContent = '✅ 已完成逐頁生圖指令';
+    generateBtn.textContent = '🔄 重新產生逐頁生圖指令';
+    generateBtn.style.display = 'block';
+  }
+}
+// P0/UX 最小修正（CEO 手機真人驗收，2026-08-08）三／四節：使用者實際工作時要分開拿
+// 「文案」（貼 Canva）跟「生圖指令」（貼外部生圖 AI），不是同一包資料自己拆。
+// 文案＝只有 pageTitle＋pageText（跟 quickBookV4BuildCleanManuscript() 同樣的乾淨正文
+// 原則，但這裡是單頁，不是整本），不含頁碼／頁面類型／章節／圖片建議／畫面構想／
+// imagePrompt／排版建議／完成狀態／sourceRefs／pageId／flowType。
+function quickBookV4BuildPageCopyText(page) {
+  const lines = [];
+  if (page.pageTitle) lines.push(page.pageTitle);
+  const cleanText = quickBookV4CleanPageTextForHandoff(page.pageText).trim();
+  if (cleanText) lines.push(cleanText);
+  return lines.join('\n\n');
+}
+// Quick Book 下一輪（CEO／總策長，2026-08-09）二節「封面與正文拆分」Canonical 規則：
+// book.cover 是封面專屬 canonical source，pages[] 裡 pageType==='cover' 只是排序／顯示
+// 殼層。這兩個函式集中處理「讀哪裡」「寫哪裡」的分流，全部呼叫端都經過這裡，不各自寫一次
+// if(pageType==='cover')，避免以後漏改任何一個讀寫點（上一輪的 bug 就是 book.cover 只寫
+// 一次、後續全部改寫 page 欄位，兩邊各存一份互相矛盾——這次改成只有一份，另一份完全不用）。
+// 一般頁沿用既有 page.storyboard／page.visualSuggestion／page.imagePrompt／
+// page.layoutSuggestion，不新增第二套 page model。
+function quickBookV4PageVisualFields(book, page) {
+  if (page.pageType === 'cover') {
+    const cover = book.cover || {};
+    return { storyboard: cover.visualDirection || '', visualSuggestion: '', imagePrompt: cover.imagePrompt || '', layoutSuggestion: cover.layoutSuggestion || '' };
+  }
+  return { storyboard: page.storyboard || '', visualSuggestion: page.visualSuggestion || '', imagePrompt: page.imagePrompt || page.illustrationPrompt || '', layoutSuggestion: page.layoutSuggestion || '' };
+}
+function quickBookV4WritePageVisualFields(book, page, updates) {
+  if (page.pageType === 'cover') {
+    if (!book.cover) book.cover = { title: '', subtitle: '', visualDirection: '', imagePrompt: '', layoutSuggestion: '', completedExternally: false };
+    if (updates.storyboard !== undefined) book.cover.visualDirection = updates.storyboard;
+    if (updates.imagePrompt !== undefined) book.cover.imagePrompt = updates.imagePrompt;
+    if (updates.layoutSuggestion !== undefined) book.cover.layoutSuggestion = updates.layoutSuggestion;
+    return;
+  }
+  if (updates.storyboard !== undefined) page.storyboard = updates.storyboard;
+  if (updates.imagePrompt !== undefined) page.imagePrompt = updates.imagePrompt;
+  if (updates.layoutSuggestion !== undefined) page.layoutSuggestion = updates.layoutSuggestion;
+}
+// 生圖指令＝只有 imagePrompt 本身（封面走 book.cover.imagePrompt，一般頁走
+// page.imagePrompt／illustrationPrompt），不含 pageTitle／pageText／圖片建議／其他頁
+// 內容／pageId／Gate 狀態。
+function quickBookV4BuildImagePromptCopyText(book, page) {
+  return quickBookV4PageVisualFields(book, page).imagePrompt;
+}
+// Quick Book P0 下一輪（CEO／總策長，2026-08-08）三節「封面複製能力」：複製封面內容只能
+// 是書名／副標／作者／封面主視覺／Canva 排版指引，不含封面生圖指令（獨立按鈕）、不含
+// 其他頁資料。書名／副標／作者沿用書籍基本資料（book.title／subtitle／authorName），
+// 封面主視覺／Canva 排版指引沿用 book.cover（見 quickBookV4PageVisualFields 註解）。
+// 空欄位直接不出現，不輸出「（未填寫）」這類 placeholder。
+function quickBookV4BuildCoverContentCopyText(book, page) {
+  const lines = [];
+  if (book.title) lines.push('書名：' + book.title);
+  if (book.subtitle) lines.push('副標：' + book.subtitle);
+  if (book.authorName) lines.push('作者：' + book.authorName);
+  if (book.illustratorName) lines.push('繪者：' + book.illustratorName);
+  if (book.coverCredit) lines.push(book.coverCredit);
+  const visual = quickBookV4PageVisualFields(book, page);
+  if (visual.storyboard) lines.push('封面主視覺：' + visual.storyboard);
+  if (visual.layoutSuggestion) lines.push('Canva 排版指引：' + visual.layoutSuggestion);
+  return lines.join('\n');
+}
+// 五／六節：逐頁複製改成真正的 accordion——同一時間最多只有一頁展開，用一個模組層級
+// 變數記住目前展開哪一頁（跟既有 quickBookV4ActivePageId／quickBookV4ActiveChapterId
+// 同一種輕量寫法，不是新的 persistent state machine），點擊頁面標題列切換，不需要重新
+// 整個 Handoff 畫面，只重繪這個區塊。
+let quickBookV4PerPageOpenId = null;
+function quickBookV4RerenderCanvaPerPage() {
+  const work = getActiveWork();
+  const v4 = ensureQuickBookV4Defaults(work);
+  renderQuickBookV4CanvaPerPage(v4.book, validateBookDocumentStructure(v4.book));
+}
+function quickBookV4TogglePerPageAccordion(pageId) {
+  quickBookV4PerPageOpenId = (quickBookV4PerPageOpenId === pageId) ? null : pageId;
+  quickBookV4RerenderCanvaPerPage();
+}
+// 六節「每頁展開內容」：【文案】＋複製文案／【圖片】圖片建議或畫面構想（有值才顯示）／
+// 【生圖指令】＋複製生圖指令，或還沒有時顯示白話狀態「尚未產生生圖指令」／排版建議
+// （有值才顯示）。空欄位直接不出現，不顯示「（未填寫）」「（無）」「（尚未產生）」。
+function quickBookV4BuildPerPageAccordionBodyHtml(book, page) {
+  const label = getBookPageDisplayLabel(page, book);
+  const copyText = quickBookV4BuildPageCopyText(page);
+  const visual = quickBookV4PageVisualFields(book, page);
+  const promptText = visual.imagePrompt;
+  const visualHint = visual.storyboard || visual.visualSuggestion;
+  let html = '<div style="margin-top:8px">';
+  html += '<div class="section-label" style="margin-top:0;font-size:12px">文案</div>';
+  html += '<div class="line" style="white-space:pre-line;font-size:13px;margin-top:4px">' + escHtml(copyText) + '</div>';
+  html += quickBookV4HandoffCopyBlockHtml(copyText, '已複製' + label + '文案', '📋 複製文案');
+  if (visualHint) {
+    html += '<div class="section-label" style="margin-top:12px;font-size:12px">圖片</div>';
+    html += '<div class="notice" style="margin-top:4px">' + escHtml(visualHint) + '</div>';
+  }
+  html += '<div class="section-label" style="margin-top:12px;font-size:12px">生圖指令</div>';
+  if (promptText) {
+    html += quickBookV4HandoffCopyBlockHtml(promptText, '已複製' + label + '生圖指令', '🖼️ 複製生圖指令');
+  } else {
+    html += '<div class="notice" style="margin-top:4px">尚未產生生圖指令</div>';
+  }
+  if (visual.layoutSuggestion) {
+    html += '<div class="section-label" style="margin-top:12px;font-size:12px">排版建議</div>';
+    html += '<div class="notice" style="margin-top:4px">' + escHtml(visual.layoutSuggestion) + '</div>';
+  }
+  // Quick Book 下一輪（CEO／總策長，2026-08-08）一節：第 3 顆按鈕，整合本頁文案／圖片
+  // 需求／全書視覺設定／Canva 滿頁規格／作品型態版面分流，要求 AI 直接產出排好圖文的
+  // 完整書頁圖片。每頁都提供（純文字頁也適用，見 quickBookV4BuildPageLayoutImagePrompt
+  // 內部的 needsImage 分流），不像生圖指令要等 Gate 通過才有值。
+  const layoutImagePrompt = quickBookV4BuildPageLayoutImagePrompt(book, page);
+  html += '<div class="section-label" style="margin-top:12px;font-size:12px">排版成圖指令</div>';
+  html += quickBookV4HandoffCopyBlockHtml(layoutImagePrompt, '已複製' + label + '排版成圖指令', '🎨 複製排版成圖指令');
+  html += '</div>';
+  return html;
+}
+// Blocker 2＋P0/UX 最小修正：Canva 逐頁複製列表，依章節→頁碼排序，只列已完成章節、
+// 排除 raw fallback／needs_input，跟 buildBookHandoffCanvaPages() 用同一套過濾規則，
+// 順序跟 BookDocument 一致（reorder 後這裡會跟著重新排序，因為每次都是重新讀
+// book.pages 現算，沒有另存清單）。預設展開清單中的第一頁，符合條件的展開頁若已經
+// reorder／刪除，自動改展開新的第一頁，不會停在一個已經不存在的頁面上。
+function renderQuickBookV4CanvaPerPage(book, validation) {
+  const box = document.getElementById('qbv4h-canva-perpage');
+  if (!box) return;
+  const pagesToShow = [];
+  quickBookV4OrderedChapters(book).forEach(function (c) {
+    if (validation.completedChapterIds.indexOf(c.chapterId) === -1) return;
+    quickBookV4ChapterPages(book, c.chapterId).forEach(function (p) {
+      if (quickBookV4IsRawFallbackPage(p)) return;
+      if (p.contentStatus === QUICKBOOK_V4_CONTENT_STATUS.NEEDS_INPUT) return;
+      pagesToShow.push(p);
+    });
+  });
+  if (!pagesToShow.length) { box.innerHTML = '<div class="notice">目前還沒有可複製的頁面。</div>'; return; }
+  if (!pagesToShow.some(function (p) { return p.pageId === quickBookV4PerPageOpenId; })) {
+    quickBookV4PerPageOpenId = pagesToShow[0].pageId;
+  }
+  const blocks = pagesToShow.map(function (p) {
+    const isOpen = p.pageId === quickBookV4PerPageOpenId;
+    const label = getBookPageDisplayLabel(p, book);
+    return '<div class="card" style="margin-top:6px">' +
+      '<div class="line" style="cursor:pointer" onclick="quickBookV4TogglePerPageAccordion(\'' + p.pageId + '\')"><b>' + label + (p.pageTitle ? '｜' + escHtml(p.pageTitle) : '') + '</b>　' + (isOpen ? '▴' : '▾') + '</div>' +
+      (isOpen ? quickBookV4BuildPerPageAccordionBodyHtml(book, p) : '') +
+      '</div>';
+  });
+  box.innerHTML = blocks.join('');
+}
+
+// #07 Quick Book v3.0｜視覺模式：AI 回覆用中文標籤，內部統一轉成這四個代碼；前台只顯示
+// VISUAL_MODE_DISPLAY_TEXT 這句白話說明，不顯示「Picture Book／Reflowable」這類術語。
+const VISUAL_MODE_DISPLAY_TEXT = {
+  text: '這本書適合以文字為主，圖片非必要。',
+  illustrated: '這本書適合以文字為主，每個章節搭配一張插畫。',
+  picture_book: '這本書建議用較多圖片、少量文字，一頁一個畫面。',
+  photo: '這本書適合搭配真實照片，文字作為說明。'
+};
+// P0 緊急修正（CEO 真人驗收，2026-08-05）：真人驗收發現使用者明明想要一本「有圖的書」，
+// 但 AI 對「圖片使用方式／視覺模式」的實際回答用詞沒有命中原本過窄的關鍵字組合，靜默被
+// 判定成 'text'（純文字），使用者要主動問 AI「怎麼沒有圖？」才發現——這是「Quick Book 目標
+// 是完成一本真正有書感的小書，不是只有文字」這個產品原則被 Parser 的窄關鍵字悄悄違反。
+// 修正：①明確的「不需要圖片」類負面訊號才判定 text ②大幅擴充三種有圖模式的關鍵字涵蓋範圍
+// ③兩者都沒命中、但文字不是空的（AI 確實回答了，只是用詞沒有預期到），改成預設 illustrated
+// （保守但不會靜默沒有圖），不再直接落回 text——只有內容真的是空字串（完全沒有任何線索）
+// 才維持 text 這個最終保底。
+function normalizeVisualMode(raw) {
+  const text = (raw || '').trim();
+  if (!text) return 'text';
+  // 明確的「不要圖」訊號一定要排在最前面判斷——「不需要圖片」這句話本身包含「需要圖片」
+  // 這個子字串，如果先跑正面關鍵字判斷會被誤判成 illustrated（P0 修正時實測發現的真實
+  // Bug，反而做出跟原本問題方向相反的誤判）。
+  if (/不需要圖片|不用圖片|純文字|無圖|沒有圖片|不需要插圖|不需要插畫|不加圖/.test(text)) return 'text';
+  if (/照片|相片|寫真|real\s*photo/i.test(text)) return 'photo';
+  if (/繪本|圖像敘事|一頁一圖|大量圖片|滿版圖|圖多|picture\s*book/i.test(text)) return 'picture_book';
+  if (/插畫|圖文|搭配.*圖|每章.*圖|部分.*圖|少量.*圖|加.*插圖|配.*圖片|需要圖片|有圖|illustrat/i.test(text)) return 'illustrated';
+  return 'illustrated';
+}
+
+// ── #07 Quick Book v3.0｜Step1 開始你的故事：Prompt（沒有 Parser——這一步是開放式故事
+// 理解，內容直接存進成果庫當作後續步驟的背景資料，不需要拆解成結構化欄位）───────────────
+function buildQuickBookStoryPrompt(work) {
+  const vars = { work_name: work.name, goal: work.name, work_brief: work.brief || '' };
+  return fillTemplate(
+    '你是小書出版流程中的故事理解者。\n\n請根據使用者以下的回答，直接幫使用者整理出這本小書的故事理解摘要，包含：這本書想留下什麼、想讓誰讀、希望讀者感受到什麼、已有哪些素材可以運用。\n\n' +
+    '工作名稱：{{work_name}}\n\n使用者的回答：\n{{work_brief}}\n\n' +
+    '如果使用者的回答已經足夠，請直接整理成一段清楚的故事理解摘要。如果資訊不足，最多只問兩個必要的問題，不要一次列出一長串問卷；如果使用者說不出具體內容，請先給一個具體、溫暖的例子幫助使用者聯想，不要連續追問。\n\n不要捏造使用者沒有提到的具體經歷或事實。\n\n' +
+    buildStepBoundaryBlock('整理故事理解摘要', ['直接開始規劃書本方向或頁面內容'].concat(STEP_BOUNDARY_GENERIC_FORBIDDEN), STEP_BOUNDARY_GENERIC_WAITING),
+    vars
+  );
+}
+
+// ── #07 Quick Book v3.0｜Step2 確認書本方向：Prompt + Parser ──────────────────
+function buildQuickBookDirectionPrompt(work) {
+  const vars = { work_name: work.name, goal: work.name, previous_results: buildPreviousResults(work.id) };
+  return fillTemplate(
+    '你是小書出版流程中的出版方向顧問。\n\n請根據以下使用者提供的故事與素材，直接幫使用者確認這本小書的出版方向，不要反問使用者一長串問題，資訊不足的地方請用合理判斷直接給建議（使用者之後可以再修改）。\n\n' +
+    '工作名稱：{{work_name}}\n目標：{{goal}}\n\n已有內容：\n{{previous_results}}\n\n' +
+    '請用以下固定格式輸出（欄位名稱請照抄，這樣使用者才能直接複製貼回工作台）：\n\n' +
+    '暫定書名：\n副標：（不需要可留空）\n主要內容：（一到兩句話說明這本書在講什麼）\n主要讀者：\n希望讀者得到什麼：\n建議頁數：（純數字，8～24之間，依內容需求判斷）\n文字感覺：（例如：溫暖、輕鬆、專業、勵志）\n圖片使用方式：（例如：不需要圖片／每章一張插畫／一頁一張圖的繪本式／搭配真實照片）\n視覺模式：（請從「純文字」「文字＋插畫」「繪本式圖像敘事」「照片為主」四選一，只填一個）\n\n' +
+    '不要輸出這四個格式選項以外的英文術語（例如不要出現 Picture Book、Reflowable 等字樣），全程用中文白話說明。不要捏造使用者沒有提到的具體經歷或事實。\n\n' +
+    buildStepBoundaryBlock('確認並輸出以上書本方向欄位', ['開始寫任何一頁的正式內容', '問超過兩個額外問題'].concat(STEP_BOUNDARY_GENERIC_FORBIDDEN), STEP_BOUNDARY_GENERIC_WAITING),
+    vars
+  );
+}
+const QUICKBOOK_DIRECTION_FIELD_LABELS = ['暫定書名', '副標', '主要內容', '主要讀者', '希望讀者得到什麼', '建議頁數', '文字感覺', '圖片使用方式', '視覺模式'];
+function parseQuickBookDirection(content) {
+  function grab(label) { return extractLabeledBlockValue(content, label, QUICKBOOK_DIRECTION_FIELD_LABELS); }
+  const pageCountRaw = grab('建議頁數');
+  const pageCountNum = parseInt((pageCountRaw || '').replace(/[^0-9]/g, ''), 10);
+  return {
+    title: grab('暫定書名') || '',
+    subtitle: grab('副標') || '',
+    mainContent: grab('主要內容') || '',
+    targetReader: grab('主要讀者') || '',
+    takeaway: grab('希望讀者得到什麼') || '',
+    pageCount: Number.isFinite(pageCountNum) && pageCountNum > 0 ? pageCountNum : 12,
+    toneFeeling: grab('文字感覺') || '',
+    imageUsage: grab('圖片使用方式') || '',
+    visualMode: normalizeVisualMode(grab('視覺模式') || grab('圖片使用方式') || '')
+  };
+}
+
+// ── #07 Quick Book v3.0｜Step3 建立內容架構＋第一頁完成品（不可刪除核心）─────────
+// 這一步不是單純「交給AI→貼回」，是兩段式：先確認 5～10 個內容單位（架構），使用者確認後
+// 才產生第一頁完成品，兩者都各自有專屬畫面（screen-quickbook-architecture／
+// screen-quickbook-first-page），由 renderWorkDetail() 攔截導轉，寫法沿用「完成海報」
+// （screen-make-poster）已驗證過的攔截模式，不走標準 screen-satisfaction。
+function buildQuickBookArchitecturePrompt(work) {
+  const qb = ensureQuickBookDefaults(work);
+  const vars = { work_name: work.name, goal: work.name, previous_results: buildPreviousResults(work.id) };
+  return fillTemplate(
+    '你是小書出版流程中的內容架構師。\n\n請根據以下已確認的書本方向，直接規劃這本小書的內容架構，不是討論方向，是可以直接使用的定案內容。\n\n' +
+    '工作名稱：{{work_name}}\n\n書名：' + escHtmlNoop(qb.title) + '\n主要內容：' + escHtmlNoop(qb.mainContent) + '\n主要讀者：' + escHtmlNoop(qb.targetReader) + '\n建議頁數：' + qb.pageCount + '\n視覺模式：' + (VISUAL_MODE_DISPLAY_TEXT[qb.visualPlan.visualMode] || '') + '\n\n已有內容：\n{{previous_results}}\n\n' +
+    '請規劃 5～10 個內容單位（不是逐頁，是內容的大區塊，例如：開場、第一個重點、第二個重點……結尾），用以下固定格式輸出（欄位名稱請照抄）：\n\n' +
+    '單元1標題：\n單元1說明：（一句話）\n\n單元2標題：\n單元2說明：\n\n（依此類推，共5～10個單元）\n\n建議總頁數：（純數字）\n封面書名頁內容頁結尾頁安排：（簡短說明大概怎麼分配頁數，例如：封面1頁、書名頁1頁、內容頁8頁、結尾頁1頁）\n\n不要捏造使用者沒有提到的具體經歷或事實。\n\n' +
+    buildStepBoundaryBlock('規劃內容架構並輸出以上欄位', ['開始寫任何一頁的正式逐字內容', '產生封面或插畫指令'].concat(STEP_BOUNDARY_GENERIC_FORBIDDEN), STEP_BOUNDARY_GENERIC_WAITING),
+    vars
+  );
+}
+// escHtmlNoop：Prompt 內文本來就是純文字送出，不需要 HTML escape，這裡只是語意清楚地標記
+// 「這是直接嵌入 Prompt 文字」，避免跟畫面渲染用的 escHtml() 混淆用途。
+function escHtmlNoop(text) { return text || '（未填寫）'; }
+
+// P0 緊急修正（CEO 真人驗收，2026-08-05）：CEO 手機真人驗收時，AI 對 Step3「建立內容架構」
+// Prompt 的實際回覆沒有照 Prompt 要求的「單元1標題／單元1說明」格式，而是直接輸出頁面式結構
+// （封面／書名頁／第1頁／第2頁…／結尾頁，或英文 Page 1／Page 2），導致原本只認「單元N標題」
+// 的 parseQuickBookArchitecture() 解析不到任何內容，卡在「請確認格式是否包含單元1標題」。
+// 這不是「電子書舊流程 vs Quick Book 新流程」兩套 Parser 衝突——舊版 ebook 流程本來就沒有任何
+// 結構化 Parser（每一步都是存純文字），這裡單純是 Quick Book 自己 Step3 架構 Prompt 的容錯度
+// 不夠，真實 AI 很自然地會直接用「頁」的角度回覆，不是使用者或 AI 的錯。
+// 修正方式：submitPasteBack() 的 'architecture' 分支改成先試單元格式（Pattern A，維持原行為
+// 不變），抓不到再試頁面式格式（Pattern B，本次新增，支援中英文頁碼標記）；Pattern B 抓到的
+// 內容本身就是頁面等級的資料，直接建立 qb.pages 並跳過「再問AI一次第一頁」，直接顯示第一頁
+// 完成品畫面（沿用既有 screen-quickbook-first-page，不需要新畫面）；兩種格式都抓不到，才顯示
+// 「沒有成功辨識小書格式」的溫和錯誤訊息＋一鍵複製重新輸出指令，不把責任推給使用者。
+// 標題行判斷刻意收緊：後面要嘛完全沒有其他文字（例如單獨一行「第1頁」），要嘛用冒號隔開
+// （例如「第1頁：開場」）——不能只要求「開頭符合關鍵字」就算數，那樣像英文「The end,
+// congratulations.」這種正常內文句子也會被「The End」關鍵字誤判成新的一頁標題，把後面
+// 內文整段吃掉（P0 修正時實測發現的真實邊界案例，不是假設）。
+// P0 緊急修正新增（CEO 真人驗收，2026-08-05）：imageStatus 是每一頁圖片規劃進度的簡單狀態
+// 標記，供之後 Canva／圖片AI／Living Book 共用，不需要另外重新判斷「這頁到底要不要圖、
+// 規劃了沒」。三種狀態：not_needed（這頁不需要圖）／needed（需要圖但還沒有生圖指令）／
+// planned（需要圖，且已經有生圖指令）。
+function quickBookImageStatus(imageNeeded, imagePrompt) {
+  if (!imageNeeded) return 'not_needed';
+  return imagePrompt ? 'planned' : 'needed';
+}
+const QUICKBOOK_PAGE_HEADING_PATTERN = /^(封面|書名頁|結尾頁|封底|Cover|Title\s*Page|The\s*End|Back\s*Cover|第\s*(\d+)\s*[頁章節]|Page\s*(\d+)|Chapter\s*(\d+))\s*(?:[:：]\s*(.*))?$/i;
+function quickBookPageTypeFromHeading(label) {
+  if (/封面|^Cover$/i.test(label)) return 'cover';
+  if (/書名頁|^Title\s*Page$/i.test(label)) return 'title';
+  if (/結尾|封底|^The\s*End$|^Back\s*Cover$/i.test(label)) return 'ending';
+  return 'content';
+}
+// P0 緊急修正（CEO 真人驗收，2026-08-05）：這裡原本不管 visualMode 是什麼，一律把每一頁
+// 的 imageNeeded 寫死 false，導致就算使用者選的是圖文／繪本／照片模式，只要 Step3 的 AI
+// 回覆剛好是頁面式格式（Pattern B），全書還是會被判定成完全不需要圖片——這正是「使用者
+// 明明想要有圖的書，卻拿到純文字」這個真人驗收 Blocker 的其中一個根因。修正：依 visualMode
+// 決定預設值——繪本模式每個內容頁都要圖（不可缺頁）；圖文／照片模式的內容頁預設也標記
+// 需要圖片（讓使用者在 Step5 看得到規劃入口，之後仍可個別調整）；純文字模式維持不需要；
+// 封面／書名頁／結尾頁在非純文字模式下也預設需要圖片（封面尤其重要）。
+function parseQuickBookPageStyleArchitecture(content, visualMode) {
+  const lines = content.split('\n');
+  const blocks = [];
+  let current = null;
+  lines.forEach(function (rawLine) {
+    const line = rawLine.trim();
+    if (!line) { if (current) current.body.push(''); return; }
+    const m = line.match(QUICKBOOK_PAGE_HEADING_PATTERN);
+    if (m) {
+      current = { label: m[1], inline: (m[5] || '').trim(), body: [] };
+      blocks.push(current);
+    } else if (current) {
+      current.body.push(line);
+    }
+  });
+  const mode = visualMode || 'text';
+  // 標題／內文分法：只有「跟標題同一行」的文字（例如「第1頁：開場」的「開場」）才當標題，
+  // 標題底下不管有幾行都整段當內文——不要用「第一行當標題、其餘當內文」這種猜測式分法，
+  // 那樣遇到只有一行內容的頁面（很常見）會把整段內容誤判成標題，內文變成空的，
+  // 白白遺失使用者實際的頁面內容（P0 修正時發現的真實 Bug，不是這輪新故意這樣設計）。
+  const pages = blocks.map(function (b, i) {
+    const bodyLines = b.body.filter(function (l) { return l !== ''; });
+    const pageTitle = b.inline || b.label;
+    const pageText = bodyLines.join('\n');
+    const pageType = quickBookPageTypeFromHeading(b.label);
+    return {
+      pageNumber: i + 1,
+      pageType: pageType,
+      pageTitle: pageTitle,
+      pageText: pageText,
+      imageNeeded: mode !== 'text',
+      imageStatus: quickBookImageStatus(mode !== 'text', ''),
+      imageDescription: '', imagePrompt: '', layoutSuggestion: ''
+    };
+  });
+  const units = pages.map(function (p) {
+    return { title: p.pageTitle || quickBookPageTypeLabel(p.pageType), description: (p.pageText || '').slice(0, 60) };
+  });
+  return { pages: pages, units: units };
+}
+
+function parseQuickBookArchitecture(content) {
+  const allLabels = ['建議總頁數', '封面書名頁內容頁結尾頁安排'];
+  for (let n = 1; n <= 10; n++) { allLabels.push('單元' + n + '標題', '單元' + n + '說明'); }
+  const units = [];
+  for (let i = 1; i <= 10; i++) {
+    const title = extractLabeledBlockValue(content, '單元' + i + '標題', allLabels);
+    if (!title) break;
+    const desc = extractLabeledBlockValue(content, '單元' + i + '說明', allLabels) || '';
+    units.push({ title: title, description: desc });
+  }
+  const totalPagesRaw = extractLabeledBlockValue(content, '建議總頁數', allLabels);
+  const totalPagesNum = parseInt((totalPagesRaw || '').replace(/[^0-9]/g, ''), 10);
+  return {
+    units: units,
+    totalPages: Number.isFinite(totalPagesNum) && totalPagesNum > 0 ? totalPagesNum : null,
+    arrangement: extractLabeledBlockValue(content, '封面書名頁內容頁結尾頁安排', allLabels) || ''
+  };
+}
+
+function buildQuickBookFirstPagePrompt(work) {
+  const qb = ensureQuickBookDefaults(work);
+  const unitsText = qb.architecture.map(function (u, i) { return '單元' + (i + 1) + '：' + u.title + '（' + u.description + '）'; }).join('\n');
+  const vars = { work_name: work.name, goal: work.name };
+  return fillTemplate(
+    '你是小書出版流程中的內文作者。\n\n以下是已確認的內容架構，請直接完成「第一頁」的完整成品內容，讓使用者可以直接感受到這本書實際做出來會是什麼樣子，不是大綱、是真正的第一頁正文。\n\n' +
+    '書名：' + escHtmlNoop(qb.title) + '\n視覺模式：' + (VISUAL_MODE_DISPLAY_TEXT[qb.visualPlan.visualMode] || '') + '\n\n內容架構：\n' + unitsText + '\n\n' +
+    '請用以下固定格式輸出第一頁（欄位名稱請照抄）：\n\n' +
+    '頁碼：1\n頁面標題：\n正文：（這一頁真正的完整文字內容，不是摘要）\n圖片位置：（例如：標題下方／整頁背景／無）\n插畫或照片建議：（具體描述這一頁如果要配圖，畫面應該長什麼樣子；純文字模式可填「不需要」）\n簡單書頁排版：（一句話說明版面安排，例如：標題置中、正文置左、圖片佔右半頁）\n\n不要捏造使用者沒有提到的具體經歷或事實。\n\n' +
+    buildStepBoundaryBlock('完成第一頁成品並輸出以上欄位', ['繼續往下寫第二頁以後的內容', '產生封面'].concat(STEP_BOUNDARY_GENERIC_FORBIDDEN), STEP_BOUNDARY_GENERIC_WAITING),
+    vars
+  );
+}
+const QUICKBOOK_FIRSTPAGE_FIELD_LABELS = ['頁碼', '頁面標題', '正文', '圖片位置', '插畫或照片建議', '簡單書頁排版'];
+function parseQuickBookFirstPage(content) {
+  function grab(label) { return extractLabeledBlockValue(content, label, QUICKBOOK_FIRSTPAGE_FIELD_LABELS); }
+  const firstPageImageNeeded = !/不需要|無/.test(grab('插畫或照片建議') || '');
+  return {
+    pageNumber: 1,
+    pageType: 'content',
+    pageTitle: grab('頁面標題') || '',
+    pageText: grab('正文') || '',
+    imageNeeded: firstPageImageNeeded,
+    imageStatus: quickBookImageStatus(firstPageImageNeeded, ''),
+    imageDescription: grab('插畫或照片建議') || '',
+    imagePrompt: '',
+    layoutSuggestion: grab('簡單書頁排版') || grab('圖片位置') || ''
+  };
+}
+
+// ── #07 Quick Book v3.0｜Step4 完成全書內容：Prompt + Parser ────────────────────
+function quickBookPageTypeFromLabel(label) {
+  const text = (label || '').trim();
+  if (/封面/.test(text)) return 'cover';
+  if (/書名頁/.test(text)) return 'title';
+  if (/結尾|封底/.test(text)) return 'ending';
+  return 'content';
+}
+function buildQuickBookFullContentPrompt(work) {
+  const qb = ensureQuickBookDefaults(work);
+  const unitsText = qb.architecture.map(function (u, i) { return '單元' + (i + 1) + '：' + u.title + '（' + u.description + '）'; }).join('\n');
+  const firstPage = qb.pages[0];
+  const firstPageText = firstPage ? ('頁面標題：' + firstPage.pageTitle + '\n正文：' + firstPage.pageText) : '（尚未定調）';
+  // 總策長裁示（2026-08-05）：Step4 Prompt 改成量化規則，不是只靠語氣肯定——illustrated
+  // 至少30%內容頁要有圖（最低1頁）；picture_book每個內容頁都要圖、封面也要圖；photo每個
+  // 主要內容頁都要有照片配置。真正的把關在 Controller 呼叫 validateQuickBookVisualCoverage()
+  // （AI 沒做到，Recovery Flow 會擋下來），這裡的數字只是先把規則講清楚，降低第一輪就
+  // 不符合、要重新來一次的機率。
+  const contentUnitCount = qb.architecture.length || 5;
+  const estimatedMinimum = Math.max(1, Math.ceil(contentUnitCount * 0.3));
+  const modeInstructions = {
+    text: '這是純文字模式，所有內容頁可以不安排圖片（imageNeeded＝否），不要產生不必要的圖片指令。',
+    illustrated: '這是圖文模式，這本書要有插圖，不是純文字書。內容頁裡「至少30%」要安排圖片，這本書大約 ' + contentUnitCount + ' 個內容單元，換算下來至少要有 ' + estimatedMinimum + ' 頁有圖（最低不得少於1頁），每個主要內容單元至少應有一張代表圖。安排圖片的頁面，「需要圖片」「圖片說明」「生圖指令」「排版建議」四個欄位都要填，不可以只寫「需要圖片：是」卻沒有圖片說明或生圖指令。',
+    picture_book: '這是繪本模式，每一個內容頁「都必須」有插畫規劃，封面也必須有圖，書名頁可以純文字，結尾頁依內容決定要不要圖。每一個需要圖片的頁面，「圖片說明」與「生圖指令」都要完整填寫，不可以有任何一個內容頁缺插畫；同時要提供全書共用的畫風、主角或主體的固定描述，確保每一頁畫出來風格一致。',
+    photo: '這是照片模式，每個主要內容頁都必須有照片配置需求：「圖片說明」請描述建議放哪一張照片（例如：建議放第一次上課的照片、建議放與家人的合照）、擺放位置、裁切建議、圖說建議。如果某一頁沒有合適的實際照片，才改為在「生圖指令」提供替代的 AI 插畫指令，但不可以假裝使用者已經有照片。'
+  };
+  const imageInstruction = modeInstructions[qb.visualPlan.visualMode] || modeInstructions.text;
+  const vars = { work_name: work.name, goal: work.name };
+  return fillTemplate(
+    '你是小書出版流程中的內文作者。\n\n請根據已確認的內容架構與第一頁定調，直接完成全書逐頁內容，不是大綱，每一頁都要有完整可用的正文。\n\n' +
+    '書名：' + escHtmlNoop(qb.title) + '\n建議總頁數：' + (qb.architecture.length ? (qb.pageCount || 12) : 12) + '\n視覺模式：' + (VISUAL_MODE_DISPLAY_TEXT[qb.visualPlan.visualMode] || '') + '\n\n內容架構：\n' + unitsText + '\n\n第一頁定調：\n' + firstPageText + '\n\n' + imageInstruction + '\n\n' +
+    '請包含封面、書名頁、逐一內容頁、結尾頁（或封底），每一頁都用以下固定格式輸出，用「【第N頁】」開頭分隔每一頁（N 從 1 開始）：\n\n' +
+    '【第1頁】\n頁碼：1\n頁面類型：封面／書名頁／內容頁／結尾頁（四選一）\n頁面標題：\n正文：\n需要圖片：是／否\n圖片說明：（照片模式請描述建議放哪一張照片）\n生圖指令：（需要圖片時才填，純文字或不需要圖片可留空）\n擺放位置：（照片模式才需要，例如：正文下方置中）\n裁切建議：（照片模式才需要，例如：橫式裁切、聚焦人物）\n圖說建議：（照片模式才需要，一句話的照片說明文字）\n排版建議：\n\n【第2頁】\n（依此類推，直到全書所有頁完成）\n\n不要捏造使用者沒有提到的具體經歷或事實。\n\n' +
+    buildStepBoundaryBlock('完成全書逐頁內容並輸出以上欄位', ['產生封面生圖指令（那是下一步的工作）', '只輸出大綱而不寫完整正文'].concat(STEP_BOUNDARY_GENERIC_FORBIDDEN), STEP_BOUNDARY_GENERIC_WAITING),
+    vars
+  );
+}
+// P0 緊急修正（CEO 真人驗收，2026-08-05）：新增 visualMode 參數——繪本模式「不可缺頁」，
+// 不管 AI 自己在「需要圖片」欄位填是或否，繪本模式的內容頁一律視為需要圖片，避免 AI 判斷
+// 不一致導致漏頁；照片／圖文模式仍尊重 AI 逐頁的判斷（本來就允許只有部分頁面配圖）。
+// P0 Blocker 修正（CEO 真人驗收，2026-08-05，內容頁空白）：全部欄位改用
+// extractLabeledBlockValue()，不再用只認同一行的 extractLabeledRowValue()——「正文」
+// 這種長內容欄位，AI 很自然會把標籤獨立一行、內容另起好幾段，舊版寫法在這種情況下
+// 會直接抓到空字串。
+const QUICKBOOK_PAGE_FIELD_LABELS = ['頁碼', '頁面類型', '頁面標題', '正文', '需要圖片', '圖片說明', '生圖指令', '擺放位置', '裁切建議', '圖說建議', '排版建議'];
+function parseQuickBookPages(content, visualMode) {
+  const blocks = content.split(/【第\s*(\d+)\s*頁】/).slice(1);
+  const pages = [];
+  for (let i = 0; i < blocks.length; i += 2) {
+    const pageNumber = parseInt(blocks[i], 10);
+    const block = blocks[i + 1] || '';
+    function grab(label) { return extractLabeledBlockValue(block, label, QUICKBOOK_PAGE_FIELD_LABELS); }
+    const needImageRaw = grab('需要圖片') || '';
+    const pageType = quickBookPageTypeFromLabel(grab('頁面類型') || '');
+    const aiSaidNeeded = /是/.test(needImageRaw) && !/否/.test(needImageRaw);
+    const forcedNeeded = visualMode === 'picture_book' && pageType === 'content';
+    const imageNeeded = aiSaidNeeded || forcedNeeded;
+    const imageDescription = grab('圖片說明') || '';
+    // photoDescription／placement／cropSuggestion／captionSuggestion（總策長裁示新增，
+    // 2026-08-05）：照片模式專屬欄位，跟圖文/繪本模式共用「圖片說明」同一個 Prompt 欄位
+    // 標籤（降低 AI 要記的格式差異），照片模式時額外把同一個值也存進 photoDescription，
+    // 讓 Validator 用「photoDescription || imageDescription || imagePrompt」任一有值即可
+    // 通過的邏輯保持一致，不需要在 Parser 這裡另外規定 AI 用不同標籤。
+    pages.push({
+      pageNumber: Number.isFinite(pageNumber) ? pageNumber : pages.length + 1,
+      pageType: pageType,
+      pageTitle: grab('頁面標題') || '',
+      pageText: grab('正文') || '',
+      imageNeeded: imageNeeded,
+      imageStatus: quickBookImageStatus(imageNeeded, grab('生圖指令') || ''),
+      imageDescription: imageDescription,
+      imagePrompt: grab('生圖指令') || '',
+      layoutSuggestion: grab('排版建議') || '',
+      photoDescription: visualMode === 'photo' ? imageDescription : '',
+      placement: grab('擺放位置') || '',
+      cropSuggestion: grab('裁切建議') || '',
+      captionSuggestion: grab('圖說建議') || ''
+    });
+  }
+  return pages;
+}
+
+// ── #07 Quick Book v3.0｜Step5-A 封面設計：Prompt + Parser ──────────────────────
+function buildQuickBookCoverPrompt(work) {
+  const qb = ensureQuickBookDefaults(work);
+  const vars = { work_name: work.name, goal: work.name };
+  return fillTemplate(
+    '你是小書出版流程中的封面設計師。\n\n請根據以下已完成的書本內容，直接完成封面設計方向與生圖指令，讓使用者可以直接拿去外部生圖工具使用。\n\n' +
+    '書名：' + escHtmlNoop(qb.title) + '\n副標：' + escHtmlNoop(qb.subtitle) + '\n主要內容：' + escHtmlNoop(qb.mainContent) + '\n主要讀者：' + escHtmlNoop(qb.targetReader) + '\n文字感覺：' + escHtmlNoop(qb.toneFeeling) + '\n\n' +
+    '請用以下固定格式輸出（欄位名稱請照抄）：\n\n' +
+    '書名：\n副標：\n封面主視覺：（具體描述封面應該畫什麼畫面或場景）\n色彩與風格：\nCanva封面排版指引：（標題放哪裡、副標放哪裡、視覺元素大概怎麼安排）\n封面生圖指令：（一段可以直接貼到生圖工具的完整英文或中文指令，要具體到畫面內容、風格、構圖）\n\n' +
+    '不要捏造作者經歷或背景，封面指令只根據上面提供的書本內容發想。\n\n' +
+    buildStepBoundaryBlock('完成封面設計並輸出以上欄位', ['產生書內插畫指令（那是另一步的工作）'].concat(STEP_BOUNDARY_GENERIC_FORBIDDEN), STEP_BOUNDARY_GENERIC_WAITING),
+    vars
+  );
+}
+const QUICKBOOK_COVER_FIELD_LABELS = ['書名', '副標', '封面主視覺', '色彩與風格', 'Canva封面排版指引', '封面生圖指令'];
+function parseQuickBookCover(content) {
+  function grab(label) { return extractLabeledBlockValue(content, label, QUICKBOOK_COVER_FIELD_LABELS); }
+  return {
+    title: grab('書名') || '',
+    subtitle: grab('副標') || '',
+    visualDirection: grab('封面主視覺') || '',
+    imagePrompt: grab('封面生圖指令') || '',
+    layoutSuggestion: grab('Canva封面排版指引') || ''
+  };
+}
+
+// ── #07 Quick Book v3.0｜Step5-A 全書插畫規劃：Prompt + Parser（圖文/繪本/照片模式才需要）──
+function buildQuickBookIllustrationPlanPrompt(work) {
+  const qb = ensureQuickBookDefaults(work);
+  const pagesNeedingImage = qb.pages.filter(function (p) { return p.imageNeeded; });
+  const pagesText = pagesNeedingImage.map(function (p) { return '第' + p.pageNumber + '頁（' + p.pageTitle + '）：' + p.imageDescription; }).join('\n');
+  const vars = { work_name: work.name, goal: work.name };
+  return fillTemplate(
+    '你是小書出版流程中的插畫規劃師。\n\n請根據以下需要圖片的頁面，規劃全書畫風一致性，並幫每一頁補上具體可用的生圖指令。\n\n' +
+    '書名：' + escHtmlNoop(qb.title) + '\n視覺模式：' + (VISUAL_MODE_DISPLAY_TEXT[qb.visualPlan.visualMode] || '') + '\n\n需要圖片的頁面：\n' + (pagesText || '（無）') + '\n\n' +
+    '請先用以下固定格式輸出全書共用的畫風設定（欄位名稱請照抄）：\n\n' +
+    '共用畫風：\n主角人物或品牌主體固定描述：（確保每一頁畫出來是同一個角色/風格，沒有明確主角可填「無固定角色」）\n色彩基調：\n建議生圖工具：\n\n' +
+    '接著逐頁輸出生圖指令，用「【第N頁插畫】」開頭：\n\n【第1頁插畫】\n生圖指令：（完整具體的指令，要包含上面的共用畫風與主角描述，確保跟其他頁一致）\n\n（依此類推，只需要涵蓋上面列出「需要圖片」的頁面）\n\n' +
+    '不要捏造作者經歷或背景。\n\n' +
+    buildStepBoundaryBlock('完成插畫規劃並輸出以上欄位', ['重新改寫頁面正文內容'].concat(STEP_BOUNDARY_GENERIC_FORBIDDEN), STEP_BOUNDARY_GENERIC_WAITING),
+    vars
+  );
+}
+const QUICKBOOK_ILLUSTRATION_FIELD_LABELS = ['共用畫風', '主角人物或品牌主體固定描述', '色彩基調', '建議生圖工具'];
+function parseQuickBookIllustrationPlan(content) {
+  function grab(label) { return extractLabeledBlockValue(content, label, QUICKBOOK_ILLUSTRATION_FIELD_LABELS); }
+  const perPage = {};
+  const blocks = content.split(/【第\s*(\d+)\s*頁插畫】/).slice(1);
+  for (let i = 0; i < blocks.length; i += 2) {
+    const pageNumber = parseInt(blocks[i], 10);
+    const block = blocks[i + 1] || '';
+    const prompt = extractLabeledBlockValue(block, '生圖指令', ['生圖指令']);
+    if (Number.isFinite(pageNumber) && prompt) perPage[pageNumber] = prompt;
+  }
+  return {
+    visualStyle: grab('共用畫風') || '',
+    characterConsistency: grab('主角人物或品牌主體固定描述') || '',
+    colorMood: grab('色彩基調') || '',
+    imageToolSuggestion: grab('建議生圖工具') || '',
+    perPagePrompts: perPage
+  };
+}
+
+// ── #07 Quick Book v3.0｜Step5-B／C 本地組裝內容（不需要 AI 往返，純格式化既有已確認資料）──
+// CEO 指令「不要輸出多餘引導語」「不要把尚未完成寫成完成」：這裡只組裝使用者已經在
+// Step2～Step5-A 確認過的資料，不新增任何內容、不呼叫 AI，所以不會有「AI 亂寫」的風險，
+// 也符合「Canva逐頁交接包／乾淨原稿」本質上是既有資料重新排版，不是新的創作。
+function quickBookPageTypeLabel(type) {
+  return { cover: '封面', title: '書名頁', content: '內容頁', ending: '結尾頁' }[type] || '內容頁';
+}
+function buildQuickBookManuscriptText(work) {
+  const qb = ensureQuickBookDefaults(work);
+  const toc = qb.pages.map(function (p) { return '第' + p.pageNumber + '頁　' + quickBookPageTypeLabel(p.pageType) + '　' + (p.pageTitle || ''); }).join('\n');
+  const body = qb.pages.map(function (p) {
+    return '【第' + p.pageNumber + '頁｜' + quickBookPageTypeLabel(p.pageType) + '】\n' + (p.pageTitle ? p.pageTitle + '\n\n' : '') + (p.pageText || '') +
+      (p.imageNeeded ? '\n\n（圖片位置：' + (p.layoutSuggestion || p.imageDescription || '見排版建議') + '）' : '');
+  }).join('\n\n---\n\n');
+  return '書名：' + (qb.title || '（未命名）') + '\n副標：' + (qb.subtitle || '（無）') + '\n作者：' + (qb.authorName || '（未填寫）') + '\n\n【目錄】\n' + toc + '\n\n' + body;
+}
+// P0-2（CEO 真人驗收，2026-08-05）：逐頁獨立複製——原本只有整本一起複製，貼到 Canva／
+// Google Docs／Claude／ChatGPT 逐頁使用時還要自己從整份原稿裡找到那一頁、切出來，
+// 這裡讓每一頁都能各自複製，不用先複製整本再自己剪貼。
+function buildQuickBookPageCopyText(page) {
+  return (page.pageTitle ? page.pageTitle + '\n\n' : '') + (page.pageText || '') +
+    (page.imageNeeded ? '\n\n（圖片位置：' + (page.layoutSuggestion || page.imageDescription || '見排版建議') + '）' : '');
+}
+function buildQuickBookCoverHandoffText(work) {
+  const qb = ensureQuickBookDefaults(work);
+  return '【封面交接包】\n書名：' + (qb.title || '（未命名）') + '\n副標：' + (qb.subtitle || '（無）') + '\n\n封面主視覺：' + (qb.cover.visualDirection || '（尚未完成封面設計，請先回上一步完成封面）') +
+    '\n\nCanva 封面排版指引：' + (qb.cover.layoutSuggestion || '（無）') + '\n\n封面生圖指令：\n' + (qb.cover.imagePrompt || '（尚未產生）') +
+    '\n\n提醒：圖片需在外部工具製作並由使用者自行保存，工作台不會保存圖片原檔。';
+}
+// 總策長裁示（2026-08-05）：Canva 交接包依視覺模式差異化——純文字模式不要顯示大量空白
+// 圖片欄位（那樣使用者會誤以為漏東西沒填），有圖模式才輸出完整圖片欄位。
+function buildQuickBookPagesHandoffText(work) {
+  const qb = ensureQuickBookDefaults(work);
+  const isTextMode = qb.visualPlan.visualMode === 'text';
+  const body = qb.pages.map(function (p) {
+    let block = '頁碼：' + p.pageNumber + '\n頁面類型：' + quickBookPageTypeLabel(p.pageType) + '\n頁面標題：' + (p.pageTitle || '') + '\n文字：\n' + (p.pageText || '');
+    if (!isTextMode) {
+      block += '\n圖片位置：' + (p.imageNeeded ? (p.layoutSuggestion || p.imageDescription || '需要圖片') : '不需要圖片');
+    }
+    return block;
+  }).join('\n\n---\n\n');
+  return '【逐頁內容交接包（Canva 用）】\n書名：' + (qb.title || '（未命名）') + '\n總頁數：' + qb.pages.length + '\n\n' + body +
+    '\n\n【PDF 匯出步驟】\n1. 把封面與每頁內容依序貼進 Canva（或 Google Docs）對應頁面。' + (isTextMode ? '' : '\n2. 依「插畫／照片交接包」把圖片放到指定位置。') + '\n' + (isTextMode ? '2' : '3') + '. 全部頁面確認無誤後，使用 Canva／Google Docs 的「下載／匯出為 PDF」功能。\n' + (isTextMode ? '3' : '4') + '. 在手機或電腦確認可以正常打開 PDF，再回工作台按「我已取得 PDF」。';
+}
+function buildQuickBookIllustrationHandoffText(work) {
+  const qb = ensureQuickBookDefaults(work);
+  const mode = qb.visualPlan.visualMode;
+  const pagesWithImage = qb.pages.filter(function (p) { return p.imageNeeded; });
+  if (mode === 'text' || !pagesWithImage.length) return '【插畫／照片交接包】\n這本小書是純文字模式，沒有頁面需要圖片。';
+  if (mode === 'photo') {
+    const body = pagesWithImage.map(function (p) {
+      return '第' + p.pageNumber + '頁（' + (p.pageTitle || '') + '）\n建議照片內容：' + (p.photoDescription || p.imageDescription || '（尚未填寫）') +
+        '\n擺放位置：' + (p.placement || '（未指定，建議置中）') + '\n裁切建議：' + (p.cropSuggestion || '（未指定）') + '\n圖說建議：' + (p.captionSuggestion || '（未指定）') +
+        (p.imagePrompt ? '\n沒有照片時的替代 AI 插畫指令：' + p.imagePrompt : '');
+    }).join('\n\n');
+    return '【插畫／照片交接包（照片模式）】\n逐頁照片配置：\n' + body + '\n\n提醒：實際照片需由使用者自行準備並保存，工作台不會保存照片原檔。';
+  }
+  const shared = '共用畫風：' + (qb.visualPlan.visualStyle || '（未設定）') + '\n主角／主體固定描述：' + (qb.visualPlan.characterConsistency || '（未設定）') + '\n色彩基調：' + (qb.visualPlan.colorMood || '（未設定）') + '\n建議生圖工具：' + (qb.visualPlan.imageToolSuggestion || '（未設定）');
+  const body = pagesWithImage.map(function (p) {
+    return '第' + p.pageNumber + '頁（' + (p.pageTitle || '') + '）\n' + (p.imagePrompt || p.imageDescription || '（尚未產生生圖指令）');
+  }).join('\n\n');
+  return '【插畫／照片交接包】\n' + shared + '\n\n逐頁圖片需求：\n' + body + '\n\n提醒：圖片需在外部工具製作並由使用者自行保存，工作台不會保存圖片原檔。';
+}
+
+// ── #07 Quick Book v3.0｜Step6 保存與分享：書籍介紹／LINE／社群分享文案（本地組裝）────────
+// 總策長裁示（2026-08-05，十三節）：Book Document 對齊——P0 階段資料仍實際存在
+// work.quickBook.visualPlan，這裡只是提供一份「已驗證資料」的統一映射視圖，供之後
+// Canva／圖片AI／Living Book 等 Handoff builder 直接讀取，不用各自重新猜測目前的視覺模式，
+// 避免不同呼叫端各自解讀出不一致的結果。
+function buildQuickBookDocumentSnapshot(work) {
+  const qb = ensureQuickBookDefaults(work);
+  return {
+    metadata: { visualMode: qb.visualPlan.visualMode, visualModeSource: qb.visualPlan.visualModeSource, visualModeConfirmed: qb.visualPlan.visualModeConfirmed },
+    pages: qb.pages.map(function (p) {
+      return { pageNumber: p.pageNumber, imageNeeded: p.imageNeeded, imageDescription: p.imageDescription, imagePrompt: p.imagePrompt };
+    }),
+    assets: qb.visualPlan.pageIllustrations.concat(qb.visualPlan.pagePhotos),
+    status: { illustrationsConfirmed: qb.delivery.illustrationsConfirmed }
+  };
+}
+function buildQuickBookIntroText(work) {
+  const qb = ensureQuickBookDefaults(work);
+  return '《' + (qb.title || work.name) + '》' + (qb.subtitle ? '　' + qb.subtitle : '') + '\n\n' + (qb.mainContent || '') + (qb.takeaway ? '\n\n希望讀者：' + qb.takeaway : '') + '\n\n共 ' + qb.pages.length + ' 頁。';
+}
+function buildQuickBookShareDraft(channel, work) {
+  const qb = ensureQuickBookDefaults(work);
+  const intro = buildQuickBookIntroText(work);
+  if (channel === 'LINE') return '📖 新小書完成：《' + (qb.title || work.name) + '》\n' + (qb.mainContent || '');
+  return intro + '\n\n#小書 #' + (qb.title ? qb.title.replace(/[《》\s]/g, '') : '創作日常');
+}
+
+// ── #07 Quick Book v3.0｜Step3 架構確認畫面 ─────────────────────────────────────
+function renderQuickBookArchitectureConfirm() {
+  const work = getActiveWork();
+  const qb = ensureQuickBookDefaults(work);
+  document.getElementById('qba-title').textContent = qb.title || work.name;
+  document.getElementById('qba-arrangement').textContent = qb.architectureArrangement || '';
+  document.getElementById('qba-units').innerHTML = qb.architecture.map(function (u, i) {
+    return '<div class="card" style="margin-bottom:8px"><b>' + (i + 1) + '. ' + escHtml(u.title) + '</b><div class="line" style="margin-top:4px">' + escHtml(u.description) + '</div></div>';
+  }).join('');
+}
+function confirmQuickBookArchitecture() {
+  const work = getActiveWork();
+  const qb = ensureQuickBookDefaults(work);
+  qb.architectureConfirmed = true;
+  saveState();
+  quickBookStage = 'firstpage';
+  showScreen('screen-copy-to-ai');
+}
+function reviseQuickBookArchitecture() {
+  quickBookStage = 'architecture';
+  showScreen('screen-paste-back');
+}
+function backFromQuickBookArchitecture() {
+  const work = getActiveWork();
+  work.currentStepIndex = Math.max(0, work.currentStepIndex - 1);
+  saveState();
+  showScreen('screen-work-detail');
+}
+
+// ── #07 Quick Book v3.0｜Step2 視覺方向確認畫面（總策長裁示新增，2026-08-05）───────────────
+// 白話呈現四個選項（不顯示 text/illustrated 這種內部代碼），使用者主動確認後，
+// visualMode 才正式生效——這是唯一寫入 qb.visualPlan.visualMode 的地方，Step4／Step5／
+// 插畫規劃都只讀不寫，避免 AI 事後悄悄覆蓋使用者已確認的視覺方向。
+function renderQuickBookDirectionConfirm() {
+  const work = getActiveWork();
+  const qb = ensureQuickBookDefaults(work);
+  document.getElementById('qbd-title').textContent = qb.title || work.name;
+  document.getElementById('qbd-summary').innerHTML =
+    '<div class="line"><b>主要內容：</b>' + escHtml(qb.mainContent || '（未填寫）') + '</div>' +
+    '<div class="line"><b>主要讀者：</b>' + escHtml(qb.targetReader || '（未填寫）') + '</div>' +
+    '<div class="line"><b>建議頁數：</b>' + qb.pageCount + '</div>';
+  document.getElementById('qbd-mode-options').innerHTML = ['text', 'illustrated', 'picture_book', 'photo'].map(function (m) {
+    return '<div class="template-pick' + (qb.visualPlan.visualMode === m ? ' selected' : '') + '" onclick="chooseQuickBookDirectionMode(\'' + m + '\')">' + escHtml(VISUAL_MODE_DISPLAY_TEXT[m]) + '</div>';
+  }).join('');
+}
+function chooseQuickBookDirectionMode(mode) {
+  const work = getActiveWork();
+  const qb = ensureQuickBookDefaults(work);
+  qb.visualPlan.visualMode = mode;
+  saveState();
+  renderQuickBookDirectionConfirm();
+}
+function confirmQuickBookDirection() {
+  const work = getActiveWork();
+  const qb = ensureQuickBookDefaults(work);
+  qb.visualPlan.visualModeConfirmed = true;
+  qb.visualPlan.visualModeSource = (qb.visualPlan.visualMode === quickBookDirectionAiSuggestedMode) ? 'ai_recommended' : 'user_confirmed';
+  qb.visualPlan.visualModeUpdatedAt = new Date().toISOString();
+  saveState();
+  work.currentStepIndex += 1;
+  saveState();
+  showScreen('screen-work-detail');
+}
+
+// ── #07 Quick Book v3.0｜Step3 第一頁完成品（書頁卡片） ───────────────────────────
+function renderQuickBookFirstPage() {
+  const work = getActiveWork();
+  const qb = ensureQuickBookDefaults(work);
+  const p = qb.pages[0] || { pageNumber: 1, pageTitle: '', pageText: '', imageNeeded: false, imageDescription: '', layoutSuggestion: '' };
+  document.getElementById('qbp-page-card').innerHTML =
+    '<div class="quickbook-page-card">' +
+    '<div class="quickbook-page-number">第 ' + p.pageNumber + ' 頁</div>' +
+    '<div class="quickbook-page-title">' + escHtml(p.pageTitle) + '</div>' +
+    '<div class="quickbook-page-text">' + escHtml(p.pageText).replace(/\n/g, '<br>') + '</div>' +
+    (p.imageNeeded ? '<div class="quickbook-page-image-slot">🖼️ ' + escHtml(p.imageDescription || '圖片預留區') + '</div>' : '') +
+    '<div class="quickbook-page-layout-note">排版：' + escHtml(p.layoutSuggestion || '（無特別安排）') + '</div>' +
+    '<div class="quickbook-page-nav">← 上一頁　｜　下一頁 →（完成全書內容後可逐頁瀏覽）</div>' +
+    '</div>';
+}
+function confirmQuickBookFirstPage() {
+  const work = getActiveWork();
+  const qb = ensureQuickBookDefaults(work);
+  qb.firstPageConfirmed = true;
+  work.currentStepIndex += 1;
+  saveState();
+  showScreen('screen-work-detail');
+}
+function reviseQuickBookFirstPage() {
+  quickBookStage = 'firstpage';
+  showScreen('screen-paste-back');
+}
+function backFromQuickBookFirstPage() {
+  showScreen('screen-quickbook-architecture-confirm');
+}
+
+// ── #07 Quick Book v3.0｜Step5 完成電子書：三個可收合區塊 A／B／C ─────────────────
+function openQuickBookCoverPrompt() { quickBookStage = 'cover'; showScreen('screen-copy-to-ai'); }
+function openQuickBookIllustrationPrompt() { quickBookStage = 'illustration'; showScreen('screen-copy-to-ai'); }
+function toggleQuickBookSection(id) {
+  const el = document.getElementById(id);
+  if (el) el.classList.toggle('open');
+}
+// 十九節：「6｜逐頁複製」是逐頁生圖指令／排版成圖指令實際被複製出去的地方，Gate 未過
+// 前不得開啟。只包這一個區塊，不動共用的 toggleQuickBookSection()（其他所有收合區塊都
+// still 用原本那個，不受影響）。
+function toggleQuickBookV4CanvaPerPageSection() {
+  if (!quickBookV4RequirePageReviewGate()) return;
+  toggleQuickBookSection('qbv4h-canva-perpage-section');
+}
+function confirmQuickBookDelivery(key) {
+  const work = getActiveWork();
+  const qb = ensureQuickBookDefaults(work);
+  qb.delivery[key] = true;
+  qb.updatedAt = new Date().toISOString();
+  saveState();
+  renderQuickBookComplete();
+}
+function quickBookNeedsImages(qb) {
+  return qb.visualPlan.visualMode !== 'text' || qb.pages.some(function (p) { return p.imageNeeded; });
+}
+
+// ── #07 Quick Book v3.0｜圖片完整性 Validator（總策長裁示新增，2026-08-05）─────────────────
+// 責任分離：Parser 只負責把 AI 回覆的文字轉成 pages[] 資料，不判斷「這樣算不算完成」；
+// 這裡的 Validator 才是唯一判斷「圖片規劃是否符合這本書已確認的視覺模式」的地方；
+// Controller（submitPasteBack）依 Validator 的結果決定要保存還是進 Recovery Flow；
+// UI（Step5 進度顯示）依同一份 Validator 結果顯示白話訊息——四層各自只做自己的事，
+// 不要在 Parser 或 UI 裡各自重新判斷一次「夠不夠圖」，那樣容易兩處邏輯不一致。
+function validateQuickBookVisualCoverage(qb) {
+  const mode = qb.visualPlan.visualMode;
+  const contentPages = qb.pages.filter(function (p) { return p.pageType === 'content'; });
+  const imagePages = qb.pages.filter(function (p) { return p.imageNeeded; });
+  const result = {
+    valid: true, recoverable: true, mode: mode,
+    imagePageCount: imagePages.length, requiredMinimum: 0,
+    missingPageNumbers: [], errors: [], warnings: []
+  };
+
+  if (mode === 'text') return result; // 純文字模式即使全書無圖也算通過
+
+  if (mode === 'illustrated') {
+    result.requiredMinimum = Math.max(1, Math.ceil(contentPages.length * 0.3));
+    const incomplete = imagePages.filter(function (p) { return !p.imageDescription || !p.imagePrompt; });
+    const noImageContentPages = contentPages.filter(function (p) { return !p.imageNeeded; }).map(function (p) { return p.pageNumber; });
+    if (imagePages.length < result.requiredMinimum) {
+      result.valid = false;
+      result.errors.push('visual_coverage_missing');
+      result.missingPageNumbers = noImageContentPages;
+    }
+    if (incomplete.length) {
+      result.valid = false;
+      result.errors.push('image_data_incomplete');
+      result.missingPageNumbers = Array.from(new Set(result.missingPageNumbers.concat(incomplete.map(function (p) { return p.pageNumber; }))));
+    }
+    return result;
+  }
+
+  if (mode === 'picture_book') {
+    const coverPage = qb.pages.find(function (p) { return p.pageType === 'cover'; });
+    const incompleteContent = contentPages.filter(function (p) { return !p.imageNeeded || !p.imageDescription || !p.imagePrompt; });
+    const missing = incompleteContent.map(function (p) { return p.pageNumber; });
+    if (coverPage && (!coverPage.imageNeeded || !coverPage.imagePrompt)) missing.push(coverPage.pageNumber);
+    if (missing.length) {
+      result.valid = false;
+      result.errors.push('visual_coverage_missing');
+      result.missingPageNumbers = missing;
+    }
+    return result;
+  }
+
+  if (mode === 'photo') {
+    const mainPages = qb.pages.filter(function (p) { return p.pageType === 'content' || p.pageType === 'cover'; });
+    const missing = mainPages.filter(function (p) { return !(p.photoDescription || p.imageDescription || p.imagePrompt); });
+    if (missing.length) {
+      result.valid = false;
+      result.errors.push('visual_coverage_missing');
+      result.missingPageNumbers = missing.map(function (p) { return p.pageNumber; });
+    }
+    return result;
+  }
+
+  return result;
+}
+function renderQuickBookComplete() {
+  const work = getActiveWork();
+  const qb = ensureQuickBookDefaults(work);
+  const needsImages = quickBookNeedsImages(qb);
+
+  document.getElementById('qbc-title').textContent = qb.title || work.name;
+
+  // A｜封面與圖片
+  document.getElementById('qbc-cover-box').innerHTML =
+    (qb.cover.imagePrompt
+      ? '<div class="section-label">封面主視覺</div><div class="line">' + escHtml(qb.cover.visualDirection) + '</div>' +
+        copyReadyActionsHtml(qb.cover.imagePrompt, '已複製封面生圖指令') +
+        '<div class="section-label" style="margin-top:10px">Canva 封面排版指引</div><div class="line">' + escHtml(qb.cover.layoutSuggestion) + '</div>'
+      : '<div class="notice">還沒有封面設計，先取得封面指令。</div>') +
+    '<button class="btn outline" style="margin-top:10px" onclick="openQuickBookCoverPrompt()">🎨 ' + (qb.cover.imagePrompt ? '重新產生封面指令' : '取得封面設計指令') + '</button>' +
+    '<div class="notice" style="margin-top:10px">圖片需在外部工具製作並由使用者自行保存，工作台不會保存圖片原檔。</div>' +
+    (qb.delivery.coverConfirmed
+      ? '<div class="notice" style="margin-top:8px">✅ 封面已確認</div>'
+      : '<button class="btn gold" style="margin-top:10px" onclick="confirmQuickBookDelivery(\'coverConfirmed\')">我已完成封面</button>');
+
+  // 總策長裁示（2026-08-05）：Step5 進度顯示改成主動列出「X／Y 個內容頁已完成」＋缺頁頁碼，
+  // 不能只是預設收合等使用者自己發現——這裡跟 Step5 完成門檻用同一份 Validator 結果，
+  // 不另外重新判斷一次。
+  const validation = validateQuickBookVisualCoverage(qb);
+  const illustrationBox = document.getElementById('qbc-illustration-box');
+  if (!needsImages) {
+    illustrationBox.innerHTML = '<div class="notice">這本小書是純文字模式，不需要插畫。</div>';
+  } else {
+    const contentPages = qb.pages.filter(function (p) { return p.pageType === 'content'; });
+    const mode = qb.visualPlan.visualMode;
+    let progressLabel = '圖片規劃';
+    let denominator = contentPages.length;
+    let numerator = contentPages.length - (validation.missingPageNumbers || []).filter(function (n) { return contentPages.some(function (p) { return p.pageNumber === n; }); }).length;
+    if (mode === 'picture_book') progressLabel = '繪本頁面';
+    if (mode === 'photo') { progressLabel = '照片配置'; const mainPages = qb.pages.filter(function (p) { return p.pageType === 'content' || p.pageType === 'cover'; }); denominator = mainPages.length; numerator = mainPages.length - (validation.missingPageNumbers || []).length; }
+    const progressText = '<div class="notice" style="background:' + (validation.valid ? 'var(--green-pale)' : 'var(--gold-pale)') + '">' + progressLabel + '：' + Math.max(0, numerator) + '／' + denominator + ' 頁已完成' +
+      (validation.valid ? '' : '<br>尚缺圖片規劃，請先完成（缺頁：第' + validation.missingPageNumbers.join('、第') + '頁）') + '</div>';
+    illustrationBox.innerHTML = progressText +
+      (qb.visualPlan.visualStyle
+        ? '<div class="section-label" style="margin-top:10px">共用畫風</div><div class="line">' + escHtml(qb.visualPlan.visualStyle) + '</div>' +
+          copyReadyActionsHtml(buildQuickBookIllustrationHandoffText(work), '已複製插畫交接包')
+        : '<div class="notice" style="margin-top:8px">還沒有插畫規劃，先取得插畫指令。</div>') +
+      '<button class="btn outline" style="margin-top:10px" onclick="openQuickBookIllustrationPrompt()">🖼️ ' + (validation.valid ? '重新產生插畫規劃' : 'AI 幫我補圖片規劃') + '</button>' +
+      (qb.delivery.illustrationsConfirmed
+        ? '<div class="notice" style="margin-top:8px">✅ 插畫已確認</div>'
+        : (validation.valid
+          ? '<button class="btn gold" style="margin-top:10px" onclick="confirmQuickBookDelivery(\'illustrationsConfirmed\')">我已完成並保存插畫／照片原檔</button>'
+          : ''));
+  }
+
+  // B｜建立可修改原稿
+  const manuscript = buildQuickBookManuscriptText(work);
+  const perPageCopyList = '<div class="section-label" style="margin-top:14px">逐頁複製（貼到 Canva／Google Docs／Claude／ChatGPT 逐頁使用）</div>' +
+    qb.pages.map(function (p) {
+      return '<div class="card" style="margin-top:6px"><div class="line"><b>第' + p.pageNumber + '頁　' + quickBookPageTypeLabel(p.pageType) + (p.pageTitle ? '　' + escHtml(p.pageTitle) : '') + '</b></div>' +
+        copyReadyActionsHtml(buildQuickBookPageCopyText(p), '已複製第' + p.pageNumber + '頁') + '</div>';
+    }).join('');
+  document.getElementById('qbc-manuscript-box').innerHTML =
+    copyReadyActionsHtml(manuscript, '已複製乾淨原稿') +
+    '<button class="btn outline" style="margin-top:8px" onclick="exportQuickBookManuscript()">⬇ 匯出 TXT（' + (qb.title || work.name) + '）</button>' +
+    '<a class="btn outline" style="margin-top:8px;text-decoration:none;display:block;text-align:center" href="https://docs.google.com" target="_blank" rel="noopener">📝 開啟 Google Docs</a>' +
+    '<div class="notice" style="margin-top:8px">貼到 Google Docs 或 Word 後，就是一份可以自由修改的原稿。</div>' +
+    (qb.delivery.editableManuscriptConfirmed
+      ? '<div class="notice" style="margin-top:8px">✅ 可修改原稿已建立</div>'
+      : '<button class="btn gold" style="margin-top:10px" onclick="confirmQuickBookDelivery(\'editableManuscriptConfirmed\')">我已建立可修改原稿</button>') +
+    perPageCopyList;
+
+  // C｜製作 PDF 電子書
+  document.getElementById('qbc-canva-box').innerHTML =
+    '<div class="section-label">① 封面交接包</div>' + copyReadyActionsHtml(buildQuickBookCoverHandoffText(work), '已複製封面交接包') +
+    '<div class="section-label" style="margin-top:10px">② 逐頁內容交接包</div>' + copyReadyActionsHtml(buildQuickBookPagesHandoffText(work), '已複製逐頁內容交接包') +
+    '<div class="section-label" style="margin-top:10px">③ 插畫／照片交接包</div>' + copyReadyActionsHtml(buildQuickBookIllustrationHandoffText(work), '已複製插畫交接包') +
+    '<a class="btn outline" style="margin-top:10px;text-decoration:none;display:block;text-align:center" href="https://www.canva.com" target="_blank" rel="noopener">🎨 開啟 Canva</a>' +
+    '<div class="notice" style="margin-top:8px">Google Docs 也可以匯出 PDF，作為 Canva 的備援方案。完成後記得在手機確認找得到、打得開這份 PDF。</div>' +
+    (qb.delivery.pdfConfirmed
+      ? '<div class="notice" style="margin-top:8px">✅ PDF 已取得</div>'
+      : '<button class="btn gold" style="margin-top:10px" onclick="confirmQuickBookDelivery(\'pdfConfirmed\')">我已取得 PDF</button>');
+
+  // 總策長裁示修正完成條件（2026-08-05）：有圖模式（illustrated／picture_book／photo）
+  // 一定要 illustrationsConfirmed 才算完成，不能只因為畫面開啟過就視為已完成；純文字模式
+  // 不需要這個確認。
+  const ready = qb.delivery.coverConfirmed && (!needsImages || qb.delivery.illustrationsConfirmed) && qb.delivery.editableManuscriptConfirmed && qb.delivery.pdfConfirmed;
+  document.getElementById('qbc-continue-box').innerHTML = ready
+    ? '<button class="btn gold" onclick="advanceQuickBookToSaveShare()">✅ 作品完成，繼續下一步</button>'
+    : '<div class="notice">封面' + (needsImages ? '、插畫／照片' : '') + '、可修改原稿、PDF 都確認後，才能繼續下一步。</div>';
+}
+function exportQuickBookManuscript() {
+  const work = getActiveWork();
+  const qb = ensureQuickBookDefaults(work);
+  exportCopyReadyTextAsTxt(buildQuickBookManuscriptText(work), qb.title || work.name);
+}
+function advanceQuickBookToSaveShare() {
+  const work = getActiveWork();
+  work.currentStepIndex += 1;
+  saveState();
+  showScreen('screen-work-detail');
+}
+
+// ── #07 Quick Book v3.0｜Step6 保存與分享 ───────────────────────────────────────
+function chooseQuickBookShare(choice) {
+  const work = getActiveWork();
+  const qb = ensureQuickBookDefaults(work);
+  qb.shareChoice = choice;
+  saveState();
+  renderQuickBookSaveShare();
+}
+function toggleQuickBookBackup() {
+  const work = getActiveWork();
+  const qb = ensureQuickBookDefaults(work);
+  qb.delivery.backupConfirmed = true;
+  saveState();
+  renderQuickBookSaveShare();
+}
+function renderQuickBookSaveShare() {
+  const work = getActiveWork();
+  const qb = ensureQuickBookDefaults(work);
+  const needsImages = quickBookNeedsImages(qb);
+  document.getElementById('qbs-title').textContent = qb.title || work.name;
+
+  let checklist = '<div class="line">✅ 可修改原稿已保存</div><div class="line">✅ PDF 已保存</div>';
+  if (needsImages) checklist += '<div class="line">📌 別忘了保存封面／插畫圖檔原檔（在你的外部生圖工具或相簿裡）</div>';
+  checklist += qb.delivery.backupConfirmed
+    ? '<div class="line">✅ 已建立第二個位置的備份</div>'
+    : '<button class="btn outline" style="margin-top:8px" onclick="toggleQuickBookBackup()">📁 我已建立第二個位置的備份（例如雲端硬碟或另一個資料夾）</button>';
+  document.getElementById('qbs-checklist').innerHTML = checklist;
+
+  document.getElementById('qbs-share-choice').innerHTML = ['only_save', 'specific', 'public'].map(function (c) {
+    const label = { only_save: '只保存', specific: '分享給指定對象', public: '公開分享' }[c];
+    return '<div class="template-pick' + (qb.shareChoice === c ? ' selected' : '') + '" onclick="chooseQuickBookShare(\'' + c + '\')">' + label + '</div>';
+  }).join('');
+
+  const shareBox = document.getElementById('qbs-share-drafts');
+  if (qb.shareChoice && qb.shareChoice !== 'only_save') {
+    shareBox.style.display = 'block';
+    shareBox.innerHTML =
+      '<div class="section-label">書籍介紹</div>' + copyReadyActionsHtml(buildQuickBookIntroText(work), '已複製書籍介紹') +
+      '<div class="section-label" style="margin-top:10px">LINE 分享文案</div>' + copyReadyActionsHtml(buildQuickBookShareDraft('LINE', work), '已複製 LINE 文案') +
+      '<div class="section-label" style="margin-top:10px">社群分享文案</div>' + copyReadyActionsHtml(buildQuickBookShareDraft('social', work), '已複製社群文案') +
+      '<div class="notice" style="margin-top:8px">以上文案由你自己複製後手動分享，工作台不會自動幫你發布或公開任何內容。</div>';
+  } else {
+    shareBox.style.display = 'none';
+  }
+
+  const canFinish = qb.delivery.backupConfirmed && !!qb.shareChoice;
+  document.getElementById('qbs-finish-box').innerHTML = canFinish
+    ? '<button class="btn gold" onclick="finishQuickBook()">🎉 完成確認，結案</button>'
+    : '<div class="notice">請先完成上面的備份確認，並選擇分享方式（「只保存」也是有效選擇）。</div>';
+}
+// 小書完成：沿用 createFinalProduct() 既有的「彙整所有步驟成果」機制，額外把逐頁內容
+// 也整理進最終成品內容，讓成果庫看到的是真正完整的一本書，不是只有最後一步的文字。
+function finishQuickBook() {
+  const work = getActiveWork();
+  const project = getProject(work.projectId);
+  const qb = ensureQuickBookDefaults(work);
+  work.status = '已完成';
+  const final = createFinalProduct(state, work, project);
+  final.content = buildQuickBookManuscriptText(work) + '\n\n---\n\n【分享選擇】' + (qb.shareChoice === 'only_save' ? '只保存，不分享' : (qb.shareChoice === 'public' ? '公開分享' : '分享給指定對象'));
+  saveState();
+  showToast('小書已完成，已收進成果庫');
+  showScreen('screen-project');
+}
+
+// #07 Quick Book v3.0：電子書專案新增工作時，先選「小書」或「完整電子書」，兩個都是真正
+// 可用的入口（不是即將推出佔位），沿用商品行銷分類選擇畫面同一套寫法。刻意不新增出版分類
+// （CATEGORY_LIST／CATEGORY_EMOJI 不變），兩者的成果分類都還是既有的「電子書」。
+const EBOOK_CATEGORIES = [
+  { emoji: '📖', label: '小書', desc: '手機就能完成一本有封面、逐頁內容與必要圖片的小書', flowId: 'quickbook' },
+  { emoji: '📚', label: '完整電子書', desc: '較完整的電子書流程：大綱、資料蒐集、撰寫、潤稿、排版、發布', flowId: 'ebook' }
+];
+
+function renderEbookCategory() {
+  document.getElementById('ec-category-grid').innerHTML = EBOOK_CATEGORIES.map(function (c) {
+    return '<div class="pick-card" onclick="chooseEbookCategory(\'' + c.flowId + '\')">' +
+      '<div class="emoji">' + c.emoji + '</div><div class="label">' + escHtml(c.label) + '</div>' +
+      '<div class="option-sub" style="margin-top:4px">' + escHtml(c.desc) + '</div></div>';
+  }).join('');
+}
+
+function chooseEbookCategory(flowId) {
+  pendingFlowId = flowId;
+  selectedVideoType = null;
+  pendingWorkBrandChoice = 'brand';
+  showScreen('screen-add-work');
+}
+
 function openAddWork() {
   const project = getActiveProject();
   // 商品行銷專案先進分類選擇畫面，其他專案類型維持原本行為不變
   if (project.type === 'product') { showScreen('screen-product-category'); return; }
+  if (project.type === 'ebook') { showScreen('screen-ebook-category'); return; }
   pendingFlowId = PROJECT_TYPES[project.type] ? PROJECT_TYPES[project.type].flowId : 'custom';
   selectedVideoType = null;
   pendingWorkBrandChoice = 'brand';
@@ -3810,7 +9074,28 @@ function confirmNewWork() {
 function openWork(workId) {
   activeWorkId = workId;
   const work = getWork(workId);
+  if (work && work.flowId === 'quickbook') ensureQuickBookDefaults(work);
+  if (work && (work.flowId === 'quickbook_v4_practical' || work.flowId === 'quickbook_v4_creative')) ensureQuickBookV4Defaults(work);
   if (work && !work.started) { work.started = true; work.status = '進行中'; saveState(); }
+  // #7.1 Quick Book v4.0 POC：v4 工作重新開啟時，直接回到專屬的測試殼畫面，不要落到通用
+  // screen-work-detail（那個畫面是照 FLOWS.steps 走標準交給AI流程，Phase 1 的 v4 flowId
+  // 只有一個佔位 step，不是要讓使用者在那裡操作）。
+  if (work && work.flowId === 'quickbook_v4_practical') {
+    // Phase 2D（十一節）：重新開啟要回到「預覽或最後編輯頁」，不是每次都退回 Step1。
+    const v4p = ensureQuickBookV4Defaults(work);
+    if (v4p.lastCompletedStep === 'book_built') { showScreen('screen-quickbook-v4-preview'); return; }
+    if (v4p.lastCompletedStep === 'structure') { showScreen('screen-quickbook-v4-practical-structure'); return; }
+    if (v4p.lastCompletedStep === 'inventory') { showScreen('screen-quickbook-v4-practical-inventory'); return; }
+    showScreen('screen-quickbook-v4-practical'); return;
+  }
+  if (work && work.flowId === 'quickbook_v4_creative') {
+    const v4c = ensureQuickBookV4Defaults(work);
+    if (v4c.lastCompletedStep === 'book_built') { showScreen('screen-quickbook-v4-preview'); return; }
+    // 十三節：還沒選過 preset 的既有作品（例如本輪上線前就建立的舊工作）重新開啟時，
+    // 先回到 preset 選擇畫面，不是直接跳到已有故事內容／需要AI提問協助二選一。
+    if (!v4c.book.topicPresetId) { showScreen('screen-quickbook-v4-story-preset'); return; }
+    showScreen('screen-quickbook-v4-creative'); return;
+  }
   if (work && work.briefDiscussing) { showScreen('screen-copy-to-ai'); return; }
   if (work && shouldShowBriefChoice(work)) { showScreen('screen-brief-choice'); return; }
   showScreen('screen-work-detail');
@@ -3867,12 +9152,42 @@ function copyCleanInstructionOnly() {
   const work = getActiveWork();
   copyPlainText(buildCleanInstructionText(work.id), '已複製乾淨指令，可以直接貼上使用');
 }
+// 技術長 Gate A Must Fix（2026-08-07）：原本不管 document.execCommand('copy') 實際回傳
+// true／false，只要沒丟例外就一律當作成功——但大多數瀏覽器複製失敗時是「安靜回傳
+// false」，不會丟例外，導致使用者以為已經複製成功，其實剪貼簿是空的。改成看回傳值，
+// 真的失敗時才顯示「手動複製區」（可選取文字的對話框），不是只跳一句「請手動選取」
+// 卻沒有任何地方讓使用者真的選取。回傳值供 copyReady() 判斷要不要顯示成功狀態。
 function fallbackCopy(text) {
   const ta = document.createElement('textarea');
   ta.value = text; ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;';
   document.body.appendChild(ta); ta.select();
-  try { document.execCommand('copy'); showToast('已複製！'); } catch (e) { showToast('複製失敗，請手動選取文字複製'); }
+  let ok = false;
+  try { ok = document.execCommand('copy'); } catch (e) { ok = false; }
   document.body.removeChild(ta);
+  if (!ok) { showToast('複製失敗，請手動選取文字複製'); showManualCopyFallback(text); }
+  return ok;
+}
+// 複製失敗時的手動複製區：一個可選取的唯讀 textarea，開啟時自動全選，手機上長按或
+// 雙擊即可複製——這是「手動複製區」實際存在的畫面元件，不是只有一句文字提示。
+function showManualCopyFallback(text) {
+  closeManualCopyFallback();
+  const overlay = document.createElement('div');
+  overlay.id = 'manual-copy-fallback-dialog';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.6);z-index:99999;overflow:auto;padding:20px;box-sizing:border-box';
+  overlay.innerHTML = '<div class="card" style="max-width:480px;margin:0 auto">' +
+    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">' +
+    '<div class="section-label" style="margin:0">自動複製失敗，請手動選取複製</div>' +
+    '<button class="tool-delete" onclick="closeManualCopyFallback()">✕ 關閉</button></div>' +
+    '<textarea id="manual-copy-fallback-textarea" readonly style="width:100%;min-height:160px;box-sizing:border-box;font-size:13px;padding:8px" onclick="this.select()"></textarea>' +
+    '<div class="notice" style="margin-top:8px">請長按（或點兩下）選取上面全部文字，再用手機的「複製」功能，就能貼到其他地方使用。</div>' +
+    '</div>';
+  document.body.appendChild(overlay);
+  const ta = document.getElementById('manual-copy-fallback-textarea');
+  if (ta) { ta.value = text; ta.focus(); ta.select(); }
+}
+function closeManualCopyFallback() {
+  const existing = document.getElementById('manual-copy-fallback-dialog');
+  if (existing) existing.remove();
 }
 
 // ── 貼回成果 ──────────────────────────────────────────────────
@@ -3982,6 +9297,9 @@ function showPasteBackWarning(html, regenerateInstructionText) {
     pasteBackRegenerateInstructionText = '';
     regenBtn.style.display = 'none';
   }
+  // #07 Quick Book v3.0：「改成純文字版」是圖片完整性 Recovery 專屬的第四個選項，預設隱藏，
+  // 只有 Step4 圖片完整性驗證失敗時才由呼叫端另外顯示，避免其他 Flow 的一般警告也跑出這顆按鈕。
+  document.getElementById('pb-warning-text-only-btn').style.display = 'none';
 }
 function copyPasteBackRegenerateInstruction() {
   copyPlainText(pasteBackRegenerateInstructionText, '已複製，請貼給你的 AI');
@@ -3997,7 +9315,7 @@ function submitPasteBack() {
   // Prompt 2.0（成果純淨性）：先剝離「📋 請複製…貼回工作台」這類操作提醒行，再進行任何
   // 後續判斷／解析——這樣 video 的逐幕解析、song 的歌名歌詞檢查，都不會被這行文字污染到
   // 最後一個欄位，最終存進正式成果的內容也一律是乾淨的，適用所有 Flow，不是只有 video。
-  const content = stripCopyBackReminderLine((textarea.value || '').trim());
+  let content = stripCopyBackReminderLine((textarea.value || '').trim());
   if (!content) { showToast('請先貼上 AI 給你的內容'); return; }
 
   if (looksLikeUnselectedABResult(content)) {
@@ -4011,6 +9329,431 @@ function submitPasteBack() {
     saveState();
     lastSubmittedResultId = briefResult.id;
     showScreen('screen-satisfaction');
+    return;
+  }
+
+  // #07 Quick Book v3.0：'architecture'／'firstpage'／'cover'／'illustration' 都不是走標準
+  // screen-satisfaction 推進（各自有專屬確認畫面），'direction'／'fullcontent' 則是解析後仍走
+  // 標準確認流程——跟其他 Flow 的特例判斷（video 逐幕解析、poster 視覺設計驗證）放在同一個
+  // submitPasteBack() 裡，是既有慣例，不是另外開一條新路徑。
+  if (work.flowId === 'quickbook' && quickBookStage) {
+    const qb = ensureQuickBookDefaults(work);
+    const stage = quickBookStage;
+    // P0 Bug 修正（CEO 真人驗收，2026-08-05）：AI 有時會把 Prompt 結尾附上、要求 AI 遵守的
+    // 【Step Boundary】區塊，原樣或改寫後回貼在自己的回覆最後（例如「本次工作只完成…」
+    // 「等待使用者回到工作台…」），這段從來就不是正式成果的一部分，不該進到任何一個
+    // Quick Book Parser 裡解析——一律先切掉【Step Boundary】（含）之後的內容，六個 Step
+    // 共用同一次處理，不必每個 Parser 各自防一次。
+    content = stripAfterQuickBookStepBoundary(content);
+    if (stage === 'direction') {
+      const parsed = parseQuickBookDirection(content);
+      qb.title = parsed.title; qb.subtitle = parsed.subtitle; qb.mainContent = parsed.mainContent;
+      qb.targetReader = parsed.targetReader; qb.takeaway = parsed.takeaway; qb.pageCount = parsed.pageCount;
+      qb.toneFeeling = parsed.toneFeeling;
+      // 總策長裁示（2026-08-05）：視覺模式先當成 AI 建議存進去，還不算「已確認」——
+      // 真正的確認要等使用者在 screen-quickbook-direction-confirm 主動看過白話說明、
+      // 按下確認才算數，這裡只是把 AI 的建議值帶進那個畫面當預設選項。
+      qb.visualPlan.visualMode = parsed.visualMode;
+      qb.visualPlan.visualModeSource = 'ai_recommended';
+      qb.visualPlan.visualModeConfirmed = false;
+      quickBookDirectionAiSuggestedMode = parsed.visualMode;
+      qb.updatedAt = new Date().toISOString();
+      const r = makeResult(state, work, project, work.currentStepIndex, content, false);
+      work.stepResultIds[work.currentStepIndex] = r.id;
+      textarea.value = ''; saveState();
+      lastSubmittedResultId = r.id;
+      showScreen('screen-quickbook-direction-confirm');
+      return;
+    }
+    if (stage === 'architecture') {
+      const parsed = parseQuickBookArchitecture(content);
+      if (parsed.units.length) {
+        // Pattern A：AI 照 Prompt 要求輸出「單元N標題／單元N說明」，維持原本行為不變
+        qb.architecture = parsed.units;
+        qb.architectureArrangement = parsed.arrangement;
+        if (parsed.totalPages) qb.pageCount = parsed.totalPages;
+        qb.updatedAt = new Date().toISOString();
+        textarea.value = ''; saveState();
+        showScreen('screen-quickbook-architecture-confirm');
+        return;
+      }
+      // Pattern B（P0 修正）：AI 直接輸出頁面式結構（封面／書名頁／第N頁／結尾頁，或 Page N），
+      // 這本身已經是頁面等級的資料，直接建立 qb.pages，不必再問 AI 一次「第一頁」，
+      // 直接顯示第一頁完成品畫面，讓使用者確認後直接進入 Step4。
+      const pageStyle = parseQuickBookPageStyleArchitecture(content, qb.visualPlan.visualMode);
+      if (pageStyle.pages.length) {
+        qb.architecture = pageStyle.units;
+        qb.architectureArrangement = '';
+        qb.pages = pageStyle.pages;
+        qb.pageCount = pageStyle.pages.length;
+        qb.architectureConfirmed = true;
+        qb.updatedAt = new Date().toISOString();
+        textarea.value = ''; saveState();
+        showScreen('screen-quickbook-first-page');
+        return;
+      }
+      showPasteBackWarning(escHtml('沒有成功辨識小書格式。請重新貼上，或按下面按鈕請 AI 幫你重新整理。'), buildQuickBookArchitecturePrompt(work));
+      return;
+    }
+    if (stage === 'firstpage') {
+      const parsed = parseQuickBookFirstPage(content);
+      qb.pages = [parsed];
+      qb.updatedAt = new Date().toISOString();
+      textarea.value = ''; saveState();
+      showScreen('screen-quickbook-first-page');
+      return;
+    }
+    if (stage === 'fullcontent') {
+      const parsed = parseQuickBookPages(content, qb.visualPlan.visualMode);
+      if (!parsed.length) { showPasteBackWarning(escHtml('內容還沒解析出任何一頁，請確認格式是否包含「【第1頁】」這樣的分頁標記，重新貼回。')); return; }
+      // 總策長裁示（2026-08-05）：Parser／Validator／Controller／UI 責任分離——Parser
+      // 只負責把文字轉成 pages[]，這裡（Controller）呼叫 Validator 判斷圖片規劃是否符合
+      // 已確認的視覺模式，不合格時進 Recovery Flow，合格才真正寫入 qb.pages 並推進步驟。
+      quickBookPendingFullContentParse = parsed;
+      quickBookPendingFullContentRaw = content;
+      const validation = validateQuickBookVisualCoverage(Object.assign({}, qb, { pages: parsed }));
+      if (!validation.valid) {
+        showPasteBackWarning(
+          escHtml('文字內容已經完成，但目前的圖片規劃還不符合這本書已確認的呈現方式（' + (VISUAL_MODE_DISPLAY_TEXT[qb.visualPlan.visualMode] || '') + '）。工作台可以直接補上逐頁圖片或照片配置，不需要重新寫內容。'),
+          buildQuickBookImageRecoveryPrompt(Object.assign({}, qb, { pages: parsed }), validation.missingPageNumbers)
+        );
+        // 「改成純文字版」是圖片完整性 Recovery 專屬的第三個選項（另外兩個是「AI幫我補圖片
+        // 規劃」＝複製重新輸出指令、「返回修改貼回內容」＝既有的繼續修改按鈕），只在這種
+        // 情境才顯示，不影響其他 Flow 共用同一個警告元件。
+        document.getElementById('pb-warning-text-only-btn').style.display = 'block';
+        return;
+      }
+      qb.pages = parsed;
+      qb.pageCount = parsed.length;
+      qb.updatedAt = new Date().toISOString();
+      const r = makeResult(state, work, project, work.currentStepIndex, content, false);
+      work.stepResultIds[work.currentStepIndex] = r.id;
+      textarea.value = ''; saveState();
+      lastSubmittedResultId = r.id;
+      showScreen('screen-satisfaction');
+      return;
+    }
+    if (stage === 'cover') {
+      const parsed = parseQuickBookCover(content);
+      qb.cover.title = parsed.title; qb.cover.subtitle = parsed.subtitle;
+      qb.cover.visualDirection = parsed.visualDirection; qb.cover.imagePrompt = parsed.imagePrompt;
+      qb.cover.layoutSuggestion = parsed.layoutSuggestion;
+      qb.updatedAt = new Date().toISOString();
+      textarea.value = ''; saveState();
+      quickBookStage = null;
+      showToast('已保存封面設計方向');
+      showScreen('screen-quickbook-complete');
+      return;
+    }
+    if (stage === 'illustration') {
+      const parsed = parseQuickBookIllustrationPlan(content);
+      qb.visualPlan.visualStyle = parsed.visualStyle;
+      qb.visualPlan.characterConsistency = parsed.characterConsistency;
+      qb.visualPlan.colorMood = parsed.colorMood;
+      qb.visualPlan.imageToolSuggestion = parsed.imageToolSuggestion;
+      qb.pages.forEach(function (p) {
+        if (parsed.perPagePrompts[p.pageNumber]) p.imagePrompt = parsed.perPagePrompts[p.pageNumber];
+        p.imageStatus = quickBookImageStatus(p.imageNeeded, p.imagePrompt);
+      });
+      // pageIllustrations／pagePhotos（P0 緊急修正新增）：把逐頁生圖指令另外整理成清單，
+      // 供之後 Canva／圖片AI／Living Book 直接讀取，不用每次都重新掃一次 pages[]。
+      // 照片模式（photo）歸進 pagePhotos，其餘有圖模式歸進 pageIllustrations。
+      const illustrationList = qb.pages.filter(function (p) { return p.imageNeeded && p.imagePrompt; })
+        .map(function (p) { return { pageNumber: p.pageNumber, imagePrompt: p.imagePrompt }; });
+      if (qb.visualPlan.visualMode === 'photo') { qb.visualPlan.pagePhotos = illustrationList; }
+      else { qb.visualPlan.pageIllustrations = illustrationList; }
+      qb.updatedAt = new Date().toISOString();
+      textarea.value = ''; saveState();
+      quickBookStage = null;
+      showToast('已保存插畫規劃');
+      showScreen('screen-quickbook-complete');
+      return;
+    }
+  }
+
+  // AI Collaboration OS｜Practical Whole Book Fast Path：AI 一次生成整本書，Parser 直接
+  // 建立 BookDocumentV1，不經過五區盤點或 structure card。已有「已確認」頁面時，重新生成
+  // 會整批取代，覆蓋前要再次確認，避免已確認的頁面被意外蓋掉（跟 Phase 2D 的規則一致）。
+  if (work.flowId === 'quickbook_v4_practical' && quickBookV4Stage === 'wholebook') {
+    const v4 = ensureQuickBookV4Defaults(work);
+    const stripped = stripAfterQuickBookStepBoundary(content);
+    const parsed = parseQuickBookV4WholeBook(stripped);
+    const confirmedCount = (v4.book.pages || []).filter(function (p) { return p.confirmedByUser; }).length;
+    if (confirmedCount > 0 && !confirm('目前已有 ' + confirmedCount + ' 頁標記為「這一頁可以」，重新生成會整批取代，包含已確認的頁面。確定要繼續嗎？')) {
+      textarea.value = '';
+      quickBookV4Stage = null;
+      showScreen('screen-quickbook-v4-preview');
+      return;
+    }
+    const book = blankBookDocumentV1();
+    book.flowType = 'practical';
+    // 三節「正式使用既有 topicPresetId」的同一個坑：Whole Book Fast Path 重新生成時也是
+    // 整份重建 book 物件，topicPresetId 沒有搬過來就會在重新生成後消失，讓烘焙小書之後的
+    // Hard Contract／視覺／排版 guidance 全部失效（跟 creative_paginate 修過的問題同一種）。
+    book.topicPresetId = v4.book.topicPresetId || '';
+    const title = v4.sourceMaterial.productName || v4.sourceMaterial.oneLineIntro || work.name;
+    book.title = title;
+    book.subtitle = v4.sourceMaterial.oneLineIntro || '';
+    book.cover = { title: title, subtitle: book.subtitle, visualDirection: '', imagePrompt: '', layoutSuggestion: '', completedExternally: false };
+    book.pages = parsed.pages;
+    // Must Fix：作者／繪者／封面署名不得留在任何頁面正文。
+    quickBookV4StripCoverCreditFromPages(book);
+    const allowedMaterial = buildQuickBookV4AllowedSourceMaterial(work);
+    const validation = validateQuickBookV4WholeBook(book, v4.sourceMaterial, { parseTier: parsed.parseTier, expectedPageCount: v4.sourceMaterial.pageCountChoice, allowedMaterial: allowedMaterial });
+    v4.rawAiResponse = content;
+    v4.updatedAt = new Date().toISOString();
+    textarea.value = ''; saveState();
+    quickBookV4Stage = null;
+    // 技術長 Gate A Must Fix 2／3：驗證沒過（含 raw fallback）一律不寫入 v4.book、不進
+    // preview、不顯示成功成書訊息，導向 Recovery——書稿寫入是唯一由「valid===true」把關
+    // 的動作。
+    if (!validation.valid) {
+      showQuickBookV4Recovery(validation, 'wholebook');
+      return;
+    }
+    // Quick Book 母模封版 P0：一般 Whole Book Validator 只管結構／來源合法性，不管數值
+    // 本身有沒有被 AI 悄悄改掉——烘焙小書另外用同一套 Recovery 機制擋下，不新增第二種
+    // 錯誤畫面；非烘焙小書（sm.bakingFields 為 null）這裡完全不執行，不影響其他 preset。
+    if (v4.sourceMaterial.bakingFields) {
+      const bakingValidation = validateQuickBookV4BakingSourceIntegrity(book, v4.sourceMaterial);
+      if (!bakingValidation.valid) {
+        showQuickBookV4Recovery(bakingValidation, 'wholebook');
+        return;
+      }
+    }
+    v4.book = book;
+    v4.lastCompletedStep = 'book_built';
+    saveState();
+    showToast('已產生整本書（' + book.pages.length + ' 頁）');
+    showScreen('screen-quickbook-v4-preview');
+    return;
+  }
+
+  // AI Collaboration OS｜逐頁重新整理：Practical／Creative 共用，只更新「目前正在看的
+  // 那一頁」，不影響書中其他頁面；AI 重新整理過的內容一律要使用者重新確認。
+  if ((work.flowId === 'quickbook_v4_practical' || work.flowId === 'quickbook_v4_creative') && quickBookV4Stage === 'page_refine') {
+    const v4 = ensureQuickBookV4Defaults(work);
+    const page = quickBookV4FindActivePage(v4);
+    if (page) {
+      const stripped = stripAfterQuickBookStepBoundary(content);
+      page.pageText = stripped.trim();
+      page.confirmedByUser = false;
+      page.contentStatus = page.pageText ? QUICKBOOK_V4_CONTENT_STATUS.NEEDS_CONFIRMATION : QUICKBOOK_V4_CONTENT_STATUS.NEEDS_INPUT;
+      v4.updatedAt = new Date().toISOString();
+    }
+    quickBookV4PageRefineExtraInstruction = '';
+    textarea.value = ''; saveState();
+    quickBookV4Stage = null;
+    showToast('已重新整理這一頁');
+    showScreen('screen-quickbook-v4-page-detail');
+    return;
+  }
+
+  // AI Collaboration OS｜Creative 完整文稿生成（已有故事貼入／訪談回答皆走這裡，Prompt
+  // 內部依 creativeSeed.mode 分流，這裡只負責收 AI 回覆）。storyDraft.confirmedByUser
+  // 這裡永遠寫 false——只有使用者在文稿確認畫面按「這就是我要表達的」才能改變。
+  if (work.flowId === 'quickbook_v4_creative' && quickBookV4Stage === 'creative_story') {
+    const v4 = ensureQuickBookV4Defaults(work);
+    const cs = v4.creativeSeed;
+    const stripped = stripAfterQuickBookStepBoundary(content);
+    const parsed = parseQuickBookV4CreativeStoryDraft(stripped);
+    // P0 Blocker（《善解的力量》案例，2026-08-08）：抓不到乾淨的「完整文稿：」內容時，
+    // 絕不把這次的 AI 回覆（可能整段都是評語／分析）寫進 storyDraft——保留舊文稿不動，
+    // 只請使用者重新整理，並比照既有「這不是我說的」重試流程，加強下一次的 Prompt 提醒。
+    if (parsed.unparseable) {
+      cs.rawAiResponse = content;
+      cs.updatedAt = new Date().toISOString();
+      v4.updatedAt = new Date().toISOString();
+      quickBookV4CreativeExtraInstruction = '上一次的回覆沒有照格式輸出乾淨的「完整文稿：」正文（可能混入了評語、分析、稱讚或前後說明）。這次請只照固定格式輸出「書名：」與「完整文稿：」兩個欄位，「完整文稿：」底下只能是正式的故事正文本身，不要加任何評論、分析、稱讚、解釋或前後說明。';
+      textarea.value = ''; saveState();
+      quickBookV4Stage = 'creative_story';
+      showToast('沒有辨識到乾淨的完整文稿，請重新整理');
+      showScreen('screen-copy-to-ai');
+      return;
+    }
+    cs.storyDraft.title = parsed.title || cs.storyDraft.title;
+    cs.storyDraft.subtitle = parsed.subtitle || cs.storyDraft.subtitle;
+    cs.storyDraft.fullText = parsed.fullText;
+    cs.storyDraft.confirmedByUser = false;
+    cs.storyDraft.contentStatus = QUICKBOOK_V4_CONTENT_STATUS.NEEDS_CONFIRMATION;
+    // 文稿重新生成後，如果已經分頁過，既有頁面內容可能跟新文稿不一致，全部標記待確認。
+    if (v4.book.pages && v4.book.pages.length) {
+      v4.book.pages.forEach(function (p) { p.confirmedByUser = false; if (p.contentStatus === QUICKBOOK_V4_CONTENT_STATUS.COMPLETE) p.contentStatus = QUICKBOOK_V4_CONTENT_STATUS.NEEDS_CONFIRMATION; });
+    }
+    cs.rawAiResponse = content;
+    cs.updatedAt = new Date().toISOString();
+    v4.updatedAt = new Date().toISOString();
+    quickBookV4CreativeExtraInstruction = '';
+    textarea.value = ''; saveState();
+    quickBookV4Stage = null;
+    showToast('已產生完整文稿草稿，請確認');
+    showScreen('screen-quickbook-v4-creative-draft');
+    return;
+  }
+
+  // AI Collaboration OS｜Creative 分頁：未確認文稿不得分頁（硬規則），Parser 跟 Practical
+  // Whole Book Fast Path 共用同一套 parseQuickBookV4WholeBook。
+  if (work.flowId === 'quickbook_v4_creative' && quickBookV4Stage === 'creative_paginate') {
+    const v4 = ensureQuickBookV4Defaults(work);
+    const cs = v4.creativeSeed;
+    if (!cs.storyDraft.confirmedByUser) {
+      textarea.value = '';
+      quickBookV4Stage = null;
+      showToast('請先確認完整文稿再分頁');
+      showScreen('screen-quickbook-v4-creative-draft');
+      return;
+    }
+    const stripped = stripAfterQuickBookStepBoundary(content);
+    const parsed = parseQuickBookV4WholeBook(stripped);
+    const confirmedCount = (v4.book.pages || []).filter(function (p) { return p.confirmedByUser; }).length;
+    if (confirmedCount > 0 && !confirm('目前已有 ' + confirmedCount + ' 頁標記為「這一頁可以」，重新分頁會整批取代，包含已確認的頁面。確定要繼續嗎？')) {
+      textarea.value = '';
+      quickBookV4Stage = null;
+      showScreen('screen-quickbook-v4-preview');
+      return;
+    }
+    const book = blankBookDocumentV1();
+    book.flowType = 'creative';
+    book.title = cs.storyDraft.title || work.name;
+    book.subtitle = cs.storyDraft.subtitle || '';
+    book.presentationStyle = cs.presentationStyle;
+    // 三節「正式使用既有 topicPresetId」：分頁會整份重建 book 物件，topicPresetId／
+    // layoutProfile 是使用者在分頁之前就選定的 book-level 設定，不能被這次重建蓋回預設值
+    // ——不然選了親情故事，分完頁後又默默變回生命故事。沿用舊 book 上已經有的值。
+    book.topicPresetId = v4.book.topicPresetId || '';
+    if (v4.book.layoutProfile) book.layoutProfile = v4.book.layoutProfile;
+    book.cover = { title: book.title, subtitle: book.subtitle, visualDirection: '', imagePrompt: '', layoutSuggestion: '', completedExternally: false };
+    book.pages = parsed.pages;
+    // Must Fix：作者／繪者／封面署名不得留在任何頁面正文；繪本（picture_book）預設全書
+    // 需要圖片，剛生成、還沒被使用者個別調整過視覺方式的頁面才套用。
+    quickBookV4StripCoverCreditFromPages(book);
+    quickBookV4ApplyPresentationStyleImageDefault(book);
+    // Creative 版的允許資料：已確認的 storyDraft.fullText 本身就是唯一允許的正文來源
+    // （已經通過使用者「這就是我要表達的」確認），sourceRefs 這裡不比對特定標籤清單
+    // （生命故事沒有 inventory 標籤概念），改成只檢查頁碼／頁數／禁用詞／Step Boundary
+    // 這些跟 Practical 共用的硬規則，符合「Practical 與 Creative 都遵守相同安全契約」。
+    const validation = validateQuickBookV4WholeBook(book, null, { parseTier: parsed.parseTier, expectedPageCount: cs.pageCountChoice, allowedMaterial: { facts: [], excludedLabels: [] } });
+    v4.rawAiResponse = content;
+    v4.updatedAt = new Date().toISOString();
+    textarea.value = ''; saveState();
+    quickBookV4Stage = null;
+    if (!validation.valid) {
+      showQuickBookV4Recovery(validation, 'creative_paginate');
+      return;
+    }
+    v4.book = book;
+    v4.lastCompletedStep = 'book_built';
+    saveState();
+    showToast('已完成分頁（' + book.pages.length + ' 頁）');
+    showScreen('screen-quickbook-v4-preview');
+    return;
+  }
+
+  // #7.1 Quick Book v4.0 Phase 2B：Practical 資料盤點。跟 v3.0 的攔截寫在同一個
+  // submitPasteBack() 裡（既有慣例），但用完全獨立的 flowId／stage 旗標，不共用任何狀態。
+  if (work.flowId === 'quickbook_v4_practical' && quickBookV4Stage === 'inventory') {
+    const v4 = ensureQuickBookV4Defaults(work);
+    const stripped = stripAfterQuickBookStepBoundary(content);
+    const parsed = parseQuickBookV4Inventory(stripped);
+    validateQuickBookV4Inventory(parsed);
+    // 解析失敗（raw_fallback）且已經有既有盤點結果時，不整批覆蓋掉——把 AI 這次的原始回覆
+    // 併入既有的 needsConfirmation，其餘既有分類原封不動保留（呼應「解析失敗不得清空
+    // rawInput 或既有盤點結果」）。
+    const hadExistingInventory = ['existing', 'missing', 'needsConfirmation', 'conflicts', 'notApplicable'].some(function (k) { return (v4.sourceMaterial.inventory[k] || []).length > 0; });
+    if (parsed.parseTier === 'raw_fallback' && hadExistingInventory) {
+      v4.sourceMaterial.inventory.needsConfirmation = (v4.sourceMaterial.inventory.needsConfirmation || []).concat(parsed.needsConfirmation);
+    } else {
+      v4.sourceMaterial.inventory = { existing: parsed.existing, missing: parsed.missing, needsConfirmation: parsed.needsConfirmation, conflicts: parsed.conflicts, notApplicable: parsed.notApplicable };
+    }
+    v4.rawAiResponse = content;
+    v4.lastCompletedStep = 'inventory';
+    v4.sourceMaterial.updatedAt = new Date().toISOString();
+    v4.updatedAt = new Date().toISOString();
+    textarea.value = ''; saveState();
+    quickBookV4Stage = null;
+    showToast('已完成資料盤點');
+    showScreen('screen-quickbook-v4-practical-inventory');
+    return;
+  }
+
+  // #7.1 Quick Book v4.0 Phase 2C：整本規劃 3～5 個內容單元。已有「已確認」單元時，重新
+  // 規劃會整批取代，所以在覆蓋前一定要跟使用者再次確認，避免已確認的整理成果被意外蓋掉。
+  if (work.flowId === 'quickbook_v4_practical' && quickBookV4Stage === 'structure') {
+    const v4 = ensureQuickBookV4Defaults(work);
+    const stripped = stripAfterQuickBookStepBoundary(content);
+    const parsed = parseQuickBookV4StructureUnits(stripped);
+    parsed.units.forEach(function (u, idx) { u.displayOrder = idx; });
+    const existingUnits = v4.sourceMaterial.structureUnits || [];
+    const confirmedCount = existingUnits.filter(function (u) { return u.confirmedByUser; }).length;
+    if (confirmedCount > 0 && !confirm('目前已有 ' + confirmedCount + ' 個單元標記為「已確認」，重新規劃會用這次 AI 的結果整批取代，包含已確認的單元。確定要繼續嗎？')) {
+      textarea.value = '';
+      quickBookV4Stage = null;
+      showScreen('screen-quickbook-v4-practical-structure');
+      return;
+    }
+    v4.sourceMaterial.structureUnits = parsed.units;
+    v4.rawAiResponse = content;
+    v4.lastCompletedStep = 'structure';
+    v4.sourceMaterial.updatedAt = new Date().toISOString();
+    v4.updatedAt = new Date().toISOString();
+    textarea.value = ''; saveState();
+    quickBookV4Stage = null;
+    showToast('已完成內容單元規劃');
+    showScreen('screen-quickbook-v4-practical-structure');
+    return;
+  }
+
+  // #7.1 Quick Book v4.0 Phase 2C：單一單元重新整理，只更新這一個單元，其他單元不受影響；
+  // AI 重新整理過的內容一律要使用者重新確認，不會自動繼承舊的 confirmedByUser。
+  if (work.flowId === 'quickbook_v4_practical' && quickBookV4Stage === 'unit_refine') {
+    const v4 = ensureQuickBookV4Defaults(work);
+    const unit = quickBookV4FindActiveUnit(v4);
+    if (unit) {
+      const stripped = stripAfterQuickBookStepBoundary(content);
+      const parsedDraft = parseQuickBookV4UnitDraft(stripped);
+      unit.draftContent = parsedDraft.draftContent;
+      unit.missingItems = parsedDraft.missingItems;
+      unit.confirmedByUser = false;
+      unit.contentStatus = quickBookV4ClassifyMissingStatus(unit.missingItems);
+      v4.rawAiResponse = content;
+      v4.sourceMaterial.updatedAt = new Date().toISOString();
+      v4.updatedAt = new Date().toISOString();
+    }
+    quickBookV4UnitRefineExtraInstruction = '';
+    textarea.value = ''; saveState();
+    quickBookV4Stage = null;
+    showToast('已更新這個單元的整理稿');
+    showScreen('screen-quickbook-v4-practical-unit-detail');
+    return;
+  }
+
+  // P0 Blocker 補修（CEO 真人驗收，2026-08-07）：逐頁生圖指令貼回，依頁碼比對回真正的
+  // page 物件，正式寫回 pages[].imagePrompt（必要時 storyboard／layoutSuggestion）——就算
+  // AI 誤把 text_only／add_later 的頁面也一起產生了，quickBookV4NeedsImagePage() 這裡再擋
+  // 一次，不會被寫入。Practical／Creative 共用同一個 stage，跟 page_refine 同一種寫法。
+  if ((work.flowId === 'quickbook_v4_practical' || work.flowId === 'quickbook_v4_creative') && quickBookV4Stage === 'image_prompt_generation') {
+    const v4 = ensureQuickBookV4Defaults(work);
+    const stripped = stripAfterQuickBookStepBoundary(content);
+    const parsed = parseQuickBookV4ImagePromptGeneration(stripped);
+    let writtenCount = 0;
+    parsed.forEach(function (r) {
+      const page = v4.book.pages.find(function (p) { return p.pageNumber === r.pageNumber; });
+      if (!page || !quickBookV4NeedsImagePage(page)) return;
+      // 二節 Canonical 規則：封面頁寫回 book.cover，不寫 page 欄位（quickBookV4
+      // WritePageVisualFields 對 pageType==='cover' 一律轉存 book.cover，一般頁不受影響）。
+      const updates = { imagePrompt: r.imagePrompt };
+      if (r.storyboard) updates.storyboard = r.storyboard;
+      if (r.layoutSuggestion) updates.layoutSuggestion = r.layoutSuggestion;
+      quickBookV4WritePageVisualFields(v4.book, page, updates);
+      page.visualStatus = 'needs_confirmation';
+      writtenCount++;
+    });
+    v4.rawAiResponse = content;
+    v4.updatedAt = new Date().toISOString();
+    textarea.value = ''; saveState();
+    quickBookV4Stage = null;
+    showToast('已寫入 ' + writtenCount + ' 頁的生圖指令');
+    showScreen('screen-quickbook-v4-handoff');
     return;
   }
 
@@ -4533,13 +10276,36 @@ function splitNarrationIntoSceneChunks(narrationText, count) {
 // 決定人物、場景、動作、情緒與構圖，不是套一句空泛模板——直接把這一幕的旁白原文整段放進
 // 指令裡，並明確要求「不要加入旁白沒有提到的重要情節」；再帶入 Style Anchor（風格、人物、
 // 敘事調性等）與畫面比例，維持全片人物／場景／風格一致性，最後提醒是第幾幕、共幾幕。
+// Video Flow 文意視覺轉譯 Prompt Template v1.0（CEO 真人 A/B/C＋跨題材測試核准，2026-08-10）：
+// Prototype Review 確認現行問題不是畫風或人物一致性，而是生圖指令對文案的理解不夠準確、
+// 不夠細緻——舊版只是把旁白原文包進通用指令直接丟給生圖 AI 自己決定，中間完全沒有
+// Semantic-to-Visual Translation，容易變成 Keyword-to-Image（關鍵字／物件堆砌）。這裡收斂
+// 進四項真人測試確認有效的規則（文意優先／真實行為優先／可見證據／判斷瞬間或變化）＋
+// 多人物最低限度差異化，不逐字塞進研究過程的完整推導，只留下確認有效的規則本身。
+//
+// 刻意保留完全相同的函式簽名與兩個既有呼叫點（generateImagePromptsForAllScenes／
+// generateImagePromptForScene），使用者操作流程完全不變——仍是「分鏡→產生逐幕生圖指令」
+// 兩步，這裡只提升 Prompt 本身的品質，不新增任何步驟或設定。styleAnchorText（全片視覺
+// 設定、含既有人物設定 characterProfile）維持原樣整段沿用，不建立第二套人物系統——「這幕
+// 應該畫什麼」（文意轉譯）跟「全片應該長什麼樣子」（Style Anchor）兩者並存，文意轉譯的
+// 結果套用既有 Style Anchor，不是取代它。
 function buildAutoImagePrompt(narration, styleAnchorText, ratioLabel, sceneNo, totalScenes) {
-  return '請生成一張圖片，畫面請根據下面這段旁白內容決定人物、場景、動作、情緒與構圖，不要加入旁白沒有提到的重要情節：\n\n' +
-    '「' + narration + '」\n\n' +
-    styleAnchorText + '\n\n' +
+  return '你是這支影片的視覺導演。請先理解這一幕的旁白真正要表達什麼，把文意轉譯成自然、具體、觀眾看得到的畫面，最後產生可以直接使用的生圖指令。\n\n' +
+    '【旁白】\n「' + narration + '」\n\n' +
+    '【全片既有視覺設定】\n' + styleAnchorText + '\n\n' +
+    '【文意視覺轉譯原則】\n' +
+    '1. 先理解這一幕真正要表達什麼，不要只抽取旁白中的名詞或關鍵字直接組成畫面。\n' +
+    '2. 注意人物主體、行為、關係，以及句子裡的否定、轉折、對比——哪一半才是真正的重點，哪一半是被否定或對照的。\n' +
+    '3. 優先把抽象概念轉譯成真實人物的動作、表情、互動、空間關係與生活情境；不要自行加入跟原文無關的擬人 AI、機器人、愛心、蝴蝶、道路、箭頭、漂浮介面、魔法光效等俗套象徵——但如果原始文案本身真的需要這些元素，仍可以使用，不是死板禁止清單。\n' +
+    '4. 畫面裡必須有觀眾真正看得到、能證明這一幕核心意思的具體內容（可見證據），不能只靠氣氛或抽象象徵物暗示。例如「陪伴但不代替解決」，有效畫面是「一個人仍自己動手處理，另一個人在旁邊沒有插手但一直在」，而不是籠統的擁抱畫面。\n' +
+    '5. 判斷這句話適合用「一個瞬間」表達，還是本身帶有時間性、累積或轉變——如果是後者，不要為了讓一張靜態圖說完整句話而堆砌大量象徵元素，改用動作、前後變化或痕跡表現時間感，交給後續連續分鏡或動態去承接。\n' +
+    '6. 如果這一幕有兩名以上重要人物，加入最低限度的外觀差異描述（例如大致年齡、髮型、服裝），避免生圖結果讓人物長得太相似；若上面的全片視覺設定已經有人物設定，優先沿用，不要另外發明一套。\n' +
+    '7. 自動決定最適合的場景、人物動作、構圖、景別與光線，不需要使用者提供專業影像設定。\n' +
+    '8. 不得為了豐富畫面而新增旁白沒有提到的重要情節。\n' +
+    '9. 畫面首先服務文意，其次才是好看。\n\n' +
     '這是全片第 ' + sceneNo + ' 幕（共 ' + totalScenes + ' 幕），請維持跟其他幕一致的人物外觀、場景與整體視覺風格，避免同一部影片裡人物或場景忽然變成不同樣貌。\n' +
     '畫面比例：' + ratioLabel + '。\n' +
-    '請直接輸出這張圖片，不需要文字說明。';
+    '請直接輸出可以直接使用的完整生圖指令；如果你能直接生成圖片，也可以直接輸出這張圖片，不需要額外的文字說明。';
 }
 
 // 把 ms.scenes 目前的內容重新寫回「腳本」步驟的正式成果，並重新走一次
@@ -5879,6 +11645,33 @@ function render() {
   if (id === 'screen-project') renderProject();
   if (id === 'screen-add-work') renderAddWork();
   if (id === 'screen-product-category') renderProductCategory();
+  if (id === 'screen-ebook-category') renderEbookCategory();
+  if (id === 'screen-quickbook-direction-confirm') renderQuickBookDirectionConfirm();
+  if (id === 'screen-quickbook-v4-practical') renderQuickBookV4Practical();
+  if (id === 'screen-quickbook-v4-baking-input') renderQuickBookV4BakingInput();
+  if (id === 'screen-quickbook-v4-practical-step2') renderQuickBookV4Step2();
+  if (id === 'screen-quickbook-v4-practical-inventory') renderQuickBookV4Inventory();
+  if (id === 'screen-quickbook-v4-practical-structure') renderQuickBookV4Structure();
+  if (id === 'screen-quickbook-v4-practical-unit-detail') renderQuickBookV4UnitDetail();
+  if (id === 'screen-quickbook-v4-preview') renderQuickBookV4Preview();
+  if (id === 'screen-quickbook-v4-page-detail') renderQuickBookV4PageDetail();
+  if (id === 'screen-quickbook-v4-handoff') renderQuickBookV4Handoff();
+  if (id === 'screen-quickbook-v4-visual-plan') renderQuickBookV4VisualPlan();
+  if (id === 'screen-quickbook-v4-trial-image') renderQuickBookV4TrialImage();
+  if (id === 'screen-quickbook-v4-source-view') renderQuickBookV4SourceView();
+  if (id === 'screen-quickbook-v4-recovery') renderQuickBookV4Recovery();
+  if (id === 'screen-quickbook-v4-chapters') renderQuickBookV4Chapters();
+  if (id === 'screen-quickbook-v4-chapter-pages') renderQuickBookV4ChapterPages();
+  if (id === 'screen-quickbook-v4-creative') renderQuickBookV4Creative();
+  if (id === 'screen-quickbook-v4-creative-context') renderQuickBookV4CreativeContext();
+  if (id === 'screen-quickbook-v4-creative-paste') renderQuickBookV4CreativePaste();
+  if (id === 'screen-quickbook-v4-creative-interview') renderQuickBookV4CreativeInterview();
+  if (id === 'screen-quickbook-v4-creative-draft') renderQuickBookV4CreativeDraft();
+  if (id === 'screen-quickbook-v4-creative-style') renderQuickBookV4CreativeStyle();
+  if (id === 'screen-quickbook-architecture-confirm') renderQuickBookArchitectureConfirm();
+  if (id === 'screen-quickbook-first-page') renderQuickBookFirstPage();
+  if (id === 'screen-quickbook-complete') renderQuickBookComplete();
+  if (id === 'screen-quickbook-save-share') renderQuickBookSaveShare();
   if (id === 'screen-work-detail') renderWorkDetail();
   if (id === 'screen-brief-choice') renderBriefChoice();
   if (id === 'screen-brief-direct-form') renderBriefDirectForm();
@@ -7126,6 +12919,23 @@ function renderWorkDetail() {
   }
   if (work.flowId === 'poster' && step.name === '完成海報') { showScreen('screen-make-poster'); return; }
 
+  // #07 Quick Book v3.0：quickBookStage 決定「交給AI」按鈕實際要用哪個 Prompt；步驟4／5
+  // 完全不走「交給AI→貼回」，直接接手到專屬畫面（沿用「製作歌曲／製作影片／完成海報」
+  // 同一種攔截慣例）。步驟2（建立內容架構）裡，架構還沒確認完就先攔到架構確認畫面，
+  // 架構確認了但第一頁還沒確認，就直接進第一頁的「交給AI」（quickBookStage='firstpage'）。
+  if (work.flowId === 'quickbook') {
+    const qb = ensureQuickBookDefaults(work);
+    if (step.name === '完成電子書') { showScreen('screen-quickbook-complete'); return; }
+    if (step.name === '保存與分享') { showScreen('screen-quickbook-save-share'); return; }
+    if (step.name === '建立內容架構') {
+      if (qb.architectureConfirmed && !qb.firstPageConfirmed) { quickBookStage = 'firstpage'; showScreen('screen-copy-to-ai'); return; }
+      if (qb.architectureConfirmed && qb.firstPageConfirmed) { showScreen('screen-quickbook-first-page'); return; }
+      quickBookStage = 'architecture';
+    } else if (step.name === '開始你的故事') { quickBookStage = 'story'; }
+    else if (step.name === '確認書本方向') { quickBookStage = 'direction'; }
+    else if (step.name === '完成全書內容') { quickBookStage = 'fullcontent'; }
+  }
+
   document.getElementById('wd-name').textContent = work.name;
   document.getElementById('wd-tpl').textContent = flow.name + '　·　共 ' + flow.steps.length + ' 步';
 
@@ -7379,8 +13189,144 @@ function renderCopyPreviewHtml(text) {
 
 let lastCopyText = '';
 
+// #07 Quick Book v3.0：quickBookStage 標記目前要交給AI的是哪一個小書專屬 Prompt
+// （'story'／'direction'／'architecture'／'firstpage'／'fullcontent'／'cover'／'illustration'）。
+// 沿用既有 screen-copy-to-ai／screen-paste-back 畫面殼子，不新增重複的複製畫面——跟品牌中心
+// 用同一組 discuss-input 畫面搭配 mode 旗標處理 Logo／配色多輪對話，是同一種做法。
+let quickBookStage = null;
+// 記住 AI 原本建議的視覺模式，用來判斷使用者在確認畫面「有沒有主動改選」——
+// 沒改就算 ai_recommended，改了就算 user_confirmed（總策長裁示，2026-08-05）。
+let quickBookDirectionAiSuggestedMode = null;
+// Step4 全書內容貼回後，不管圖片完整性驗證有沒有過，都先把解析結果暫存在這裡——
+// 「改成純文字版」選項需要沿用同一份已經寫好的正文，不用再問AI一次（總策長裁示：
+// Recovery Flow 不可以要求使用者重新輸入正文）。
+let quickBookPendingFullContentParse = null;
+let quickBookPendingFullContentRaw = '';
+// #7.1 Quick Book v4.0 Phase 2B：獨立的 v4 stage 旗標，跟 v3.0 的 quickBookStage 分開，
+// 由 work.flowId === 'quickbook_v4_practical' 判斷是否使用，不會互相干擾。
+let quickBookV4Stage = null;
+
+// P0 Bug 修正（CEO 真人驗收，2026-08-05）：AI 有時會把 Prompt 結尾要求它遵守的
+// 【Step Boundary】區塊，原樣貼回自己的回覆最後（例如「本次工作只完成…」「等待使用者
+// 回到工作台…」），這段從來不是正式成果的一部分。六個 Quick Book Step 共用同一個函式，
+// 一律先切掉【Step Boundary】（含）之後的內容再進任何 Parser，不必每個 Parser 各自處理一次。
+function stripAfterQuickBookStepBoundary(content) {
+  const idx = content.indexOf('【Step Boundary】');
+  if (idx === -1) return content;
+  return content.slice(0, idx).replace(/\s+$/, '');
+}
+
+// #07 Quick Book v3.0｜圖片完整性 Recovery Prompt（總策長裁示新增，2026-08-05）：只針對
+// Validator 列出的缺圖頁碼，明確禁止修改正文、標題與頁序——這是「部分缺圖只補缺頁，不能
+// 整本重寫」的具體落實，不是只靠語氣提醒，Prompt 本身就把範圍限制死。
+function buildQuickBookImageRecoveryPrompt(qb, missingPageNumbers) {
+  const pagesText = missingPageNumbers.map(function (n) {
+    const p = qb.pages.find(function (pg) { return pg.pageNumber === n; });
+    return '第' + n + '頁' + (p && p.pageTitle ? '（' + p.pageTitle + '）' : '');
+  }).join('、');
+  return '我已經完成文字內容，但這本書設定為「' + (VISUAL_MODE_DISPLAY_TEXT[qb.visualPlan.visualMode] || '有圖') + '」，以下頁面的圖片規劃還不完整：' + pagesText + '。' +
+    '請只針對這幾頁補上「需要圖片：是」「圖片說明」「生圖指令」「排版建議」（照片模式請對應補「擺放位置」「裁切建議」「圖說建議」），' +
+    '不得修改這幾頁或其他頁面已經寫好的正文（pageText）、標題（pageTitle）與頁序，也不需要重新輸出整本書，只要用一樣的【第N頁】格式，重新輸出上面列出的這幾頁就好。';
+}
+function switchQuickBookToTextModeAndRetry() {
+  const work = getActiveWork();
+  const project = getProject(work.projectId);
+  const qb = ensureQuickBookDefaults(work);
+  const parsed = quickBookPendingFullContentParse;
+  if (!parsed) { showToast('內容已遺失，請重新貼回一次'); showScreen('screen-paste-back'); return; }
+  qb.visualPlan.visualMode = 'text';
+  qb.visualPlan.visualModeSource = 'user_confirmed';
+  qb.visualPlan.visualModeConfirmed = true;
+  qb.visualPlan.visualModeUpdatedAt = new Date().toISOString();
+  qb.pages = parsed;
+  qb.pageCount = parsed.length;
+  qb.updatedAt = new Date().toISOString();
+  const r = makeResult(state, work, project, work.currentStepIndex, quickBookPendingFullContentRaw, false);
+  work.stepResultIds[work.currentStepIndex] = r.id;
+  saveState();
+  lastSubmittedResultId = r.id;
+  document.getElementById('pb-ab-warning').style.display = 'none';
+  document.getElementById('pb-warning-text-only-btn').style.display = 'none';
+  showToast('已改為純文字版');
+  showScreen('screen-satisfaction');
+}
+function buildQuickBookPromptForStage(stage, work) {
+  switch (stage) {
+    case 'story': return buildQuickBookStoryPrompt(work);
+    case 'architecture': return buildQuickBookArchitecturePrompt(work);
+    case 'firstpage': return buildQuickBookFirstPagePrompt(work);
+    case 'fullcontent': return buildQuickBookFullContentPrompt(work);
+    case 'cover': return buildQuickBookCoverPrompt(work);
+    case 'illustration': return buildQuickBookIllustrationPlanPrompt(work);
+    case 'direction': return buildQuickBookDirectionPrompt(work);
+    default: return buildCopyText(work);
+  }
+}
 function renderCopyToAi() {
   const work = getActiveWork();
+  if (work.flowId === 'quickbook' && quickBookStage) {
+    lastCopyText = buildQuickBookPromptForStage(quickBookStage, work);
+    document.getElementById('copy-text-box').innerHTML = renderCopyPreviewHtml(lastCopyText);
+    document.getElementById('copy-ai-name').textContent = '你慣用的 AI';
+    document.getElementById('copy-split-buttons').style.display = 'none';
+    return;
+  }
+  if (work.flowId === 'quickbook_v4_practical' && quickBookV4Stage === 'wholebook') {
+    lastCopyText = buildQuickBookV4WholeBookPrompt(work);
+    document.getElementById('copy-text-box').innerHTML = renderCopyPreviewHtml(lastCopyText);
+    document.getElementById('copy-ai-name').textContent = '你慣用的 AI';
+    document.getElementById('copy-split-buttons').style.display = 'none';
+    return;
+  }
+  if ((work.flowId === 'quickbook_v4_practical' || work.flowId === 'quickbook_v4_creative') && quickBookV4Stage === 'page_refine') {
+    lastCopyText = buildQuickBookV4PageRefinePrompt(work);
+    document.getElementById('copy-text-box').innerHTML = renderCopyPreviewHtml(lastCopyText);
+    document.getElementById('copy-ai-name').textContent = '你慣用的 AI';
+    document.getElementById('copy-split-buttons').style.display = 'none';
+    return;
+  }
+  if (work.flowId === 'quickbook_v4_creative' && quickBookV4Stage === 'creative_story') {
+    lastCopyText = buildQuickBookV4CreativeStoryDraftPrompt(work);
+    document.getElementById('copy-text-box').innerHTML = renderCopyPreviewHtml(lastCopyText);
+    document.getElementById('copy-ai-name').textContent = '你慣用的 AI';
+    document.getElementById('copy-split-buttons').style.display = 'none';
+    return;
+  }
+  if (work.flowId === 'quickbook_v4_creative' && quickBookV4Stage === 'creative_paginate') {
+    lastCopyText = buildQuickBookV4CreativeBookPrompt(work);
+    document.getElementById('copy-text-box').innerHTML = renderCopyPreviewHtml(lastCopyText);
+    document.getElementById('copy-ai-name').textContent = '你慣用的 AI';
+    document.getElementById('copy-split-buttons').style.display = 'none';
+    return;
+  }
+  if (work.flowId === 'quickbook_v4_practical' && quickBookV4Stage === 'inventory') {
+    lastCopyText = buildQuickBookV4InventoryPrompt(work);
+    document.getElementById('copy-text-box').innerHTML = renderCopyPreviewHtml(lastCopyText);
+    document.getElementById('copy-ai-name').textContent = '你慣用的 AI';
+    document.getElementById('copy-split-buttons').style.display = 'none';
+    return;
+  }
+  if (work.flowId === 'quickbook_v4_practical' && quickBookV4Stage === 'structure') {
+    lastCopyText = buildQuickBookV4StructurePrompt(work);
+    document.getElementById('copy-text-box').innerHTML = renderCopyPreviewHtml(lastCopyText);
+    document.getElementById('copy-ai-name').textContent = '你慣用的 AI';
+    document.getElementById('copy-split-buttons').style.display = 'none';
+    return;
+  }
+  if (work.flowId === 'quickbook_v4_practical' && quickBookV4Stage === 'unit_refine') {
+    lastCopyText = buildQuickBookV4UnitRefinePrompt(work);
+    document.getElementById('copy-text-box').innerHTML = renderCopyPreviewHtml(lastCopyText);
+    document.getElementById('copy-ai-name').textContent = '你慣用的 AI';
+    document.getElementById('copy-split-buttons').style.display = 'none';
+    return;
+  }
+  if ((work.flowId === 'quickbook_v4_practical' || work.flowId === 'quickbook_v4_creative') && quickBookV4Stage === 'image_prompt_generation') {
+    lastCopyText = buildQuickBookV4ImagePromptGenerationPrompt(work);
+    document.getElementById('copy-text-box').innerHTML = renderCopyPreviewHtml(lastCopyText);
+    document.getElementById('copy-ai-name').textContent = '你慣用的 AI';
+    document.getElementById('copy-split-buttons').style.display = 'none';
+    return;
+  }
   lastCopyText = work.briefDiscussing ? buildBriefDiscussionPrompt(work) : buildCopyText(work);
   document.getElementById('copy-text-box').innerHTML = renderCopyPreviewHtml(lastCopyText);
   document.getElementById('copy-ai-name').textContent = currentStepAiName();
@@ -9844,10 +15790,14 @@ function copyReady(rawText, toastMessage, event) {
       setTimeout(function () { btn.textContent = original; delete btn.dataset.copyReadyBusy; }, 1500);
     }
   }
+  // 技術長 Gate A Must Fix（2026-08-07）：原本無論 fallbackCopy 是否真的成功，都會接著
+  // 呼叫 onCopied() 顯示「已複製」——複製失敗時使用者會同時看到「複製失敗」跟「已複製」
+  // 兩個矛盾的提示，還誤以為按鈕已經成功。改成只有 fallbackCopy() 回傳 true（真的複製
+  // 成功）才顯示成功狀態；失敗時 fallbackCopy() 內部已經自己顯示失敗提示＋手動複製區。
   if (navigator.clipboard && navigator.clipboard.writeText) {
-    navigator.clipboard.writeText(cleanText).then(onCopied).catch(function () { fallbackCopy(cleanText); onCopied(); });
+    navigator.clipboard.writeText(cleanText).then(onCopied).catch(function () { if (fallbackCopy(cleanText)) onCopied(); });
   } else {
-    fallbackCopy(cleanText); onCopied();
+    if (fallbackCopy(cleanText)) onCopied();
   }
 }
 // Phase 5.1（總策長／CEO 核准，2026-08-05）：Copy Ready 正式升級為三個動作（複製／預覽／
@@ -9871,13 +15821,19 @@ function closePreviewCopyReadyDialog() {
   const existing = document.getElementById('copy-ready-preview-dialog');
   if (existing) existing.remove();
 }
-function exportCopyReadyTextAsTxt(rawText) {
+// #07 Quick Book v3.0：新增可選 filenamePrefix 參數（例如小書原稿想用書名當檔名），
+// 不傳時維持原本「品牌內容_」開頭的行為，既有呼叫端不用修改。
+// P0 Blocker 修正（CEO 真人驗收，2026-08-05，TXT 匯出亂碼）：純 UTF-8（不含 BOM）在
+// Windows 記事本等工具開啟時，常常被自動偵測成 ANSI／GBK 等其他編碼，中文全部變亂碼——
+// 加上 UTF-8 BOM（﻿）前綴，讓這些工具能正確辨識檔案是 UTF-8，這是這類亂碼問題的
+// 標準修法。
+function exportCopyReadyTextAsTxt(rawText, filenamePrefix) {
   const cleanText = buildCopyReadyText(rawText);
-  const blob = new Blob([cleanText], { type: 'text/plain;charset=utf-8' });
+  const blob = new Blob(['﻿' + cleanText], { type: 'text/plain;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = '品牌內容_' + Date.now() + '.txt';
+  a.download = (filenamePrefix || '品牌內容') + '_' + Date.now() + '.txt';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);

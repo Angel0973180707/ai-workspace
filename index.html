@@ -143,6 +143,18 @@
     </div>
   </div>
 
+  <!-- #07 Quick Book v3.0：電子書專案入口分流（小書／完整電子書） -->
+  <div class="screen" id="screen-ebook-category">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-project')">←</button>
+      <div class="title">做電子書</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">這次想完成哪一種電子書成果？</div>
+      <div class="pick-grid" id="ec-category-grid"></div>
+    </div>
+  </div>
+
   <!-- 新增工作 -->
   <div class="screen" id="screen-add-work">
     <div class="topbar">
@@ -343,6 +355,9 @@
         </div>
         <!-- #18.1 Blocker 修正：Gate＋Recovery Flow 第三個選項，只在有對應指令時才顯示 -->
         <button class="btn outline" id="pb-warning-regenerate-btn" style="display:none;margin-top:8px;font-size:13px" onclick="copyPasteBackRegenerateInstruction()">📋 複製重新輸出完整版本指令</button>
+        <!-- #07 Quick Book v3.0（總策長裁示新增）：圖片完整性 Recovery 專屬第四選項，只在
+             Step4 圖片完整性驗證失敗時才顯示，其他 Flow 的 AB 警告不受影響 -->
+        <button class="btn outline" id="pb-warning-text-only-btn" style="display:none;margin-top:8px;font-size:13px" onclick="switchQuickBookToTextModeAndRetry()">📄 改成純文字版</button>
       </div>
       <button class="btn" onclick="submitPasteBack()">保存這個版本</button>
     </div>
@@ -876,6 +891,97 @@
     </div>
   </div>
 
+  <!-- #07 Quick Book v3.0｜Step2 視覺方向確認（總策長裁示新增） -->
+  <div class="screen" id="screen-quickbook-direction-confirm">
+    <div class="topbar"><div class="title">確認書本方向</div></div>
+    <div style="padding-top:20px">
+      <div class="notice">《<span id="qbd-title"></span>》</div>
+      <div class="card" id="qbd-summary"></div>
+      <div class="section-label" style="margin-top:10px">這本書想呈現的方式</div>
+      <div id="qbd-mode-options"></div>
+      <button class="btn gold" style="margin-top:16px" onclick="confirmQuickBookDirection()">✅ 確認，繼續下一步</button>
+    </div>
+  </div>
+
+  <!-- #07 Quick Book v3.0｜Step3 架構確認 -->
+  <div class="screen" id="screen-quickbook-architecture-confirm">
+    <div class="topbar">
+      <button class="back" onclick="backFromQuickBookArchitecture()">←</button>
+      <div class="title">建立內容架構</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">《<span id="qba-title"></span>》的內容架構</div>
+      <div id="qba-units"></div>
+      <div class="section-label" style="margin-top:10px">頁數安排</div>
+      <div class="line" id="qba-arrangement"></div>
+      <button class="btn gold" style="margin-top:16px" onclick="confirmQuickBookArchitecture()">✅ 可以，照這個方向完成</button>
+      <button class="btn outline" style="margin-top:10px" onclick="reviseQuickBookArchitecture()">✏️ 幫我改一下</button>
+      <button class="btn outline" style="margin-top:10px" onclick="backFromQuickBookArchitecture()">← 回上一步</button>
+    </div>
+  </div>
+
+  <!-- #07 Quick Book v3.0｜Step3 第一頁完成品（書頁卡片） -->
+  <div class="screen" id="screen-quickbook-first-page">
+    <div class="topbar">
+      <button class="back" onclick="backFromQuickBookFirstPage()">←</button>
+      <div class="title">第一頁完成品</div>
+    </div>
+    <div style="padding-top:20px">
+      <div id="qbp-page-card"></div>
+      <button class="btn gold" style="margin-top:16px" onclick="confirmQuickBookFirstPage()">✅ 可以，照這個方向完成</button>
+      <button class="btn outline" style="margin-top:10px" onclick="reviseQuickBookFirstPage()">✏️ 幫我改一下</button>
+      <button class="btn outline" style="margin-top:10px" onclick="backFromQuickBookFirstPage()">← 回上一步</button>
+    </div>
+  </div>
+
+  <!-- #07 Quick Book v3.0｜Step5 完成電子書：封面與圖片／可修改原稿／製作PDF 三個可收合區塊 -->
+  <div class="screen" id="screen-quickbook-complete">
+    <div class="topbar"><div class="title">完成電子書</div></div>
+    <div style="padding-top:20px">
+      <div class="notice">《<span id="qbc-title"></span>》</div>
+
+      <div class="card quickbook-collapsible open" id="qbc-section-a">
+        <div class="section-label" onclick="toggleQuickBookSection('qbc-section-a')" style="cursor:pointer">A｜封面與圖片 ▾</div>
+        <div class="quickbook-collapsible-body">
+          <div class="section-label" style="margin-top:6px">封面</div>
+          <div id="qbc-cover-box"></div>
+          <div class="section-label" style="margin-top:14px">書內插畫</div>
+          <div id="qbc-illustration-box"></div>
+        </div>
+      </div>
+
+      <div class="card quickbook-collapsible open" id="qbc-section-b">
+        <div class="section-label" onclick="toggleQuickBookSection('qbc-section-b')" style="cursor:pointer">B｜建立可修改原稿 ▾</div>
+        <div class="quickbook-collapsible-body" id="qbc-manuscript-box"></div>
+      </div>
+
+      <div class="card quickbook-collapsible open" id="qbc-section-c">
+        <div class="section-label" onclick="toggleQuickBookSection('qbc-section-c')" style="cursor:pointer">C｜製作 PDF 電子書 ▾</div>
+        <div class="quickbook-collapsible-body" id="qbc-canva-box"></div>
+      </div>
+
+      <div id="qbc-continue-box" style="margin-top:16px"></div>
+    </div>
+  </div>
+
+  <!-- #07 Quick Book v3.0｜Step6 保存與分享 -->
+  <div class="screen" id="screen-quickbook-save-share">
+    <div class="topbar"><div class="title">保存與分享</div></div>
+    <div style="padding-top:20px">
+      <div class="notice">《<span id="qbs-title"></span>》</div>
+      <div class="card">
+        <div class="section-label">保存確認</div>
+        <div id="qbs-checklist"></div>
+      </div>
+      <div class="card">
+        <div class="section-label">是否分享？</div>
+        <div id="qbs-share-choice"></div>
+      </div>
+      <div class="card" id="qbs-share-drafts" style="display:none"></div>
+      <div id="qbs-finish-box" style="margin-top:16px"></div>
+    </div>
+  </div>
+
   <!-- 修改方向 -->
   <div class="screen" id="screen-revise-direction">
     <div class="topbar">
@@ -1190,6 +1296,11 @@
 
       <div class="section-label" style="margin-top:18px">進階</div>
       <button class="btn outline" onclick="openDataSafetyCenter()">🛡️ 資料安全中心（備份／還原）</button>
+      <!-- #7.1 Quick Book v4.0 POC（總策長／CEO 核准，2026-08-06）：獨立測試入口，刻意不放在
+           首頁「今天想完成什麼？」，避免真正上課的學員誤點進還在開發中的 POC；只透過設定頁
+           「進階」區塊這個相對低流量的位置進入，且畫面本身明確標示「測試版」。v3.0 正式入口
+           完全不變。 -->
+      <button class="btn outline" style="margin-top:10px" onclick="openQuickBookV4Entry()">🧪 Quick Book v4.0（測試版）</button>
 
       <!-- Workspace Trust Sprint 1（Task 9）：原本的「☁️ 專屬 Google 雲端備份設定」區塊
            已停用——那個功能實際上從未真正把資料送到任何地方（saveToCloud() 只是把本地
@@ -1204,6 +1315,787 @@
           雲端備份上線前，請使用上方「匯出我的資料」保存備份到自己的裝置或雲端硬碟。
         </p>
       </div>
+    </div>
+  </div>
+
+  <!-- #7.1 Quick Book v4.0 POC（總策長／CEO 核准，2026-08-06）：獨立測試入口，Phase 1 只建立
+       分流殼＋空流程頁面，Practical／Creative 的實際步驟邏輯留到 Phase 2／3。 -->
+  <div class="screen" id="screen-quickbook-v4-entry">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-settings')">←</button>
+      <div class="title">Quick Book v4.0（測試版）</div>
+    </div>
+    <div style="padding-top:20px">
+      <!-- 課前入口文案 Must Fix（CEO／總策長，2026-08-12）：原本這裡有一句「🧪 這是開發測試
+           中的版本…」的內部提醒，追查後確認它只是靜態文字、渲染本身沒有壞掉，但它在真人手機
+           驗收時佔掉了大量首屏高度，而使用者進這個畫面前已經在設定頁點過同樣寫著「測試版」的
+           按鈕，這裡重複講一次對「你今天想完成哪一種作品？」的決策沒有幫助，屬於「沒有實際
+           功能」（brief 選項 A），直接移除，把首屏空間留給三張真正的入口卡片。 -->
+      <div class="section-label" style="margin-top:14px">你今天想完成哪一種作品？</div>
+      <div class="pick-card" onclick="chooseQuickBookV4Type('practical')">
+        <div class="emoji">📋</div><div class="label">我有資料，想整理成清楚好用的小書</div>
+        <div class="option-sub" style="margin-top:4px">把現有資料整理成清楚、好閱讀的小書</div>
+      </div>
+      <div class="pick-card" style="margin-top:10px" onclick="chooseQuickBookV4Type('creative')">
+        <div class="emoji">✍️</div><div class="label">我有一個故事、感受或靈感</div>
+        <div class="option-sub" style="margin-top:4px">把想說的故事整理成一本小書</div>
+      </div>
+      <!-- Quick Book 母模封版 P0（CEO／總策長，2026-08-11）：烘焙小書是結構化實用型代表，
+           走既有 Practical／SourceMaterial 路徑，只是入口換成 8 個結構化欄位，不是新流程。
+           課前入口文案 Must Fix（2026-08-12）：只改使用者看到的名稱，底層 chooseQuickBookV4Baking()／
+           topicPresetId='baking_book' 完全不動。 -->
+      <div class="pick-card" style="margin-top:10px" onclick="chooseQuickBookV4Baking()">
+        <div class="emoji">🧁</div><div class="label">我有一份烘焙／食譜配方</div>
+        <div class="option-sub" style="margin-top:4px">整理材料、份量、步驟、溫度與時間，做成清楚好用的小書</div>
+      </div>
+      <div class="notice" style="margin-top:14px">還不確定？實用型適合「已經有內容，想整理」；創作型適合「還沒有內容，只有一個念頭」。</div>
+    </div>
+  </div>
+
+  <!-- Practical POC：Phase 1 只有空殼，證明分流與資料模型正確，Step1-6 實際邏輯在 Phase 2 -->
+  <!-- #7.1 Quick Book v4.0 Phase 2B｜Practical Step1：貼入產品資料 -->
+  <!-- AI Collaboration OS｜Practical Whole Book Fast Path（總策長／CEO 核准，2026-08-06）：
+       一句話確認＋貼資料，一個按鈕直接生成整本書。舊版逐步流程完整保留在「進階」連結。 -->
+  <div class="screen" id="screen-quickbook-v4-practical">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-quickbook-v4-entry')">←</button>
+      <div class="title">產品介紹小書</div>
+    </div>
+    <div style="padding-top:20px">
+      <div style="display:none"><span id="qbv4p-work-name"></span><span id="qbv4p-flow-type"></span></div>
+      <div class="notice">先簡單告訴我們這本書的方向，貼上資料後就能一次生成整本書，之後還可以逐頁調整。</div>
+
+      <div class="section-label" style="margin-top:14px">這本書大概介紹什麼？</div>
+      <div class="field">
+        <input id="qbv4p-intro-input" type="text" placeholder="一句話說明，例如：手工龍眼蜂蜜產品介紹" onchange="saveQuickBookV4Intro()" />
+      </div>
+
+      <div class="section-label" style="margin-top:14px">給誰看？</div>
+      <div id="qbv4p-audience-options"></div>
+
+      <div class="section-label" style="margin-top:14px">希望讀者看完後做什麼？</div>
+      <div id="qbv4p-task-options"></div>
+
+      <div class="section-label" style="margin-top:14px">頁數</div>
+      <div id="qbv4p-pagecount-options"></div>
+
+      <div class="section-label" style="margin-top:14px">把資料貼進來</div>
+      <div class="notice">不需要先整理，也不用寫得漂亮，把目前已有的資料貼進來即可，AI 不會自行補造內容。</div>
+      <div class="field" style="margin-top:8px">
+        <textarea id="qbv4p-raw-input" style="min-height:180px" placeholder="把資料貼在這裡……" onchange="saveQuickBookV4RawInput()"></textarea>
+      </div>
+
+      <button class="btn gold" style="margin-top:14px" onclick="proceedToQuickBookV4WholeBook()">🚀 開始生成整本書</button>
+      <button class="btn outline" style="margin-top:10px" onclick="saveQuickBookV4RawInput()">💾 先暫存，晚點再繼續</button>
+      <button class="btn outline" style="margin-top:10px" onclick="clearQuickBookV4RawInput()">🗑 清除重來</button>
+      <button class="btn outline" style="margin-top:16px;opacity:.75" onclick="proceedToQuickBookV4Step2()">進階：逐步整理資料（資料盤點／內容單元）</button>
+    </div>
+  </div>
+
+  <!-- Quick Book 母模封版 P0（CEO／總策長，2026-08-11）：烘焙小書最小結構化輸入畫面，8 個
+       欄位對應 CEO 指定的品名／成品或份量／材料／步驟／發酵條件或時間／烘烤溫度／烘烤時間／
+       注意事項或心得。送出後直接組成 rawInput，走既有 Whole Book Fast Path，不新增 parser、
+       不新增 flow。 -->
+  <div class="screen" id="screen-quickbook-v4-baking-input">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-quickbook-v4-entry')">←</button>
+      <div class="title">烘焙小書</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">把配方的原始資料填進來，數字、單位、溫度、時間都會照原樣保留，AI 不會幫你換算或改寫。</div>
+
+      <div class="section-label" style="margin-top:14px">品名</div>
+      <div class="field"><input id="qbv4bk-productName" type="text" placeholder="例如：布朗尼" onchange="saveQuickBookV4BakingField('productName')" /></div>
+
+      <div class="section-label" style="margin-top:14px">成品或份量</div>
+      <div class="field"><input id="qbv4bk-yieldInfo" type="text" placeholder="例如：8 吋方形烤盤一份" onchange="saveQuickBookV4BakingField('yieldInfo')" /></div>
+
+      <div class="section-label" style="margin-top:14px">材料</div>
+      <div class="field"><textarea id="qbv4bk-ingredients" style="min-height:110px" placeholder="例如：無鹽奶油 250g、細砂糖 200g、雞蛋 3顆……" onchange="saveQuickBookV4BakingField('ingredients')"></textarea></div>
+
+      <div class="section-label" style="margin-top:14px">步驟</div>
+      <div class="field"><textarea id="qbv4bk-steps" style="min-height:150px" placeholder="請按順序一行一個步驟" onchange="saveQuickBookV4BakingField('steps')"></textarea></div>
+
+      <div class="section-label" style="margin-top:14px">發酵條件或時間（沒有可留空）</div>
+      <div class="field"><input id="qbv4bk-fermentation" type="text" placeholder="例如：室溫發酵 60分鐘至兩倍大" onchange="saveQuickBookV4BakingField('fermentation')" /></div>
+
+      <div class="section-label" style="margin-top:14px">烘烤溫度</div>
+      <div class="field"><input id="qbv4bk-bakeTemp" type="text" placeholder="例如：180°C" onchange="saveQuickBookV4BakingField('bakeTemp')" /></div>
+
+      <div class="section-label" style="margin-top:14px">烘烤時間</div>
+      <div class="field"><input id="qbv4bk-bakeTime" type="text" placeholder="例如：30分鐘" onchange="saveQuickBookV4BakingField('bakeTime')" /></div>
+
+      <div class="section-label" style="margin-top:14px">注意事項或心得（沒有可留空）</div>
+      <div class="field"><textarea id="qbv4bk-notes" style="min-height:90px" placeholder="例如：烤到70%上色即可加蓋鋁箔，避免表面過焦" onchange="saveQuickBookV4BakingField('notes')"></textarea></div>
+
+      <button class="btn gold" style="margin-top:14px" onclick="proceedToQuickBookV4BakingWholeBook()">🚀 開始生成整本書</button>
+      <button class="btn outline" style="margin-top:10px" onclick="saveQuickBookV4BakingField('notes')">💾 先暫存，晚點再繼續</button>
+    </div>
+  </div>
+
+  <!-- #7.1 Quick Book v4.0 Phase 2B｜Practical Step2：確認讀者與用途 -->
+  <div class="screen" id="screen-quickbook-v4-practical-step2">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-quickbook-v4-practical')">←</button>
+      <div class="title">確認讀者與用途</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="section-label">主要給誰看？</div>
+      <div id="qbv4s2-audience-options"></div>
+      <div class="section-label" style="margin-top:16px">希望讀者看完後做什麼？</div>
+      <div id="qbv4s2-task-options"></div>
+      <div class="section-label" style="margin-top:16px">會在哪裡使用？</div>
+      <div id="qbv4s2-usage-options"></div>
+      <button class="btn gold" style="margin-top:18px" onclick="proceedToQuickBookV4Inventory()">✅ 確認，開始資料盤點</button>
+    </div>
+  </div>
+
+  <!-- #7.1 Quick Book v4.0 Phase 2B｜Practical Step3：資料盤點 -->
+  <div class="screen" id="screen-quickbook-v4-practical-inventory">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-quickbook-v4-practical-step2')">←</button>
+      <div class="title">資料盤點</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice" id="qbv4inv-status"></div>
+      <button class="btn outline" style="margin-top:8px" onclick="regenerateQuickBookV4Inventory()">🔄 重新請 AI 盤點</button>
+
+      <div class="section-label" style="margin-top:16px">✅ 目前已有的資料</div>
+      <div id="qbv4inv-existing"></div>
+
+      <div class="section-label" style="margin-top:16px">📝 仍需補充</div>
+      <div id="qbv4inv-missing"></div>
+
+      <div class="section-label" style="margin-top:16px">❓ 需要確認</div>
+      <div id="qbv4inv-needsConfirmation"></div>
+
+      <div class="section-label" style="margin-top:16px">⚠️ 資料衝突</div>
+      <div id="qbv4inv-conflicts"></div>
+
+      <div class="section-label" style="margin-top:16px">🚫 可以暫時不放</div>
+      <div id="qbv4inv-notApplicable"></div>
+
+      <button class="btn gold" style="margin-top:18px" onclick="proceedToQuickBookV4Structure()">✅ 資料整理好了，開始規劃內容單元</button>
+    </div>
+  </div>
+
+  <!-- #7.1 Quick Book v4.0 Phase 2C｜結構卡列表：3～5 個內容單元 -->
+  <div class="screen" id="screen-quickbook-v4-practical-structure">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-quickbook-v4-practical-inventory')">←</button>
+      <div class="title">內容單元規劃</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice" id="qbv4st-count-notice"></div>
+      <div class="notice" id="qbv4st-confirmed-count" style="margin-top:6px"></div>
+      <div class="action-row" style="margin-top:10px">
+        <button class="btn outline" style="width:auto;flex:1" onclick="regenerateQuickBookV4Structure()">🔄 重新請 AI 規劃</button>
+        <button class="btn outline" style="width:auto;flex:1" onclick="addQuickBookV4StructureUnit()">＋ 新增單元</button>
+      </div>
+      <div id="qbv4st-list"></div>
+      <button class="btn gold" style="margin-top:18px" onclick="proceedToQuickBookV4BookGate()">📖 完成內容單元，開始製作小書</button>
+    </div>
+  </div>
+
+  <!-- #7.1 Quick Book v4.0 Phase 2D｜預覽：逐頁顯示，清楚標示已完成／待補充／待確認 -->
+  <div class="screen" id="screen-quickbook-v4-preview">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-quickbook-v4-entry')">←</button>
+      <div class="title" id="qbv4pv-title">小書預覽</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice" id="qbv4pv-progress"></div>
+      <div class="action-row" style="margin-top:10px">
+        <button class="btn outline" style="width:auto;flex:1" onclick="regenerateQuickBookV4Book()">🔄 重新產生小書</button>
+        <button class="btn outline" style="width:auto;flex:1" onclick="showScreen('screen-quickbook-v4-handoff')">📤 準備交接</button>
+      </div>
+      <button class="btn outline" style="margin-top:8px" onclick="openQuickBookV4Chapters()">📚 依章節整理</button>
+      <div id="qbv4pv-list"></div>
+
+      <!-- Story Book Preset P0（CEO／總策長，2026-08-10）十四～十七節：Page Review Gate，
+           只在 Creative 流程顯示——Practical Whole Book Fast Path 是既有已驗收流程，這輪
+           不擴大範圍去動它。 -->
+      <div class="card" id="qbv4pv-gate-block" style="margin-top:14px;display:none">
+        <div class="section-label" style="margin-top:0">分頁檢閱</div>
+        <div class="notice" id="qbv4pv-gate-status" style="margin-top:6px"></div>
+        <button class="btn gold" style="margin-top:8px" onclick="confirmQuickBookV4PageReview()">✅ 我已檢閱全部分頁內容</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 共用電子書引擎 P0（技術長《共用電子書引擎 P0 母規格技術審查》核准，2026-08-07）
+       章節列表：選擇性的附加路徑，不改變既有 Fast Path 主流程 -->
+  <div class="screen" id="screen-quickbook-v4-chapters">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-quickbook-v4-preview')">←</button>
+      <div class="title">依章節整理</div>
+    </div>
+    <div style="padding-top:20px">
+      <button class="btn gold" onclick="addQuickBookV4Chapter()">＋ 新增章節</button>
+      <div id="qbv4ch-list"></div>
+    </div>
+  </div>
+
+  <!-- 章節內頁面列表 -->
+  <div class="screen" id="screen-quickbook-v4-chapter-pages">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-quickbook-v4-chapters')">←</button>
+      <div class="title" id="qbv4chp-title">章節內容</div>
+    </div>
+    <div style="padding-top:20px">
+      <button class="btn gold" onclick="addQuickBookV4ChapterPage()">＋ 新增分頁</button>
+      <div id="qbv4chp-list"></div>
+    </div>
+  </div>
+
+  <!-- #7.1 Quick Book v4.0 Phase 2D｜逐頁確認：7 種操作 -->
+  <div class="screen" id="screen-quickbook-v4-page-detail">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-quickbook-v4-preview')">←</button>
+      <div class="title" id="qbv4pd-title">頁面確認</div>
+    </div>
+    <div style="padding-top:20px">
+      <!-- 共用電子書引擎 P0 下一輪（CEO／總策長，2026-08-08）三節「封面完整化」：封面頁
+           改用封面專用 UI（主標／副標／作者／封面主視覺／Canva 排版指引／封面生圖指令／
+           完成狀態＋獨立複製按鈕），不再套用一般內頁的「頁面標題／頁面內文」顯示。兩個
+           區塊互斥切換，由 renderQuickBookV4PageDetail() 依 page.pageType 控制顯示，不新增
+           第二套頁面模型。 -->
+      <div id="qbv4pd-generic-block">
+        <div class="section-label">頁面標題</div>
+        <div class="card"><div class="line" id="qbv4pd-page-title"></div></div>
+
+        <div class="section-label" style="margin-top:14px">頁面內文</div>
+        <div class="card"><div class="line" id="qbv4pd-page-text" style="white-space:pre-line"></div></div>
+      </div>
+
+      <div id="qbv4pd-cover-block" style="display:none">
+        <div class="section-label">封面內容</div>
+        <div class="card"><div class="line" id="qbv4pd-cover-title"></div></div>
+
+        <div class="section-label" style="margin-top:14px">副標</div>
+        <div class="card"><div class="line" id="qbv4pd-cover-subtitle"></div></div>
+
+        <div class="section-label" style="margin-top:14px">作者</div>
+        <div class="card"><div class="line" id="qbv4pd-cover-author"></div></div>
+
+        <div class="section-label" style="margin-top:14px">繪者</div>
+        <div class="card"><div class="line" id="qbv4pd-cover-illustrator"></div></div>
+
+        <div class="section-label" style="margin-top:14px">其他封面署名</div>
+        <div class="card"><div class="line" id="qbv4pd-cover-credit"></div></div>
+
+        <!-- Must Fix（CEO 真人驗收，2026-08-09）：上一輪封面只有顯示、沒有真正可填的入口，
+             這顆按鈕是這次修正的核心——真正打開「設定封面內容」，可填主標／副標／作者／
+             繪者／其他封面署名，儲存後封面卡片立即更新。 -->
+        <button class="btn outline" style="margin-top:8px" onclick="editQuickBookV4CoverContent()">✏️ 設定封面內容</button>
+
+        <div class="section-label" style="margin-top:18px">封面視覺</div>
+        <div class="section-label" style="margin-top:14px">封面主視覺</div>
+        <div class="card"><div class="line" id="qbv4pd-cover-visual" style="white-space:pre-line"></div></div>
+
+        <!-- 十四節：封面視覺區塊補上 Canva 尺寸／畫面風格／字體風格，跟 book-level
+             layoutProfile／visualPlan 同一份設定，不是封面另存一套。 -->
+        <div class="section-label" style="margin-top:14px">Canva 尺寸</div>
+        <div class="card"><div class="line" id="qbv4pd-cover-canvasize"></div></div>
+
+        <div class="section-label" style="margin-top:14px">畫面風格</div>
+        <div class="card"><div class="line" id="qbv4pd-cover-visualstyle"></div></div>
+
+        <div class="section-label" style="margin-top:14px">字體風格</div>
+        <div class="card"><div class="line" id="qbv4pd-cover-fontstyle"></div></div>
+
+        <div class="section-label" style="margin-top:14px">Canva 封面排版指引</div>
+        <div class="card"><div class="line" id="qbv4pd-cover-layout" style="white-space:pre-line"></div></div>
+
+        <div class="section-label" style="margin-top:14px">封面生圖指令</div>
+        <div class="card"><div class="line" id="qbv4pd-cover-imageprompt" style="white-space:pre-line"></div></div>
+
+        <div class="notice" style="margin-top:10px">完成狀態：<span id="qbv4pd-cover-status"></span></div>
+
+        <div id="qbv4pd-cover-copy-buttons" style="margin-top:10px"></div>
+      </div>
+
+      <!-- P0/UX 最小修正（CEO 手機真人驗收，2026-08-08）：Trace 後移除「使用我的照片／
+           請AI協助生成插畫／使用現有品牌素材／製作流程圖／製作資訊圖表」這些按鈕——底層
+           setQuickBookV4PageVisualMode() 點下去只改 visualMode／imageStatus 兩個欄位，沒有
+           任何真正產出或下一步（原本掛在旁邊的 qbv4pd-illustration-prompt-block 也從來沒有
+           任何程式碼寫入過，是死的佔位）。正式圖片產出改走「全書視覺定調→測試圖片→逐頁
+           生圖指令」這條唯一路徑，頁面詳情只需要誠實回答「這一頁要不要圖片？」，「需要
+           圖片」只是標記這頁納入後續全書生圖流程。visualMode enum／
+           setQuickBookV4PageVisualMode() 本身完全不變，只精簡前台按鈕。 -->
+      <div class="section-label" style="margin-top:14px">這一頁要不要圖片？</div>
+      <div class="card"><div class="line" id="qbv4pd-image"></div></div>
+      <div class="action-row" style="margin-top:6px">
+        <button class="btn outline" style="width:auto;flex:1" onclick="setQuickBookV4PageVisualMode('generated_illustration')">需要圖片</button>
+        <button class="btn outline" style="width:auto;flex:1" onclick="setQuickBookV4PageVisualMode('text_only')">純文字</button>
+        <button class="btn outline" style="width:auto;flex:1" onclick="setQuickBookV4PageVisualMode('add_later')">稍後再補</button>
+      </div>
+
+      <div class="notice" style="margin-top:10px">目前狀態：<span id="qbv4pd-status"></span></div>
+
+      <div class="section-label" style="margin-top:16px">接下來想怎麼處理這一頁？</div>
+      <button class="btn gold" onclick="confirmQuickBookV4Page()">✅ 這一頁可以</button>
+
+      <!-- UI 減法：第一層只留「這一頁可以」跟「我要修改」，其餘操作收進「更多調整」，
+           重用既有 quickbook-collapsible／toggleQuickBookSection()，不新增收合機制。 -->
+      <div class="card quickbook-collapsible" id="qbv4pd-more-section" style="margin-top:8px">
+        <div class="section-label" onclick="toggleQuickBookSection('qbv4pd-more-section')" style="cursor:pointer;margin-top:0">✏️ 我要修改 ▾</div>
+        <div class="quickbook-collapsible-body">
+          <div class="section-label" style="margin-top:10px">更多調整</div>
+          <button class="btn outline" style="margin-top:8px" onclick="editQuickBookV4PageTitle()">✏️ 修改標題</button>
+          <button class="btn outline" style="margin-top:8px" onclick="editQuickBookV4PageText()">✏️ 修改內文</button>
+          <button class="btn outline" style="margin-top:8px" onclick="appendSentenceToQuickBookV4Page()">➕ 補一句</button>
+          <button class="btn outline" style="margin-top:8px" onclick="regenerateQuickBookV4Page()">🔄 重新整理</button>
+          <button class="btn outline" style="margin-top:8px" id="qbv4pd-cover-btn" onclick="editQuickBookV4CoverVisualDirection()">🎨 設定封面視覺方向</button>
+          <button class="btn outline" style="margin-top:8px" id="qbv4pd-source-btn" onclick="backToQuickBookV4SourceUnit()">👁 查看原始來源</button>
+          <button class="btn outline" style="margin-top:8px" onclick="flagQuickBookV4PageNotMyContent()">🚫 這不是我提供的內容／這不是我說的</button>
+          <button class="btn outline" style="margin-top:8px" onclick="flagQuickBookV4PageTooPromotional()">📢 太像廣告</button>
+          <button class="btn outline" style="margin-top:8px" onclick="flagQuickBookV4PageTooAiSounding()">🤖 太像 AI</button>
+          <button class="btn outline" style="margin-top:8px" onclick="saveQuickBookV4PageForLater()">💾 先保存</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 共用電子書引擎 P0｜External Tool Handoff：直接呼叫 buildBookHandoff(book, target, options)
+       四種正式交接格式，技術長 Gate A Must Fix（2026-08-07）接線修正。
+       UX Flow Blocker 修正（CEO 正式主流程，2026-08-08）：畫面依 CEO 定義的正式產品流程
+       七步驟排序——①完整文稿②分鏡文稿③全書視覺定調④測試圖片⑤逐頁生圖指令⑥逐頁複製
+       ⑦到Canva排版，Canva 是最後排版工具，不是第一個主動作。底層 buildBookHandoff／
+       四個 target／Canva formatter／視覺 Gate 判斷完全不變，只調整呈現順序、文字與
+       進度狀態顯示。 -->
+  <div class="screen" id="screen-quickbook-v4-handoff">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-quickbook-v4-preview')">←</button>
+      <div class="title">準備交接</div>
+    </div>
+    <div style="padding-top:16px">
+
+      <div id="qbv4h-structure-error" style="display:none"></div>
+
+      <div id="qbv4h-targets">
+        <!-- 1｜完整文稿：正式主流程第一步，plain_text／buildBookHandoffPlainText() 不變 -->
+        <div class="card" style="margin-top:0">
+          <div class="section-label">1｜完整文稿</div>
+          <div class="notice" style="margin-top:6px">先確認整本書的文字內容。這份文稿可以直接閱讀，也可以作為影片旁白稿。</div>
+          <div id="qbv4h-plaintext"></div>
+        </div>
+
+        <!-- 未確認內容：白話一句話＋單一開關，不混用頁/章節兩套說法 -->
+        <div class="notice" id="qbv4h-unconfirmed-notice" style="margin-top:10px"></div>
+        <label style="display:flex;align-items:center;gap:6px;margin-top:6px;font-size:13.5px;cursor:pointer" id="qbv4h-include-toggle-wrap">
+          <input type="checkbox" id="qbv4h-include-toggle-checkbox" onchange="toggleQuickBookV4HandoffIncludeUnconfirmed()" style="width:auto;margin:0">
+          也包含尚未確認的內容
+        </label>
+        <div class="notice" style="margin-top:4px;font-size:12px" id="qbv4h-include-toggle-sub">尚未確認的內容會清楚標示「待確認」。</div>
+
+        <!-- 2｜分鏡文稿：正式前台區塊，直接從 pages[] 即時計算，不建第二份分鏡資料。
+             視覺 Gate 完成前只有頁碼／標題／正文／畫面構想／視覺建議，Gate 完成後同一份
+             文稿自動補上生圖指令／排版建議。 -->
+        <div class="card" style="margin-top:14px">
+          <div class="section-label">2｜分鏡文稿</div>
+          <div class="notice" style="margin-top:6px">看整本書逐頁的製作內容，包含正文、畫面構想，以及產生後的生圖指令。</div>
+          <div id="qbv4h-storyboard"></div>
+        </div>
+
+        <!-- 3｜全書視覺定調 -->
+        <div class="card" style="margin-top:14px">
+          <div class="section-label">3｜全書視覺定調</div>
+          <div class="notice" style="margin-top:6px">先確認全書共同畫風，再試做一張圖。</div>
+          <div class="notice" id="qbv4h-style-status" style="margin-top:6px"></div>
+          <button class="btn outline" style="margin-top:6px" onclick="openQuickBookV4VisualPlan()">🎨 設定全書畫風</button>
+        </div>
+
+        <!-- 4｜測試圖片 -->
+        <div class="card" style="margin-top:14px">
+          <div class="section-label">4｜測試圖片</div>
+          <div class="notice" id="qbv4h-trial-status" style="margin-top:6px"></div>
+          <button class="btn outline" style="margin-top:6px" onclick="openQuickBookV4TrialImage()">🖼️ 先做一張測試圖</button>
+        </div>
+
+        <!-- 5｜逐頁生圖指令：Gate 未過只顯示提示，不提供假成果 -->
+        <div class="card" style="margin-top:14px">
+          <div class="section-label">5｜逐頁生圖指令</div>
+          <div class="notice" id="qbv4h-generate-status" style="margin-top:6px"></div>
+          <button class="btn outline" style="margin-top:6px;display:none" id="qbv4h-generate-btn" onclick="proceedToQuickBookV4ImagePromptGeneration()"></button>
+        </div>
+
+        <!-- P0/UX 最小修正（CEO 手機真人驗收，2026-08-08）十／十一節：完成一本電子小書
+             的最小引導，純靜態文字，不新增 wizard。放在「5｜逐頁生圖指令」之後、
+             「6｜逐頁複製」之前——CEO 教學策略是第一張用 ChatGPT 示範（快速看到示範
+             成果，不是系統綁定），其餘頁面提示可用 Gemini 等工具完成，工具可替換，
+             不建立工具選擇器、不串接任何 API。 -->
+        <div class="card" style="margin-top:14px">
+          <div class="notice">接下來把每頁圖片完成，再把文案與圖片放進 Canva，就能完成一本電子小書。</div>
+          <div class="notice" style="margin-top:6px">可以先用 ChatGPT 試做第一張，確認畫風；其餘頁面再把生圖指令貼到你慣用的生圖 AI（例如 Gemini），完成圖片。</div>
+        </div>
+
+        <!-- 6｜逐頁複製：獨立成主流程一步，在 Canva 之前。P0/UX 最小修正（2026-08-08）
+             改成真正的手機 accordion（一次只展開一頁），每頁固定提供「複製文案」與
+             「複製生圖指令」兩顆按鈕，沿用既有 renderQuickBookV4CanvaPerPage()，只重寫
+             這個函式本身的內容，不動其他 formatter。 -->
+        <div class="card quickbook-collapsible" id="qbv4h-canva-perpage-section" style="margin-top:14px">
+          <div class="section-label" onclick="toggleQuickBookV4CanvaPerPageSection()" style="cursor:pointer;margin-top:0">6｜逐頁複製 ▾</div>
+          <div class="notice" style="margin-top:6px">每一頁可以單獨複製「文案」跟「生圖指令」，點頁面標題展開，一次只看一頁。</div>
+          <div class="quickbook-collapsible-body" id="qbv4h-canva-perpage"></div>
+        </div>
+
+        <!-- 7｜到 Canva 排版：最後一步，不再是第一屏最高權重主按鈕 -->
+        <div class="card" style="margin-top:14px">
+          <div class="section-label">7｜到 Canva 排版</div>
+          <div class="notice" style="margin-top:6px">內容與圖片指令準備好後，再到 Canva 完成電子書排版。</div>
+          <div id="qbv4h-canva"></div>
+          <a class="btn outline" style="margin-top:8px;text-decoration:none;display:block;text-align:center" href="https://www.canva.com" target="_blank" rel="noopener">🎨 開啟 Canva</a>
+        </div>
+
+        <!-- Quick Book 最終交付引導（CEO／總策長，2026-08-10）：改造既有「怎麼分享成一本書？」
+             區塊，正式接上真人手機實際操作路徑——圖片存手機→Canva「從相機膠卷開始」→完成
+             排版→右上角「⋯」→PDF 標準→存手機／雲端→FlipHTML5→分享翻頁電子書。一個完成
+             入口，一條完整路徑，不新增第二個分享／完成電子書卡片。純靜態說明，不接任何
+             第三方 API，重用既有 quickbook-collapsible／toggleQuickBookSection()。 -->
+        <div class="card quickbook-collapsible" id="qbv4h-share-guide-section" style="margin-top:14px">
+          <div class="section-label" onclick="toggleQuickBookSection('qbv4h-share-guide-section')" style="cursor:pointer;margin-top:0">📖 完成並分享你的電子書 ▾</div>
+          <div class="quickbook-collapsible-body">
+
+            <div class="section-label" style="margin-top:10px">① 把書頁圖片存到手機</div>
+            <div class="notice" style="margin-top:6px">先把已完成的封面與每一頁圖片保存到手機相簿，依書頁順序整理，等一下到 Canva 排版會比較方便。</div>
+
+            <div class="section-label" style="margin-top:14px">② 打開 Canva</div>
+            <div class="notice" style="margin-top:6px">在 Canva 手機首頁找到「從相機膠卷開始」。<br>接著選擇剛才存在手機裡的封面與各頁圖片。</div>
+
+            <div class="section-label" style="margin-top:14px">③ 完成每一頁圖文排版</div>
+            <div class="notice" style="margin-top:6px">依工作台準備好的每頁文案、圖片與排版提示，把整本書排好。<br>請維持整本書相同的 Canva 尺寸、畫面風格與文字風格。</div>
+
+            <!-- 課堂 UX Must Fix（CEO／總策長，2026-08-12）：下載前先命名，避免學員手機／雲端
+                 裡出現一堆「未命名設計.pdf」找不到自己的書。只補教學文字，不改 Canva 操作
+                 流程本身。 -->
+            <div class="section-label" style="margin-top:14px">④ 先幫檔案命名</div>
+            <div class="notice" style="margin-top:6px;background:var(--gold-pale);border:1px solid var(--gold)">
+              ✏️ 下載前，先在 Canva 幫這本書命名。<br>建議使用書名作為檔名，例如：遙望星空的小孩.pdf
+            </div>
+            <div class="notice" style="margin-top:6px">下載 PDF 前先幫檔案命名，之後在手機、Google Drive 或電子書平台會比較好找。</div>
+
+            <div class="section-label" style="margin-top:14px">⑤ 下載成 PDF</div>
+            <div class="notice" style="margin-top:6px">全書排版完成後，在 Canva 右上方點「⋯」。<br>選擇下載／匯出，檔案類型請選「PDF 標準」。</div>
+            <div class="notice" style="margin-top:6px;background:var(--gold-pale);border:1px solid var(--gold)">
+              ⚠️ 這一步請選「PDF 標準」<br>
+              下一步要把整本書上傳到翻頁電子書網站，所以不要選 JPG、PNG、MP4 或 GIF。
+              <div style="margin-top:6px">✅ PDF 標準　　❌ JPG　　❌ PNG　　❌ MP4　　❌ GIF</div>
+            </div>
+
+            <div class="section-label" style="margin-top:14px">⑥ 儲存 PDF</div>
+            <div class="notice" style="margin-top:6px">下載完成後，把 PDF 存到手機、Google Drive 或其他雲端空間。<br>記得確認自己找得到這個 PDF，下一步要上傳它。</div>
+
+            <!-- 線上電子書製作網址補充（CEO／總策長，2026-08-12）：主要推薦改為 Publuu，
+                 FlipHTML5／Visual Paradigm Online 收進「其他線上電子書工具」收合區塊，避免
+                 三個平台都變成大按鈕、手機畫面拉太長。純外部連結，不串 API、不 iframe、
+                 不登入整合、不自動上傳 PDF。 -->
+            <div class="section-label" style="margin-top:14px">⑦ 製作可翻閱電子書</div>
+            <div class="notice" style="margin-top:6px">⭐ 推薦｜Publuu<br>可將 PDF 製作成可線上翻閱、分享的電子書。<br>完成後，把電子書分享連結傳給家人、朋友或讀者即可。</div>
+            <a class="btn gold" style="margin-top:8px;text-decoration:none;display:block;text-align:center" href="https://publuu.com/" target="_blank" rel="noopener noreferrer">📖 前往 Publuu 製作翻頁電子書</a>
+
+            <div class="quickbook-collapsible" id="qbv4h-other-ebook-tools-section" style="margin-top:10px">
+              <div class="section-label" onclick="toggleQuickBookSection('qbv4h-other-ebook-tools-section')" style="cursor:pointer;margin-top:0;font-size:13px">其他線上電子書工具 ▾</div>
+              <div class="quickbook-collapsible-body">
+                <div class="notice" style="margin-top:6px">FlipHTML5<br>可將 PDF 製作成可逐頁翻閱、方便分享連結的電子書。</div>
+                <a class="btn outline" style="margin-top:6px;text-decoration:none;display:block;text-align:center" href="https://fliphtml5.com/" target="_blank" rel="noopener noreferrer">前往 FlipHTML5</a>
+                <div class="notice" style="margin-top:10px">Visual Paradigm Online<br>可製作線上翻頁書，也有其他線上設計功能。</div>
+                <a class="btn outline" style="margin-top:6px;text-decoration:none;display:block;text-align:center" href="https://online.visual-paradigm.com/" target="_blank" rel="noopener noreferrer">前往 Visual Paradigm Online</a>
+              </div>
+            </div>
+
+            <div class="section-label" style="margin-top:16px">完整路徑</div>
+            <div class="notice" style="margin-top:6px;font-size:12.5px;line-height:1.8">
+              Canva 全書排版完成 → 先命名檔案 → 下載 PDF 標準 → 上傳 Publuu → 產生翻頁電子書 → 分享連結
+            </div>
+
+          </div>
+        </div>
+
+        <!-- 其他輸出方式：只放真正屬於其他用途的格式，完整文稿／分鏡文稿／視覺定調／
+             測試圖／逐頁生圖指令／逐頁複製／Canva 都是主流程，不放這裡 -->
+        <div class="card quickbook-collapsible" id="qbv4h-others-section" style="margin-top:14px">
+          <div class="section-label" onclick="toggleQuickBookSection('qbv4h-others-section')" style="cursor:pointer">其他輸出方式 ▾</div>
+          <div class="quickbook-collapsible-body">
+            <div class="section-label" style="margin-top:10px">完整製作資料</div>
+            <div class="notice" style="margin-top:6px">含封面、章節與圖片排版資訊，給設計／製作端使用。</div>
+            <div id="qbv4h-googledocs"></div>
+            <a class="btn outline" style="margin-top:8px;text-decoration:none;display:block;text-align:center" href="https://docs.google.com" target="_blank" rel="noopener">📝 開啟 Google Docs</a>
+            <div class="section-label" style="margin-top:14px">圖片製作資料</div>
+            <div id="qbv4h-image" style="margin-top:8px"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 素材準備狀態，預設收合——交接主畫面的目的是把作品帶出去排版，不是管理素材 -->
+      <div class="card quickbook-collapsible" id="qbv4h-materials-section" style="margin-top:14px">
+        <div class="section-label" onclick="toggleQuickBookSection('qbv4h-materials-section')" style="cursor:pointer">查看圖片與素材準備狀態 ▾</div>
+        <div class="quickbook-collapsible-body">
+          <div id="qbv4h-checklist"></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- P0 Blocker 補修（CEO 真人驗收，2026-08-07）：全書視覺定調，最短生圖真人路徑第一步 -->
+  <div class="screen" id="screen-quickbook-v4-visual-plan">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-quickbook-v4-handoff')">←</button>
+      <div class="title">全書視覺定調</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">先確認幾個會影響整本書畫面一致性的設定，等一下試做測試圖跟之後每一頁生圖都會用到。</div>
+
+      <!-- Quick Book 下一輪（CEO／總策長，2026-08-09）六～八節：book-level Canva 尺寸，
+           全書共用同一份，不可每頁自訂。 -->
+      <div class="section-label" style="margin-top:16px">Canva 尺寸</div>
+      <div class="notice" id="qbv4vp-size-recommend" style="margin-top:4px"></div>
+      <div id="qbv4vp-size-options" style="margin-top:4px"></div>
+
+      <!-- 十一節：畫面風格範本，選了直接寫進下面「全書畫風」欄位，也可以不選、直接手動編輯。 -->
+      <div class="section-label" style="margin-top:18px">畫面風格範本（可選，也可以直接在下面自己寫）</div>
+      <div id="qbv4vp-style-presets" style="margin-top:4px"></div>
+
+      <div class="section-label" style="margin-top:14px">全書畫風</div>
+      <div class="card"><div class="line" id="qbv4vp-visualStyle"></div></div>
+      <button class="btn outline" style="margin-top:6px" onclick="editQuickBookV4VisualPlanField('visualStyle')">✏️ 編輯</button>
+
+      <div class="section-label" style="margin-top:14px">色彩氣氛</div>
+      <div class="card"><div class="line" id="qbv4vp-colorMood"></div></div>
+      <button class="btn outline" style="margin-top:6px" onclick="editQuickBookV4VisualPlanField('colorMood')">✏️ 編輯</button>
+
+      <div class="section-label" style="margin-top:14px">主角／人物一致性</div>
+      <div class="card"><div class="line" id="qbv4vp-characterConsistency"></div></div>
+      <button class="btn outline" style="margin-top:6px" onclick="editQuickBookV4VisualPlanField('characterConsistency')">✏️ 編輯</button>
+
+      <div class="section-label" style="margin-top:14px">場景／年代感</div>
+      <div class="card"><div class="line" id="qbv4vp-sceneEra"></div></div>
+      <button class="btn outline" style="margin-top:6px" onclick="editQuickBookV4VisualPlanField('sceneEra')">✏️ 編輯</button>
+
+      <div class="section-label" style="margin-top:14px">避免元素</div>
+      <div class="card"><div class="line" id="qbv4vp-avoidElements"></div></div>
+      <button class="btn outline" style="margin-top:6px" onclick="editQuickBookV4VisualPlanField('avoidElements')">✏️ 編輯</button>
+
+      <!-- 十二節：字體風格，第一版只存語意 id，不指定實際字型。 -->
+      <div class="section-label" style="margin-top:18px">字體風格</div>
+      <div id="qbv4vp-font-options" style="margin-top:4px"></div>
+
+      <button class="btn gold" style="margin-top:16px" onclick="confirmQuickBookV4VisualPlanStyle()">✅ 確認風格定調</button>
+      <div class="notice" style="margin-top:8px" id="qbv4vp-confirmed-notice"></div>
+    </div>
+  </div>
+
+  <!-- P0 Blocker 補修（CEO 真人驗收，2026-08-07）：測試圖指令＋確認測試風格 -->
+  <div class="screen" id="screen-quickbook-v4-trial-image">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-quickbook-v4-visual-plan')">←</button>
+      <div class="title">先做一張測試圖</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">先試做一張圖片，確認你喜歡這個畫風。</div>
+      <div class="notice" id="qbv4ti-no-page-notice" style="display:none;margin-top:8px"></div>
+      <div id="qbv4ti-prompt-box" style="margin-top:8px"></div>
+      <button class="btn gold" style="margin-top:12px" id="qbv4ti-confirm-btn" onclick="confirmQuickBookV4TrialImageStyle()">✅ 這個畫風可以</button>
+      <div class="notice" style="margin-top:8px" id="qbv4ti-confirmed-notice"></div>
+      <button class="btn outline" style="margin-top:8px" onclick="showScreen('screen-quickbook-v4-visual-plan')">✏️ 調整風格</button>
+      <div id="qbv4ti-generate-section" style="display:none;margin-top:16px">
+        <div class="notice">畫風已確認，可以產生全書逐頁生圖指令了。</div>
+        <button class="btn gold" style="margin-top:8px" onclick="proceedToQuickBookV4ImagePromptGeneration()">🖼️ 產生全書逐頁生圖指令</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- #7.1 Quick Book v4.0 Phase 2C｜逐單元整理：來源／整理稿／仍缺資料＋9 種使用者操作 -->
+  <div class="screen" id="screen-quickbook-v4-practical-unit-detail">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-quickbook-v4-practical-structure')">←</button>
+      <div class="title" id="qbv4ud-title">單元整理</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="section-label">這個單元想讓讀者知道或感受到什麼</div>
+      <div class="card"><div class="line" id="qbv4ud-purpose"></div></div>
+
+      <div class="section-label" style="margin-top:14px">原始資料依據</div>
+      <div class="card"><div class="line" id="qbv4ud-sources" style="white-space:pre-line"></div></div>
+
+      <div class="section-label" style="margin-top:14px">AI 整理稿</div>
+      <div class="card"><div class="line" id="qbv4ud-draft" style="white-space:pre-line"></div></div>
+
+      <div class="section-label" style="margin-top:14px">仍缺少資料</div>
+      <div class="card"><div class="line" id="qbv4ud-missing"></div></div>
+
+      <div class="notice" style="margin-top:10px">目前狀態：<span id="qbv4ud-status"></span></div>
+
+      <div class="section-label" style="margin-top:16px">接下來想怎麼處理這個單元？</div>
+      <button class="btn gold" onclick="confirmQuickBookV4Unit()">✅ 這就是我要表達的</button>
+      <button class="btn outline" style="margin-top:8px" onclick="editQuickBookV4UnitDraftManually()">✏️ 我想自己修改文字</button>
+      <button class="btn outline" style="margin-top:8px" onclick="requestMoreDataForQuickBookV4Unit()">➕ 我想再補充更多資料</button>
+      <button class="btn outline" style="margin-top:8px" onclick="regenerateQuickBookV4Unit()">🔄 這段我不滿意，請 AI 重新整理</button>
+      <button class="btn outline" style="margin-top:8px" onclick="flagQuickBookV4UnitNotMyContent()">🚫 這不是我提供的內容</button>
+      <button class="btn outline" style="margin-top:8px" onclick="flagQuickBookV4UnitTooPromotional()">📢 太像廣告文案</button>
+      <button class="btn outline" style="margin-top:8px" onclick="markQuickBookV4UnitNeedsConfirmation()">❓ 先擱置，待確認</button>
+      <button class="btn outline" style="margin-top:8px" onclick="skipQuickBookV4Unit()">⏭️ 這個單元先跳過</button>
+      <button class="btn outline" style="margin-top:8px" onclick="saveQuickBookV4UnitForLater()">💾 先保存，晚點再繼續</button>
+    </div>
+  </div>
+
+  <!-- Story Book Preset（CEO／總策長，2026-08-10／2026-08-11）十二節：Creative 進入訪談前的
+       最小選擇，只有正式可用選項，沒有露出尚未完成的假功能。母模封版 P0 新增生活故事／
+       童書繪本兩張卡片，證明同一套 Creative flow 只靠 preset 就能承接更多內容類型。 -->
+  <div class="screen" id="screen-quickbook-v4-story-preset">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-quickbook-v4-entry')">←</button>
+      <div class="title">想做哪一種故事小書？</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="pick-card" onclick="chooseQuickBookV4StoryPreset('life_story')">
+        <div class="emoji">📖</div><div class="label">生命故事</div>
+        <div class="option-sub" style="margin-top:4px">記錄自己的經歷、感受與想留給未來的話。</div>
+      </div>
+      <div class="pick-card" style="margin-top:10px" onclick="chooseQuickBookV4StoryPreset('family_story')">
+        <div class="emoji">👪</div><div class="label">親情故事</div>
+        <div class="option-sub" style="margin-top:4px">記錄一位重要家人，以及一段想珍藏的回憶。</div>
+      </div>
+      <div class="pick-card" style="margin-top:10px" onclick="chooseQuickBookV4StoryPreset('daily_story')">
+        <div class="emoji">☀️</div><div class="label">生活故事</div>
+        <div class="option-sub" style="margin-top:4px">記錄生活中的一件事、當下的情境與感受。</div>
+      </div>
+      <div class="pick-card" style="margin-top:10px" onclick="chooseQuickBookV4StoryPreset('children_book')">
+        <div class="emoji">🎨</div><div class="label">童書／繪本</div>
+        <div class="option-sub" style="margin-top:4px">用溫暖的圖畫說一個簡單故事。</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Creative POC：Phase 1 只有空殼，Step1-8 實際邏輯在 Phase 3 -->
+  <!-- AI Collaboration OS｜Creative 生命故事 Fast Path（總策長／CEO 核准，2026-08-06） -->
+  <div class="screen" id="screen-quickbook-v4-creative">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-quickbook-v4-story-preset')">←</button>
+      <div class="title" id="qbv4c-title">生命故事</div>
+    </div>
+    <div style="padding-top:20px">
+      <div style="display:none"><span id="qbv4c-work-name"></span><span id="qbv4c-flow-type"></span></div>
+      <div class="section-label">你的故事現在是什麼狀態？</div>
+      <div class="pick-card" onclick="chooseQuickBookV4CreativeMode('has_story')">
+        <div class="emoji">📝</div><div class="label">我已經有故事內容</div>
+        <div class="option-sub" style="margin-top:4px">已經寫好或整理過一些文字，想請 AI 幫忙整理成完整文稿</div>
+      </div>
+      <div class="pick-card" style="margin-top:10px" onclick="chooseQuickBookV4CreativeMode('need_interview')">
+        <div class="emoji">💬</div><div class="label">需要 AI 提問協助</div>
+        <div class="option-sub" style="margin-top:4px">還沒有寫下來，讓 AI 一次只問一題，慢慢引導出這段故事</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 四節：4 個快速情境問題（開放文字，不預設選項，保持簡單） -->
+  <div class="screen" id="screen-quickbook-v4-creative-context">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-quickbook-v4-creative')">←</button>
+      <div class="title">認識這個故事</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="section-label">這個故事主要想寫什麼？</div>
+      <div class="field"><input id="qbv4cc-topic" type="text" placeholder="例如：媽媽這一生的故事" /></div>
+      <div class="section-label" style="margin-top:14px">希望給誰看？</div>
+      <div class="field"><input id="qbv4cc-target-reader" type="text" placeholder="例如：家人、未來的孫子孫女" /></div>
+      <div class="section-label" style="margin-top:14px">希望讀者感受到什麼？</div>
+      <div class="field"><input id="qbv4cc-intended-feeling" type="text" placeholder="例如：溫暖、感謝、被記得" /></div>
+      <div class="section-label" style="margin-top:14px">你有想放進故事裡的照片嗎？</div>
+      <div class="field"><input id="qbv4cc-photo-hints" type="text" placeholder="有的話簡單描述，例如：有幾張全家福和年輕時的照片；沒有可以留空" /></div>
+      <button class="btn gold" style="margin-top:18px" onclick="proceedFromQuickBookV4CreativeContext()">繼續</button>
+    </div>
+  </div>
+
+  <!-- Path A：已有故事內容 -->
+  <div class="screen" id="screen-quickbook-v4-creative-paste">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-quickbook-v4-creative-context')">←</button>
+      <div class="title">貼入故事內容</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">把你已經寫好或整理過的內容貼進來，不需要先整理，AI 會幫你整理成完整、連貫的文稿，不會自己新增你沒寫過的情節。</div>
+      <div class="field" style="margin-top:12px"><textarea id="qbv4cp-input" style="min-height:200px" placeholder="把故事內容貼在這裡……" onchange="saveQuickBookV4CreativePaste()"></textarea></div>
+      <button class="btn gold" onclick="proceedToQuickBookV4CreativeStoryFromPaste()">請 AI 整理成完整文稿</button>
+      <button class="btn outline" style="margin-top:10px" onclick="saveQuickBookV4CreativePaste()">💾 先暫存，晚點再繼續</button>
+    </div>
+  </div>
+
+  <!-- Path B：需要 AI 提問協助——一次一題，可略過 -->
+  <div class="screen" id="screen-quickbook-v4-creative-interview">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-quickbook-v4-creative-context')">←</button>
+      <div class="title">來聊聊這段故事</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice" id="qbv4ci-progress"></div>
+      <div class="section-label" style="margin-top:12px" id="qbv4ci-question"></div>
+      <div class="field" style="margin-top:8px"><textarea id="qbv4ci-answer-input" style="min-height:140px" placeholder="在這裡回答……"></textarea></div>
+      <button class="btn gold" onclick="answerQuickBookV4CreativeQuestion()">下一題</button>
+      <button class="btn outline" style="margin-top:10px" onclick="skipQuickBookV4CreativeQuestion()">略過這一題</button>
+    </div>
+  </div>
+
+  <!-- 完整文稿確認畫面 -->
+  <div class="screen" id="screen-quickbook-v4-creative-draft">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-quickbook-v4-creative')">←</button>
+      <div class="title" id="qbv4cd-title">完整文稿</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="section-label">完整文稿</div>
+      <div class="card"><div class="line" id="qbv4cd-fulltext" style="white-space:pre-line"></div></div>
+      <div class="notice" style="margin-top:10px">目前狀態：<span id="qbv4cd-status"></span></div>
+      <div class="section-label" style="margin-top:16px">接下來想怎麼處理這篇文稿？</div>
+      <button class="btn gold" onclick="confirmQuickBookV4CreativeStoryDraft()">✅ 這就是我要表達的</button>
+      <button class="btn outline" style="margin-top:8px" onclick="editQuickBookV4CreativeStoryDraft()">✏️ 我想自己修改</button>
+      <button class="btn outline" style="margin-top:8px" onclick="regenerateQuickBookV4CreativeStoryDraft()">🔄 重新整理</button>
+      <button class="btn outline" style="margin-top:8px" onclick="flagQuickBookV4CreativeStoryDraftNotMine()">🚫 這不是我說的</button>
+      <button class="btn outline" style="margin-top:8px" onclick="viewQuickBookV4CreativeStorySource()">👁 查看原始來源</button>
+    </div>
+  </div>
+
+  <!-- 呈現方式與頁數選擇 → 分頁 -->
+  <div class="screen" id="screen-quickbook-v4-creative-style">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-quickbook-v4-creative-draft')">←</button>
+      <div class="title">選擇呈現方式</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="section-label">這本書想怎麼呈現？</div>
+      <div id="qbv4cs-style-options"></div>
+      <div class="section-label" style="margin-top:16px">頁數</div>
+      <div id="qbv4cs-pagecount-options"></div>
+      <button class="btn gold" style="margin-top:18px" onclick="proceedToQuickBookV4CreativePaginate()">開始分頁</button>
+    </div>
+  </div>
+
+  <!-- 共用：查看原始來源（Practical rawInput／Creative 訪談回答或貼入故事） -->
+  <div class="screen" id="screen-quickbook-v4-source-view">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-quickbook-v4-page-detail')">←</button>
+      <div class="title">原始來源</div>
+    </div>
+    <div style="padding-top:20px" id="qbv4sv-content"></div>
+  </div>
+
+  <!-- 技術長 Gate A Must Fix 3：raw fallback／驗證未通過導向這裡，不建立正式書頁、
+       不進 preview、不顯示成書成功訊息，Practical／Creative 共用同一個畫面 -->
+  <div class="screen" id="screen-quickbook-v4-recovery">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-quickbook-v4-entry')">←</button>
+      <div class="title">需要人工確認</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice" id="qbv4rc-reason"></div>
+      <div class="section-label" style="margin-top:14px">原因</div>
+      <div class="card" id="qbv4rc-errors"></div>
+      <div class="section-label" style="margin-top:14px">這次 AI 的原始回覆</div>
+      <div id="qbv4rc-raw"></div>
+      <button class="btn gold" style="margin-top:16px" onclick="retryQuickBookV4Recovery()">🔄 複製格式指令，再請 AI 試一次</button>
+      <button class="btn outline" style="margin-top:8px" onclick="pasteBackAgainQuickBookV4Recovery()">📋 重新貼回這次的回覆</button>
+      <button class="btn outline" style="margin-top:8px" onclick="dismissQuickBookV4Recovery()">💾 先保留這次原始回覆，晚點再處理</button>
     </div>
   </div>
 
