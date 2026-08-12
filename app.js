@@ -5195,22 +5195,35 @@ function validateQuickBookV4Inventory(inventory) {
   return { valid: true, warnings: warnings };
 }
 
-// #7.1 Quick Book v4.0 POC｜入口與分流（Phase 1：只建立殼，Step 邏輯在 Phase 2／3）───────
-// 獨立的 'quickbook_v4' 專案類型，跟 v3.0 電子書專案（type: 'ebook'）分開，不會混在一起，
-// 也不出現在首頁「今天想完成什麼？」那個正式入口，只能從設定頁「進階」區塊的測試按鈕進來。
+// #7.1 Quick Book v4.0｜入口與分流────────────────────────────────────────────
+// 正式電子書入口切換（CEO／技術長核准，2026-08-12）：Quick Book v4 已升格為「做電子書」
+// 的正式入口，不再是只藏在設定頁「進階」區塊的測試功能。這個畫面現在有兩個合法進入路徑：
+// ①首頁／工作台「做電子書」→ openAddWork()（見上方），②設定頁「進階」區塊的捷徑按鈕
+// （openQuickBookV4EntryFromSettings()）。兩條路徑的「上一步」應該回到不同畫面，
+// goBack() 本身是靜態寫死 target、沒有真正的畫面歷史堆疊，這裡用一個小變數記錄「這次是從
+// 哪裡進來的」，不改動 goBack()／showScreen() 的既有通用機制。
+let quickBookV4EntryBackTarget = 'screen-project';
 function openQuickBookV4Entry() {
+  quickBookV4EntryBackTarget = 'screen-project';
   showScreen('screen-quickbook-v4-entry');
+}
+function openQuickBookV4EntryFromSettings() {
+  quickBookV4EntryBackTarget = 'screen-settings';
+  showScreen('screen-quickbook-v4-entry');
+}
+function goBackFromQuickBookV4Entry() {
+  showScreen(quickBookV4EntryBackTarget);
 }
 function chooseQuickBookV4Type(type) {
   let p = state.projects.find(function (x) { return x.type === 'quickbook_v4'; });
   if (!p) {
-    p = { id: state.nextProjectId++, type: 'quickbook_v4', emoji: '🧪', name: 'Quick Book v4.0 測試', defaultBrandId: null };
+    p = { id: state.nextProjectId++, type: 'quickbook_v4', emoji: '📖', name: '我的電子書', defaultBrandId: null };
     state.projects.push(p);
   }
   const flowId = type === 'creative' ? 'quickbook_v4_creative' : 'quickbook_v4_practical';
   const w = {
     id: state.nextWorkId++, projectId: p.id,
-    name: (type === 'creative' ? '生命故事' : '產品介紹') + ' POC', flowId: flowId,
+    name: (type === 'creative' ? '生命故事' : '產品介紹'), flowId: flowId,
     started: true, status: '進行中', currentStepIndex: 0, stepResultIds: [], stepVersions: []
   };
   state.works.push(w);
@@ -5342,12 +5355,12 @@ function proceedToQuickBookV4WholeBook() {
 function chooseQuickBookV4Baking() {
   let p = state.projects.find(function (x) { return x.type === 'quickbook_v4'; });
   if (!p) {
-    p = { id: state.nextProjectId++, type: 'quickbook_v4', emoji: '🧪', name: 'Quick Book v4.0 測試', defaultBrandId: null };
+    p = { id: state.nextProjectId++, type: 'quickbook_v4', emoji: '📖', name: '我的電子書', defaultBrandId: null };
     state.projects.push(p);
   }
   const w = {
     id: state.nextWorkId++, projectId: p.id,
-    name: '烘焙小書 POC', flowId: 'quickbook_v4_practical',
+    name: '烘焙小書', flowId: 'quickbook_v4_practical',
     started: true, status: '進行中', currentStepIndex: 0, stepResultIds: [], stepVersions: []
   };
   state.works.push(w);
@@ -9037,7 +9050,13 @@ function openAddWork() {
   const project = getActiveProject();
   // 商品行銷專案先進分類選擇畫面，其他專案類型維持原本行為不變
   if (project.type === 'product') { showScreen('screen-product-category'); return; }
-  if (project.type === 'ebook') { showScreen('screen-ebook-category'); return; }
+  // 正式電子書入口切換（CEO／技術長核准，2026-08-12）：「做電子書」正式改走 Quick Book v4
+  // entry（screen-quickbook-v4-entry），不再進舊版 screen-ebook-category（小書 v3.0／完整
+  // 電子書二選一）。舊版畫面與函式（screen-ebook-category／chooseEbookCategory／
+  // EBOOK_CATEGORIES）完全保留、不刪除，只是新建立工作不再走這條路——舊 v3.0／舊 ebook
+  // 已有的作品，開啟時走的是各自 work.flowId 對應的既有畫面，跟這裡的新建工作入口無關，
+  // 不受影響。
+  if (project.type === 'ebook') { openQuickBookV4Entry(); return; }
   pendingFlowId = PROJECT_TYPES[project.type] ? PROJECT_TYPES[project.type].flowId : 'custom';
   selectedVideoType = null;
   pendingWorkBrandChoice = 'brand';

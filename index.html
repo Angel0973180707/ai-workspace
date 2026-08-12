@@ -1296,11 +1296,11 @@
 
       <div class="section-label" style="margin-top:18px">進階</div>
       <button class="btn outline" onclick="openDataSafetyCenter()">🛡️ 資料安全中心（備份／還原）</button>
-      <!-- #7.1 Quick Book v4.0 POC（總策長／CEO 核准，2026-08-06）：獨立測試入口，刻意不放在
-           首頁「今天想完成什麼？」，避免真正上課的學員誤點進還在開發中的 POC；只透過設定頁
-           「進階」區塊這個相對低流量的位置進入，且畫面本身明確標示「測試版」。v3.0 正式入口
-           完全不變。 -->
-      <button class="btn outline" style="margin-top:10px" onclick="openQuickBookV4Entry()">🧪 Quick Book v4.0（測試版）</button>
+      <!-- 正式電子書入口切換（CEO／技術長核准，2026-08-12）：Quick Book v4 已是首頁／工作台
+           「做電子書」的正式入口，不再是測試功能。這裡保留一個設定頁捷徑，方便已經在設定頁的
+           使用者不必先回工作台就能直接進電子書入口，屬於維運/操作便利性用途，不再標示「測試
+           版」。 -->
+      <button class="btn outline" style="margin-top:10px" onclick="openQuickBookV4EntryFromSettings()">📖 Quick Book v4.0（做電子書）</button>
 
       <!-- Workspace Trust Sprint 1（Task 9）：原本的「☁️ 專屬 Google 雲端備份設定」區塊
            已停用——那個功能實際上從未真正把資料送到任何地方（saveToCloud() 只是把本地
@@ -1322,8 +1322,8 @@
        分流殼＋空流程頁面，Practical／Creative 的實際步驟邏輯留到 Phase 2／3。 -->
   <div class="screen" id="screen-quickbook-v4-entry">
     <div class="topbar">
-      <button class="back" onclick="goBack('screen-settings')">←</button>
-      <div class="title">Quick Book v4.0（測試版）</div>
+      <button class="back" onclick="goBackFromQuickBookV4Entry()">←</button>
+      <div class="title">做電子書</div>
     </div>
     <div style="padding-top:20px">
       <!-- 課前入口文案 Must Fix（CEO／總策長，2026-08-12）：原本這裡有一句「🧪 這是開發測試
