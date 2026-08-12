@@ -1,8 +1,8 @@
 {
-  "version": "ai-workspace-2026.08.11.15",
+  "version": "ai-workspace-2026.08.12.16",
   "sourceRepository": "Angel0973180707/angel-ai-curriculum-factory",
-  "sourceCommit": "ba8e524c22c80693648209c1939c22fbb29f9a69",
-  "sourceShortCommit": "ba8e524",
-  "deployedAt": "2026-08-11T16:14:52Z",
+  "sourceCommit": "e60ef7f4f0284390d2c62ddeffb50f397d99fbd8",
+  "sourceShortCommit": "e60ef7f",
+  "deployedAt": "2026-08-12T04:52:42Z",
   "deployedBy": "github-actions"
 }
