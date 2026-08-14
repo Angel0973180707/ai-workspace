@@ -2242,7 +2242,7 @@ function buildDefaultPromptTemplates() {
 
   // ── 3. Polish Template（作品打磨，Polish Studio 的修正指令唯一來源）──
   list.push(tpl('polish', null, null, null, '作品打磨教練',
-    '你是作品打磨教練。\n\n請根據使用者選擇的修改方向，直接完成修改後的正式版本，這是可以直接使用、回填的成果，不是討論。\n\n工作：{{work_name}}\n目前步驟：{{step_name}}\n使用角色：{{role_name}}\n使用 AI：{{ai_name}}\n\n上一版成果：\n{{current_result}}\n\n使用者想修改的方向：\n{{revision_direction}}\n\n請保留原本作品的優點，針對修改方向調整，不要偏離原本主題。請直接輸出修改後的完整版本，完成後簡短說明修改了哪些地方即可，不需要額外討論。'));
+    '你是作品打磨教練。\n\n請根據使用者選擇的修改方向，直接完成修改後的正式版本，這是可以直接使用、回填的成果，不是討論。\n\n工作：{{work_name}}\n目前步驟：{{step_name}}\n使用角色：{{role_name}}\n使用 AI：{{ai_name}}\n\n品牌背景：\n{{brand_context}}\n\n上一版成果：\n{{current_result}}\n\n使用者想修改的方向：\n{{revision_direction}}\n\n請保留原本作品的優點，針對修改方向調整，不要偏離原本主題。請直接輸出修改後的完整版本，完成後簡短說明修改了哪些地方即可，不需要額外討論。'));
 
   // ── 4. Handoff Templates（交接用，本輪先建立供 AI 指令庫瀏覽，尚未接進特定畫面）──
   list.push(tpl('handoff', null, null, null, '交給下一位 AI',
@@ -2703,6 +2703,73 @@ function ensureNewFields(s) {
   // 資料相容，舊存檔一律補空陣列，不影響既有 brands／brandSnapshots。
   if (!Array.isArray(s.brandAssets)) s.brandAssets = [];
   if (!Number.isInteger(s.nextBrandAssetId) || s.nextBrandAssetId < 1) s.nextBrandAssetId = 1;
+  // #00 Brand Selector＋Brand Context Provider Vertical Slice（技術長／CEO 核准，2026-08-10）：
+  // 舊 Work 一次性補上 brandMode／brandSnapshotId／brandSnapshotVersion／brandSnapshotFrozen，
+  // 讓 Prompt／Summary Card 立刻讀得到正確的內容，不必等使用者手動重新套用一次品牌。沒有
+  // brandId 的 Work（含 Quick Book 等從不使用品牌的 Flow）只補空值，完全不受影響。
+  // 技術審查修正（技術長，2026-08-10）Must Fix：舊 Work 必須保留「當初套用時」的原始品牌
+  // 內容，不得直接拿「目前」的 published／latest confirmed Snapshot 覆蓋——舊 Work 早就自己
+  // 保存了一份 w.brandSnapshot（15 舊欄位，凍結在套用當下），這才是唯一可信的歷史內容來源；
+  // 品牌可能已經改版好幾次，「目前最新版」跟這個舊 Work 當初實際用的版本可能完全不是同一份，
+  // 直接覆蓋等於用最新版偷偷竄改歷史 Prompt，正是這個欄位存在的目的要防止的事。這裡改成
+  // 用既有 buildBrandSnapshotFromLegacyBrand() 把 w.brandSnapshot 自己的內容（不是 brand
+  // 目前的內容）轉換成新 schema 形狀——這個既有函式本來就只讀傳入物件的欄位值，傳
+  // w.brandSnapshot 進去完全成立（w.brandSnapshot 是用同一組 BRAND_FIELDS key 存的）。
+  // 這裡仍刻意不呼叫 officialBrandSnapshotForWork()／getBrand() 等操作全域 state 的函式：
+  // ensureNewFields() 在「還原備份」情境下可能是對著一個還沒成為全域 state 的候選物件 s
+  // 執行（見 loadState() 呼叫點），若改讀全域 state 會讀到錯誤的（目前正在使用中的）資料，
+  // 而不是正在還原的這份，這裡自己寫一份只依賴參數 s 的等價邏輯。
+  // 技術複審第二次小補修（技術長，2026-08-10）Must Fix 一：brandId＋version 相同不足以認定
+  // 兩份 Snapshot 內容相同（同一版本號的內容仍可能不一致），brandSnapshotId 現在只有在跟
+  // 轉換出來的 brandSnapshotFrozen 逐欄核心內容完全一致時才寫入（見 brandSnapshotCoreContentMatches()），
+  // 對不上一律誠實記 null，內容一律用轉換出來的 brandSnapshotFrozen，不改套官方紀錄。
+  // Must Fix 二：最外層提前返回條件原本只檢查 brandMode／brandSnapshotFrozen 兩個欄位，
+  // 如果備份資料剛好只有這兩個、缺 brandSnapshotId／brandSnapshotVersion（半套新格式），
+  // 會被直接跳過、永遠補不齊。改成四個新欄位全部存在才能提前返回；四個欄位改成各自獨立
+  // 判斷是否已存在再補（brandSnapshotId 合法值本來就包含 null，判斷重點是「這個 key 存不
+  // 存在」，不是「值是不是 truthy」，避免 null 被誤判成缺欄位而反覆錯誤遷移）。
+  if (Array.isArray(s.works)) {
+    s.works.forEach(function (w) {
+      const alreadyFullyMigrated = w.brandMode !== undefined && w.brandSnapshotId !== undefined &&
+        w.brandSnapshotVersion !== undefined && w.brandSnapshotFrozen !== undefined;
+      if (alreadyFullyMigrated) return;
+      if (!w.brandId) {
+        if (w.brandMode === undefined) w.brandMode = 'none';
+        if (w.brandSnapshotId === undefined) w.brandSnapshotId = null;
+        if (w.brandSnapshotVersion === undefined) w.brandSnapshotVersion = null;
+        if (w.brandSnapshotFrozen === undefined) w.brandSnapshotFrozen = null;
+        return;
+      }
+      if (w.brandMode === undefined) {
+        const proj = (s.projects || []).find(function (p) { return p.id === w.projectId; });
+        w.brandMode = (proj && proj.defaultBrandId === w.brandId) ? 'default' : 'other';
+      }
+      // 版本號優先順序：①w.brandSnapshot.brandVersion（舊 Work 自己記錄的套用當下版本，
+      // 最可信）②w.brandAckVersion（使用者最後一次「確認」的版本號）③都沒有才用 1 這個
+      // 相容 fallback（極舊資料，兩個欄位都不存在的邊界情況）。
+      const legacyVersion = (w.brandSnapshot && w.brandSnapshot.brandVersion) || w.brandAckVersion || 1;
+      if (w.brandSnapshotVersion === undefined) w.brandSnapshotVersion = legacyVersion;
+      if (w.brandSnapshotFrozen === undefined) {
+        w.brandSnapshotFrozen = w.brandSnapshot ? buildBrandSnapshotFromLegacyBrand(w.brandSnapshot) : null;
+      }
+      if (w.brandSnapshotId === undefined) {
+        // brandSnapshotId 只有在「brandId 相同＋version 相同＋核心內容逐欄比對完全一致」
+        // 時才寫入——這代表官方紀錄真的就是這個舊 Work 當初用的那一份，可以放心互相參照；
+        // 對不上（版本號沒隨每次編輯遞增、品牌後來改版、或這個版本從未建立成正式紀錄）
+        // 一律誠實記 null，不假裝對應到目前找得到的任何一筆正式紀錄。內容一律用上面從
+        // w.brandSnapshot 轉換出來的 brandSnapshotFrozen，不因為找到 id 就改用官方紀錄
+        // 的內容。
+        w.brandSnapshotId = null;
+        if (w.brandSnapshotFrozen) {
+          const candidates = s.brandSnapshots.filter(function (snap) {
+            return snap.brandId === w.brandId && snap.version === w.brandSnapshotVersion;
+          });
+          const contentMatch = candidates.find(function (snap) { return brandSnapshotCoreContentMatches(snap, w.brandSnapshotFrozen); });
+          if (contentMatch) w.brandSnapshotId = contentMatch.id;
+        }
+      }
+    });
+  }
 }
 
 // ── 品牌中心（Brand Center Sprint #1）────────────────────────────
@@ -2833,6 +2900,11 @@ function blankBrandSnapshotDraft() {
   return {
     name: '', background: '', purpose: '', positioning: '', targetAudience: '', coreValues: '',
     story: '', mission: '', vision: '', tone: '', preferredWords: '', avoidedWords: '', slogan: '',
+    // #00 Brand Selector＋Brand Context Provider（技術長／CEO 核准，2026-08-10）：新增
+    // coreMessages（核心訊息），對應舊版 15 欄位表單裡的「核心訊息」。V2 schema 原本沒有
+    // 正式對應欄位，直接切換資料來源會遺失這筆內容，這裡補上相容欄位，migration 見
+    // buildBrandSnapshotFromLegacyBrand()。
+    coreMessages: '',
     colors: [], logoDirection: '', visualStyle: '', imageStyle: '', avoidedVisualElements: '',
     platforms: [], assetNeeds: [],
     // #19 Brand Foundation｜Blocker 修正（總策長／CEO 核准，2026-08-06）：品牌配色與
@@ -3010,6 +3082,10 @@ function buildBrandSnapshotFromLegacyBrand(brand) {
   setField('positioning', brand.oneLiner);
   setField('targetAudience', brand.targetAudience);
   setField('tone', brand.tone);
+  // #00 Blocker 修正（2026-08-10）：舊版 coreMessages（核心訊息）原本沒有正式對應欄位，
+  // 直接不映射會在 Prompt 改讀正式 Snapshot 後悄悄遺失這筆內容——V2 schema 已補上同名
+  // coreMessages 欄位（見 blankBrandSnapshotDraft()），這裡照抄，不猜測、不改寫語意。
+  setField('coreMessages', brand.coreMessages);
   setField('preferredWords', brand.preferredWords);
   setField('avoidedWords', brand.avoidWords);
   setField('visualStyle', brand.visualDirection);
@@ -3022,6 +3098,26 @@ function buildBrandSnapshotFromLegacyBrand(brand) {
   if (draft.colors.length > 0) source.colors = 'user_confirmed';
   draft.source = source;
   return draft;
+}
+
+// #00 Brand Selector＋Brand Context Provider Vertical Slice 技術複審第二次小補修
+// （技術長，2026-08-10）Must Fix 一：舊 Work migration 時，`brandId + version` 相同不足以
+// 認定兩份 Snapshot 內容相同（同一品牌、同一版本號的內容仍可能不一致，例如版本號沒有隨
+// 每次編輯遞增）。這裡逐欄比對「正式 Schema 對應欄位」的核心內容，只有完全一致才能讓
+// 舊 Work 的 brandSnapshotId 指向那筆正式紀錄；純函式，不依賴全域 state，migration 與
+// 一般執行階段都能安全呼叫。colors 是陣列，用 role/name/hex/usage 組合排序後比字串，忽略
+// 陣列原始順序差異（同一組顏色，順序不同不該被判定為內容不同）。
+// 技術最後小補修（技術長，2026-08-10）：比對欄位補齊 name／logoDirection，涵蓋所有會進入
+// buildBrandContext(work) 的品牌內容——只要有任何一個 Prompt 實際會用到的欄位沒比對到，
+// 就可能在內容其實不同的情況下誤判為一致、寫入錯誤的 brandSnapshotId。
+const BRAND_SNAPSHOT_CORE_COMPARE_FIELDS = ['name', 'positioning', 'targetAudience', 'tone', 'coreMessages', 'story', 'preferredWords', 'avoidedWords', 'logoDirection', 'visualStyle'];
+function brandSnapshotColorsSignature(colors) {
+  return (colors || []).map(function (c) { return (c.role || '') + '|' + (c.name || '') + '|' + (c.hex || '') + '|' + (c.usage || ''); }).sort().join(',');
+}
+function brandSnapshotCoreContentMatches(a, b) {
+  if (!a || !b) return false;
+  const fieldsMatch = BRAND_SNAPSHOT_CORE_COMPARE_FIELDS.every(function (key) { return (a[key] || '') === (b[key] || ''); });
+  return fieldsMatch && brandSnapshotColorsSignature(a.colors) === brandSnapshotColorsSignature(b.colors);
 }
 
 function getBrandSnapshot(id) { return state.brandSnapshots.find(function (s) { return s.id === id; }); }
@@ -3095,6 +3191,19 @@ function brandSnapshotBaseFields(brandId) {
   if (existing) return existing;
   const brand = getBrand(brandId);
   return brand ? buildBrandSnapshotFromLegacyBrand(brand) : blankBrandSnapshotDraft();
+}
+// #00 Brand Selector＋Brand Context Provider Vertical Slice（技術長／CEO 核准，2026-08-10）：
+// 「目前正式代表這個品牌的版本」唯一權威來源——Prompt（buildBrandContext）、Brand Summary
+// Card（renderBrandSummaryCard／openBrandSummaryDialog）、Work 套用當下的凍結內容
+// （applyBrandToWork）三處全部呼叫這同一個函式，不再各自查詢，這是本輪要修正的 P0-1
+// Blocker（畫面顯示 Snapshot vN，但 Prompt 實際拿到舊品牌欄位）的直接解法。跟既有
+// getBrandSummarySourceSnapshot() 邏輯相同（已發布優先，其次最新已確認版本），這裡多加一層
+// 「連任何 Snapshot 紀錄都沒有」的搬遷 fallback（沿用 buildBrandSnapshotFromLegacyBrand()，
+// 只算不存），涵蓋品牌剛在本次 session 建立、還沒重新整理過的邊界情況。
+function officialBrandSnapshotForWork(brandId) {
+  const brand = getBrand(brandId);
+  if (!brand) return null;
+  return getBrandSummarySourceSnapshot(brandId) || buildBrandSnapshotFromLegacyBrand(brand);
 }
 // 建立新版 Brand Snapshot 前，先讓 brand.version 往前推一格——createBrandSnapshot() 的
 // version 欄位固定讀 brand.version（既有機制，見上方 createBrandSnapshot()），沿用
@@ -3192,47 +3301,101 @@ function worksUsingBrand(brandId) { return state.works.filter(function (w) { ret
 // ── AI 品牌引用（規格四）───────────────────────────────────────
 // 一律讀 work.brandSnapshot（建立/切換當下凍結的內容），不讀 state.brands 目前最新版本——
 // 這樣「進行中/已完成 Work 保留原品牌內容」不需要額外判斷程式碼，資料結構本身就保證了。
-function buildBrandContext(work) {
-  if (!work.brandId || !work.brandSnapshot) {
-    return '本次工作未套用品牌｜使用通用協作設定。';
-  }
-  const snap = work.brandSnapshot;
+// #00 Brand Selector＋Brand Context Provider Vertical Slice（技術長／CEO 核准，2026-08-10）：
+// P0-3——colors[] 是結構化陣列（role/name/hex/usage），這裡對應舊版 5 個色彩欄位的中文
+// label，只用於組 Prompt 文字，不影響資料儲存形狀。
+const BRAND_SNAPSHOT_COLOR_ROLE_LABEL = {
+  primary: '品牌主色', secondary: '品牌輔助色', accent: '品牌亮點色', background: '品牌背景色', text: '品牌文字色'
+};
+// P0-1／P0-3：改讀 work.brandSnapshotFrozen（套用品牌當下凍結的正式 Brand Snapshot 內容，
+// 見 applyBrandToWork()），不再讀舊版 work.brandSnapshot（15 欄位，即時複製自 state.brands，
+// 跟 Brand Summary Card／Brand Assets 讀的 state.brandSnapshots[] 是兩個不同資料來源，
+// 這正是本輪要修正的 Blocker）。buildBrandContext(work) 這個公開入口簽名完全不變，其餘
+// 12 個 Flow 呼叫端不需要任何修改。
+//
+// 全站品牌隔離掃描（CEO／技術長核准，2026-08-12）：「本次工作未套用品牌」這句話原本沒有
+// 明確要求 AI 忽略同一對話裡先前出現過的其他品牌資料，全站統一補強為 BRAND_ISOLATION_NONE_
+// TEXT，唯一字串來源，所有無品牌情境（含本函式與下面新增的 buildBrandContextForWork）都
+// 直接回傳同一個常數，不各自重新拼字。同時把「Snapshot → Prompt 文字」的核心組字邏輯抽出
+// 成 buildBrandContextTextFromSnapshot()，讓 Standard Flow 以外的 Prompt 入口（Quick Book
+// v3／v4、影片逐幕、修改重生等）可以用明確的 {includeVisual, includeStory} 參數呼叫同一段
+// 邏輯，而不必依賴 currentStep(work)——那個判斷邏輯是為 Standard Flow 的 step 形狀設計的，
+// Quick Book／影片的 step 形狀不一樣，直接共用會誤判。
+const BRAND_ISOLATION_NONE_TEXT =
+  '本次工作不套用品牌；忽略同一對話中先前出現的任何其他品牌資料，只根據本次工作內容產出。';
+
+function buildBrandContextTextFromSnapshot(snap, opts) {
+  opts = opts || {};
   const lines = [];
   lines.push('品牌名稱：' + (snap.name || '（未填）'));
-  lines.push('一句話定位：' + (snap.oneLiner || '（未填）'));
+  lines.push('一句話定位：' + (snap.positioning || '（未填）'));
   lines.push('主要服務對象：' + (snap.targetAudience || '（未填）'));
   if (snap.tone) lines.push('品牌語氣：' + snap.tone);
   if (snap.coreMessages) lines.push('核心訊息：' + snap.coreMessages);
   if (snap.preferredWords) lines.push('常用詞：' + snap.preferredWords);
-  if (snap.avoidWords) lines.push('品牌避免事項：' + snap.avoidWords);
+  if (snap.avoidedWords) lines.push('品牌避免事項：' + snap.avoidedWords);
 
-  // 依任務類型決定要不要納入「視覺方向／配色／Logo建議」「品牌故事」（規格四：非固定欄位，
-  // 依任務決定）——用角色／步驟名稱關鍵字判斷：設計／視覺相關步驟才需要視覺方向跟正式配色
-  // （總策長補充指令規格五-5：建立工作時自動帶入正式配色與 Logo 建議）；規劃階段（多半是
-  // 整個工作的第一步）才需要品牌故事，避免每一步都把完整故事塞進 Prompt。
-  const step = currentStep(work);
-  const isVisualStep = step.role === '設計師' || /視覺|畫面|封面|海報/.test(step.name);
-  const isEarlyPlanningStep = step.role === '規劃師' || work.currentStepIndex === 0;
-  if (isVisualStep) {
-    BRAND_VISUAL_CONTEXT_FIELDS.forEach(function (key) {
-      const fieldDef = BRAND_FIELDS.find(function (f) { return f.key === key; });
-      if (snap[key]) lines.push(fieldDef.label + '：' + snap[key]);
+  if (opts.includeVisual) {
+    if (snap.visualStyle) lines.push('品牌視覺風格：' + snap.visualStyle);
+    const colorLines = (snap.colors || []).map(function (c) {
+      const label = BRAND_SNAPSHOT_COLOR_ROLE_LABEL[c.role] || '品牌色彩';
+      return label + '：' + (c.name || '') + (c.hex ? '　' + c.hex : '') + (c.usage ? '　用途：' + c.usage : '');
     });
+    if (colorLines.length) lines.push(colorLines.join('\n'));
+    if (snap.logoDirection) lines.push('Logo 建議：' + snap.logoDirection);
   }
-  if (isEarlyPlanningStep && snap.brandStory) lines.push('品牌故事：' + snap.brandStory);
-
-  const brand = getBrand(work.brandId);
-  if (brand && brand.linkedAssets && brand.linkedAssets.length > 0) {
-    const assetLines = brand.linkedAssets.map(function (a) {
-      const r = state.results.find(function (x) { return x.id === a.resultId; });
-      return '・' + (a.purpose || '相關素材') + '：' + (r ? (r.title || r.stepName) : '（此成果目前無法使用）');
-    });
-    lines.push('相關素材：\n' + assetLines.join('\n'));
-  }
+  if (opts.includeStory && snap.story) lines.push('品牌故事：' + snap.story);
 
   return lines.join('\n') +
     '\n\n若這次的使用者要求跟上面的品牌規則明顯衝突，請不要自己默默選一邊，' +
     '請先簡短提出衝突點，讓使用者決定這次是否要例外處理。';
+}
+
+function buildBrandContext(work) {
+  if (!work.brandId || !work.brandSnapshotFrozen) {
+    return BRAND_ISOLATION_NONE_TEXT;
+  }
+
+  // 依任務類型決定要不要納入「視覺方向／配色／Logo建議」「品牌故事」（規格四：非固定欄位，
+  // 依任務決定）——用角色／步驟名稱關鍵字判斷：設計／視覺相關步驟才需要視覺方向跟正式配色
+  // （總策長補充指令規格五-5：建立工作時自動帶入正式配色與 Logo 建議）；規劃階段（多半是
+  // 整個工作的第一步）才需要品牌故事，避免每一步都把完整故事塞進 Prompt。這段判斷邏輯本身
+  // 本輪不變，只是改讀新 schema 對應的欄位名稱。
+  const step = currentStep(work);
+  const isVisualStep = step.role === '設計師' || /視覺|畫面|封面|海報/.test(step.name);
+  const isEarlyPlanningStep = step.role === '規劃師' || work.currentStepIndex === 0;
+
+  // 技術審查修正（技術長，2026-08-10）Must Fix：原本這裡另外呼叫 getBrand(work.brandId)
+  // 讀「目前」live brand.linkedAssets 塞進 Prompt——這正是 P0-1 要修正的同一個問題的另一種
+  // 形式：Prompt 表面上讀 work.brandSnapshotFrozen，卻在最後一段悄悄混入即時品牌資料，等於
+  // 沒有真正做到「Prompt 只能使用凍結內容」。brandSnapshotFrozen（正式 Snapshot schema）
+  // 目前沒有對應的 linkedAssets 概念，這輪不為此建立新的 Asset Manager／不補新欄位，直接
+  // 略過「相關素材」這段——沿用既有 buildBrandSnapshot()／work.brandSnapshot／Official
+  // Brand Selector 等其餘機制完全不受影響，只有 Prompt 這裡不再讀 live linkedAssets。
+
+  return buildBrandContextTextFromSnapshot(work.brandSnapshotFrozen, {
+    includeVisual: isVisualStep,
+    includeStory: isEarlyPlanningStep
+  });
+}
+
+// 全站品牌隔離掃描（CEO／技術長核准，2026-08-12）：給 Standard Flow 以外的 Prompt 入口
+// （Quick Book v3／v4、影片逐幕生圖生影片指令、前置討論、所有修改／重新生成入口）使用的
+// 明確參數版本——呼叫端自己判斷這個入口要不要視覺方向／配色／Logo（includeVisual）、要不要
+// 品牌故事（includeStory），不依賴 currentStep(work) 的 Standard Flow step 形狀假設。
+function buildBrandContextForWork(work, opts) {
+  opts = opts || {};
+  // 技術長 RC2 最小補修（2026-08-14）二：work 為 undefined／null／不合法時，直接回傳跟
+  // 「這個 work 本來就沒套用品牌」完全相同的乾淨無品牌隔離內容，不拋錯、不去讀
+  // getActiveWork() 借別的 work 的品牌來頂替——呼叫端沒有正確帶 work 進來，本身就是錯誤，
+  // 但這裡的責任只有「不要洩漏任何品牌背景」，不是幫忙猜一個可能猜錯的 work。
+  if (!work || !work.brandId || !work.brandSnapshotFrozen) {
+    return BRAND_ISOLATION_NONE_TEXT;
+  }
+  return buildBrandContextTextFromSnapshot(work.brandSnapshotFrozen, {
+    includeVisual: !!opts.includeVisual,
+    includeStory: !!opts.includeStory
+  });
 }
 function buildChannelDraft(channel, result) {
   const excerpt = (result.content || '').split('\n').filter(Boolean).slice(0, 2).join(' ');
@@ -3541,22 +3704,40 @@ function workHasAnyContent(work) {
   return !!(work.stepResultIds && work.stepResultIds.some(Boolean));
 }
 
-function applyBrandToWork(work, brandOrNull) {
+// #00 Brand Selector＋Brand Context Provider Vertical Slice（技術長／CEO 核准，2026-08-10）：
+// P0-1——套用品牌時，除了既有 15 欄位 work.brandSnapshot（Selector 顯示／更新diff／
+// hasBrandUpdate 判斷繼續讀這個，完全不動），額外凍結一份「正式 Brand Snapshot」內容到
+// work.brandSnapshotFrozen，buildBrandContext()／renderBrandSummaryCard() 改讀這份凍結
+// 內容——兩個資料來源正式統一成同一個 officialBrandSnapshotForWork() 結果，不再各自為政。
+// mode 參數對應「套用目前品牌／選擇其他品牌／本次不套用品牌」三選一，呼叫端明確傳入，
+// 不在這裡用比較猜測（同一個品牌可能剛好等於，也可能不等於 project 預設品牌）。
+function applyBrandToWork(work, brandOrNull, mode) {
   if (!brandOrNull) {
     work.brandId = null; work.brandSnapshot = null; work.brandAckVersion = null;
+    work.brandMode = 'none';
+    work.brandSnapshotId = null; work.brandSnapshotVersion = null; work.brandSnapshotFrozen = null;
   } else {
     work.brandId = brandOrNull.id;
     work.brandSnapshot = buildBrandSnapshot(brandOrNull);
     work.brandAckVersion = brandOrNull.version;
+    work.brandMode = mode || 'default';
+    const officialSnap = officialBrandSnapshotForWork(brandOrNull.id);
+    // officialSnap 沒有 .id 代表是「只算不存」的搬遷 fallback（品牌還沒有任何正式 Snapshot
+    // 紀錄），brandSnapshotId 誠實記 null，不假裝有一筆正式紀錄存在。
+    work.brandSnapshotId = (officialSnap && officialSnap.id) || null;
+    work.brandSnapshotVersion = (officialSnap && officialSnap.version) || brandOrNull.version;
+    work.brandSnapshotFrozen = officialSnap ? JSON.parse(JSON.stringify(officialSnap)) : null;
   }
   saveState();
 }
 
 function switchWorkBrand(brandId) {
   const work = getActiveWork();
+  const project = getProject(work.projectId);
   const brand = brandId ? getBrand(brandId) : null;
+  const mode = brand ? (project.defaultBrandId === brand.id ? 'default' : 'other') : 'none';
   const doSwitch = function () {
-    applyBrandToWork(work, brand);
+    applyBrandToWork(work, brand, mode);
     showToast(brand ? '已更換為「' + brand.name + '」' : '已改為不套用品牌');
     showScreen('screen-work-detail');
   };
@@ -3589,7 +3770,9 @@ function adoptLatestBrandVersion() {
   const work = getActiveWork();
   const brand = getBrand(work.brandId);
   if (!brand) return;
-  applyBrandToWork(work, brand);
+  // 改用最新版不是換模式（原本是「套用目前品牌」還是「選擇其他品牌」不因此改變），沿用
+  // work 既有 brandMode；舊 Work 還沒有這個欄位時保守視為 'default'。
+  applyBrandToWork(work, brand, work.brandMode || 'default');
   showToast('已改用「' + brand.name + '」最新版本，之後的產出會套用新內容');
   render();
 }
@@ -3732,6 +3915,7 @@ function buildBriefDiscussionPrompt(work) {
     '## 專案\n' + (project ? project.name : '') + '\n\n' +
     '## 工作\n' + work.name + '\n\n' +
     '## 使用流程\n' + flow.name + '\n\n' +
+    '## 品牌背景\n' + buildBrandContextForWork(work, { includeVisual: true, includeStory: true }) + '\n\n' +
     '## 你的角色\n請你先扮演「' + role + '」，協助使用者把這次工作的方向想清楚，再開始正式製作。\n\n' +
     '## 前置討論固定任務（請依序完成）\n' +
     '1. 理解使用者想完成什麼。\n' +
@@ -3821,6 +4005,7 @@ function chooseProductCategory(flowId) {
   pendingFlowId = flowId;
   selectedVideoType = null;
   pendingWorkBrandChoice = 'brand';
+  pendingWorkOtherBrandId = null;
   showScreen('screen-add-work');
 }
 
@@ -4965,7 +5150,7 @@ function buildBookHandoffPlainText(book, validation) {
 // 只有全書視覺定調（styleConfirmed）與試 1 張已由使用者確認（trialImageConfirmed）都
 // 成立才輸出——Gate 沒過之前不假裝已經有完整的逐頁製作資料，只誠實顯示目前真的已有的
 // 視覺建議，不輸出任何空欄位 placeholder（「（未填寫）」「（尚未產生）」「（無）」）。
-function buildBookHandoffImageProduction(book) {
+function buildBookHandoffImageProduction(book, work) {
   const chapters = quickBookV4OrderedChapters(book);
   const showChapterTitle = quickBookV4ShouldShowChapterTitle(book);
   const vp = book.visualPlan || {};
@@ -4992,16 +5177,21 @@ function buildBookHandoffImageProduction(book) {
     });
     parts.push(showChapterTitle ? ('【' + (c.chapterTitle || '（未命名章節）') + '】\n\n' + pageBlocks.join('\n\n')) : pageBlocks.join('\n\n'));
   });
+  // 技術長 RC1 複審補修（品牌隔離強化，2026-08-14）P0-2：原本這裡拿不到 work，內部呼叫
+  // getActiveWork()——這本書自己的 Work 跟目前「使用者最後打開的 Work」（activeWorkId，
+  // 只是單頁生命週期內的暫存全域變數）可能不是同一個，會讓這本書的生圖指令帶到別本書
+  // 的品牌背景。改成呼叫端明確傳入這本書自己的 work，不再往上層猜。
+  parts.push('【品牌背景】\n' + buildBrandContextForWork(work, { includeVisual: true, includeStory: false }));
   return parts.join('\n\n');
 }
 
-function buildBookHandoff(bookDocument, target, options) {
+function buildBookHandoff(bookDocument, target, options, work) {
   const validation = validateBookDocumentStructure(bookDocument);
   switch (target) {
     case 'canva_pages': return buildBookHandoffCanvaPages(bookDocument, validation, options);
     case 'google_docs_full': return buildBookHandoffGoogleDocsFull(bookDocument, validation);
     case 'plain_text': return buildBookHandoffPlainText(bookDocument, validation);
-    case 'image_production': return buildBookHandoffImageProduction(bookDocument);
+    case 'image_production': return buildBookHandoffImageProduction(bookDocument, work);
     default: return '';
   }
 }
@@ -5066,7 +5256,9 @@ function buildQuickBookV4InventoryPrompt(work) {
   const vars = { work_name: work.name, goal: work.name };
   return fillTemplate(
     '你是產品介紹小書流程中的資料盤點助手。\n\n請根據以下使用者提供的產品資料，直接幫使用者盤點目前的資料狀態，不是幫產品寫文案，是先盤點「有什麼、缺什麼、要確認什麼」。\n\n' +
-    '主要讀者：' + escHtmlNoop(sm.targetAudience) + '\n希望讀者看完後：' + escHtmlNoop(sm.readerTask) + '\n使用情境：' + escHtmlNoop(sm.usageContext) + '\n\n使用者原始資料：\n' + (sm.rawInput || '（未提供）') + '\n\n' +
+    '主要讀者：' + escHtmlNoop(sm.targetAudience) + '\n希望讀者看完後：' + escHtmlNoop(sm.readerTask) + '\n使用情境：' + escHtmlNoop(sm.usageContext) + '\n\n' +
+    '品牌背景：\n' + buildBrandContextForWork(work, { includeVisual: false, includeStory: true }) + '\n\n' +
+    '使用者原始資料：\n' + (sm.rawInput || '（未提供）') + '\n\n' +
     QUICKBOOK_V4_NO_FABRICATION_CONTRACT + '\n\n' +
     '請用以下固定格式輸出（欄位名稱與符號請照抄，這樣才能直接複製貼回工作台；每一區裡如果沒有對應項目可以整區留空，不要硬湊）：\n\n' +
     '【已有資料】\n- 標籤：（例如：產品名稱）\n  內容：（實際內容）\n  原文依據：（從原始資料摘錄的那句話）\n\n（可以有多項，依此格式重複）\n\n' +
@@ -5195,46 +5387,160 @@ function validateQuickBookV4Inventory(inventory) {
   return { valid: true, warnings: warnings };
 }
 
-// #7.1 Quick Book v4.0｜入口與分流────────────────────────────────────────────
-// 正式電子書入口切換（CEO／技術長核准，2026-08-12）：Quick Book v4 已升格為「做電子書」
-// 的正式入口，不再是只藏在設定頁「進階」區塊的測試功能。這個畫面現在有兩個合法進入路徑：
-// ①首頁／工作台「做電子書」→ openAddWork()（見上方），②設定頁「進階」區塊的捷徑按鈕
-// （openQuickBookV4EntryFromSettings()）。兩條路徑的「上一步」應該回到不同畫面，
-// goBack() 本身是靜態寫死 target、沒有真正的畫面歷史堆疊，這裡用一個小變數記錄「這次是從
-// 哪裡進來的」，不改動 goBack()／showScreen() 的既有通用機制。
-let quickBookV4EntryBackTarget = 'screen-project';
+// #7.1 Quick Book v4.0 POC｜入口與分流（Phase 1：只建立殼，Step 邏輯在 Phase 2／3）───────
+// 獨立的 'quickbook_v4' 專案類型，跟 v3.0 電子書專案（type: 'ebook'）分開，不會混在一起，
+// 也不出現在首頁「今天想完成什麼？」那個正式入口，只能從設定頁「進階」區塊的測試按鈕進來。
 function openQuickBookV4Entry() {
-  quickBookV4EntryBackTarget = 'screen-project';
   showScreen('screen-quickbook-v4-entry');
 }
-function openQuickBookV4EntryFromSettings() {
-  quickBookV4EntryBackTarget = 'screen-settings';
-  showScreen('screen-quickbook-v4-entry');
-}
-function goBackFromQuickBookV4Entry() {
-  showScreen(quickBookV4EntryBackTarget);
-}
+// 技術長 RC1 複審補修（品牌隔離強化，2026-08-14）P0-1：這三個入口（練習題／創作型／烘焙，
+// 烘焙見下方 chooseQuickBookV4Baking）過去各自直接 push 一個 Work，最多只會自動套用
+// Project 預設品牌（2026-08-12 那一輪的最小修補，見下方 confirmQuickBookV4Brand 內的
+// applyBrandToWork 呼叫），完全繞過其他 Flow 建工作時都有的「套用目前品牌／選擇其他品牌／
+// 本次不套用品牌」三選一。現在改成先記住使用者選的入口種類，導去新增的
+// screen-quickbook-v4-brand-choice 讓使用者三選一，選好按「開始建立」才真正呼叫
+// confirmQuickBookV4Brand() 建立 Work——實際建立邏輯搬到那裡，不在這裡重複。
+let pendingQuickBookV4Kind = null; // 'practical' | 'creative' | 'baking'
+let pendingQuickBookV4BrandChoice = null; // 'brand'｜'other'｜'free'｜null（尚未選擇）
+let pendingQuickBookV4OtherBrandId = null;
 function chooseQuickBookV4Type(type) {
+  pendingQuickBookV4Kind = type;
+  openQuickBookV4BrandChoice();
+}
+// 技術長 RC2 最小補修（2026-08-14）一：找出 Quick Book v4 專案目前「有效」的預設品牌——
+// 沒設定、品牌已被刪除、或品牌已封存都算「沒有有效預設品牌」。render 三選一畫面（決定
+// 「套用目前品牌」要不要顯示成可選）跟真正建立 Work 前的驗證（決定要不要放行）都呼叫這裡，
+// 保證判斷邏輯完全一致，不會出現「畫面顯示可以選，確認時卻被擋下」的落差（品牌在畫面開著
+// 期間才被刪除／封存這種競態除外，那正是 confirmQuickBookV4Brand 裡重新呼叫這裡的用意）。
+function qbv4ResolveDefaultBrand_(project) {
+  if (!project || !project.defaultBrandId) return null;
+  const b = getBrand(project.defaultBrandId);
+  return (b && b.status !== '已封存') ? b : null;
+}
+function openQuickBookV4BrandChoice() {
+  const p = state.projects.find(function (x) { return x.type === 'quickbook_v4'; });
+  // 技術長 RC2 最小補修（2026-08-14）一：沒有有效預設品牌時，不能預選「套用目前品牌」——
+  // 修復前的 'brand' 寫死預設值，會讓使用者在完全沒注意到的情況下，直接按「開始建立」就
+  // 悄悄套用了「什麼都沒有」，卻在畫面上看起來像是「已經幫你選好套用目前品牌」。
+  pendingQuickBookV4BrandChoice = qbv4ResolveDefaultBrand_(p) ? 'brand' : null;
+  pendingQuickBookV4OtherBrandId = null;
+  showScreen('screen-quickbook-v4-brand-choice');
+}
+function chooseQuickBookV4OtherBrand(brandId) {
+  pendingQuickBookV4OtherBrandId = brandId;
+  renderQuickBookV4BrandChoice();
+}
+function setQuickBookV4BrandChoice(choice) {
+  if (choice === 'brand') {
+    // 防禦：正常情況下沒有有效預設品牌時，這個 radio 本身在畫面上就是 disabled，瀏覽器
+    // 不會讓使用者真的點到；這裡是第二層防呆，防止透過非正常途徑（例如直接呼叫這個函式）
+    // 繞過畫面上的 disabled 狀態。
+    const p = state.projects.find(function (x) { return x.type === 'quickbook_v4'; });
+    if (!qbv4ResolveDefaultBrand_(p)) return;
+  }
+  pendingQuickBookV4BrandChoice = choice;
+  if (choice !== 'other') pendingQuickBookV4OtherBrandId = null;
+  renderQuickBookV4BrandChoice();
+}
+function renderQuickBookV4BrandChoice() {
+  const p = state.projects.find(function (x) { return x.type === 'quickbook_v4'; });
+  const defaultBrand = qbv4ResolveDefaultBrand_(p);
+  const brandRadio = document.getElementById('qbv4-brand-choice-brand');
+  const brandText = document.getElementById('qbv4-brand-choice-brand-text');
+  const brandLabel = document.getElementById('qbv4-brand-choice-brand-label');
+  if (defaultBrand) {
+    brandRadio.disabled = false;
+    brandText.textContent = '套用目前品牌：' + defaultBrand.name;
+    if (brandLabel) { brandLabel.style.opacity = ''; brandLabel.style.cursor = 'pointer'; }
+  } else {
+    brandRadio.disabled = true;
+    brandText.textContent = '尚未設定目前品牌';
+    if (brandLabel) { brandLabel.style.opacity = '0.5'; brandLabel.style.cursor = 'default'; }
+    // 畫面開著期間，原本有效的預設品牌被刪除／封存：目前選著的『brand』選項不再有效，
+    // 強制取消勾選，不留在一個實際上已經失效的選取狀態。
+    if (pendingQuickBookV4BrandChoice === 'brand') pendingQuickBookV4BrandChoice = null;
+  }
+  brandRadio.checked = pendingQuickBookV4BrandChoice === 'brand';
+  document.getElementById('qbv4-brand-choice-other').checked = pendingQuickBookV4BrandChoice === 'other';
+  document.getElementById('qbv4-brand-choice-free').checked = pendingQuickBookV4BrandChoice === 'free';
+  const otherList = document.getElementById('qbv4-other-brand-list');
+  if (pendingQuickBookV4BrandChoice === 'other') {
+    otherList.style.display = 'block';
+    const brands = activeBrands();
+    otherList.innerHTML = brands.length ? brands.map(function (b) {
+      const sel = b.id === pendingQuickBookV4OtherBrandId ? ' selected' : '';
+      return '<div class="template-pick' + sel + '" onclick="chooseQuickBookV4OtherBrand(' + b.id + ')">🏷️ ' + escHtml(b.name) + (b.oneLiner ? '　' + escHtml(b.oneLiner) : '') + '</div>';
+    }).join('') : '<div class="line" style="color:var(--text-dim);font-size:12.5px">目前還沒有其他品牌，請先到品牌中心建立。</div>';
+  } else {
+    otherList.style.display = 'none';
+  }
+}
+// 三選一確認後才真正建立 Work，跟 confirmNewWork() 走同一套驗證與 applyBrandToWork()
+// 機制：選「其他品牌」卻還沒點選任何一張品牌卡片時擋下、不建立 Work；ID 有值但品牌已被
+// 刪除／封存時也擋下，不靜默改成不套用品牌或改套 Project 預設品牌。
+function confirmQuickBookV4Brand() {
   let p = state.projects.find(function (x) { return x.type === 'quickbook_v4'; });
   if (!p) {
-    p = { id: state.nextProjectId++, type: 'quickbook_v4', emoji: '📖', name: '我的電子書', defaultBrandId: null };
+    p = { id: state.nextProjectId++, type: 'quickbook_v4', emoji: '🧪', name: 'Quick Book v4.0 測試', defaultBrandId: null };
     state.projects.push(p);
   }
-  const flowId = type === 'creative' ? 'quickbook_v4_creative' : 'quickbook_v4_practical';
+  let chosenBrand = null;
+  let chosenMode = 'none';
+  if (pendingQuickBookV4BrandChoice === 'other') {
+    if (!pendingQuickBookV4OtherBrandId) { showToast('請先選擇一個品牌'); return; }
+    const b = getBrand(pendingQuickBookV4OtherBrandId);
+    if (!b || b.status === '已封存') { showToast('這個品牌目前無法使用，請重新選擇'); return; }
+    chosenBrand = b; chosenMode = 'other';
+  } else if (pendingQuickBookV4BrandChoice === 'brand') {
+    // 技術長 RC2 最小補修（2026-08-14）一：這裡是唯一真正擋下建立 Work 的地方，重新即時
+    // 查一次，不信任 render 當下算出來的結果——預設品牌可能在畫面開著、使用者還沒按下
+    // 「開始建立」之前就被刪除或封存，擋不下來就會變成「使用者以為套了品牌，實際上悄悄
+    // 建立成了無品牌工作」。
+    const b = qbv4ResolveDefaultBrand_(p);
+    if (!b) { showToast('這個品牌目前無法使用，請重新選擇'); return; }
+    chosenBrand = b; chosenMode = 'default';
+  } else if (pendingQuickBookV4BrandChoice !== 'free') {
+    // pendingQuickBookV4BrandChoice 是 null：畫面剛開啟時沒有有效預設品牌，三個選項都還
+    // 沒有預選任何一個，使用者必須明確選「選擇其他品牌」或「本次不套用品牌」才能繼續。
+    showToast('請先選擇品牌設定');
+    return;
+  }
+
+  const kind = pendingQuickBookV4Kind;
+  if (kind === 'baking') {
+    const w = {
+      id: state.nextWorkId++, projectId: p.id,
+      name: '烘焙小書 POC', flowId: 'quickbook_v4_practical',
+      started: true, status: '進行中', currentStepIndex: 0, stepResultIds: [], stepVersions: []
+    };
+    state.works.push(w);
+    activeProjectId = p.id;
+    activeWorkId = w.id;
+    applyBrandToWork(w, chosenBrand, chosenMode);
+    const v4 = ensureQuickBookV4Defaults(w);
+    v4.book.topicPresetId = 'baking_book';
+    if (!v4.sourceMaterial.bakingFields) v4.sourceMaterial.bakingFields = blankQuickBookV4BakingFields();
+    saveState();
+    showScreen('screen-quickbook-v4-baking-input');
+    return;
+  }
+
+  const flowId = kind === 'creative' ? 'quickbook_v4_creative' : 'quickbook_v4_practical';
   const w = {
     id: state.nextWorkId++, projectId: p.id,
-    name: (type === 'creative' ? '生命故事' : '產品介紹'), flowId: flowId,
+    name: (kind === 'creative' ? '生命故事' : '產品介紹') + ' POC', flowId: flowId,
     started: true, status: '進行中', currentStepIndex: 0, stepResultIds: [], stepVersions: []
   };
   state.works.push(w);
   activeProjectId = p.id;
   activeWorkId = w.id;
+  applyBrandToWork(w, chosenBrand, chosenMode);
   ensureQuickBookV4Defaults(w);
   saveState();
   // 十二節「新增 Story Book 類型選擇」：新建立的 Creative 作品先進 preset 選擇畫面
   // （生命故事／親情故事），選定後才進既有 screen-quickbook-v4-creative（已有故事內容／
   // 需要AI提問協助）二選一，下游流程完全不變。
-  showScreen(type === 'creative' ? 'screen-quickbook-v4-story-preset' : 'screen-quickbook-v4-practical');
+  showScreen(kind === 'creative' ? 'screen-quickbook-v4-story-preset' : 'screen-quickbook-v4-practical');
 }
 // 十三節「選擇後要真正保存」：寫入既有 book.topicPresetId，之後訪談／文稿／分頁／視覺／
 // 生圖／排版全部從同一個 topicPresetId 找 preset（getStoryBookPreset()），沒有另存一份
@@ -5352,25 +5658,13 @@ function proceedToQuickBookV4WholeBook() {
 // 'baking_book'（既有欄位，跟生命故事系列共用同一套 topicPresetId 接線機制），並且進的是
 // 專屬 8 欄位輸入畫面而不是通用 Practical 輸入畫面。Whole Book Fast Path 之後的所有步驟
 // （Prompt／Parser／分頁／視覺／生圖／排版）完全共用既有引擎，不新增 flow、不改 schema。
+// 技術長 RC1 複審補修（品牌隔離強化，2026-08-14）P0-1：這裡過去連 2026-08-12 那輪「自動套
+// Project 預設品牌」的最小修補都沒有——完全沒有 applyBrandToWork()，一律等同無品牌。現在
+// 跟另外兩個入口共用同一個三選一畫面／同一個 confirmQuickBookV4Brand() 建立邏輯，不再自己
+// 重複一份建立 Work 的程式碼。
 function chooseQuickBookV4Baking() {
-  let p = state.projects.find(function (x) { return x.type === 'quickbook_v4'; });
-  if (!p) {
-    p = { id: state.nextProjectId++, type: 'quickbook_v4', emoji: '📖', name: '我的電子書', defaultBrandId: null };
-    state.projects.push(p);
-  }
-  const w = {
-    id: state.nextWorkId++, projectId: p.id,
-    name: '烘焙小書', flowId: 'quickbook_v4_practical',
-    started: true, status: '進行中', currentStepIndex: 0, stepResultIds: [], stepVersions: []
-  };
-  state.works.push(w);
-  activeProjectId = p.id;
-  activeWorkId = w.id;
-  const v4 = ensureQuickBookV4Defaults(w);
-  v4.book.topicPresetId = 'baking_book';
-  if (!v4.sourceMaterial.bakingFields) v4.sourceMaterial.bakingFields = blankQuickBookV4BakingFields();
-  saveState();
-  showScreen('screen-quickbook-v4-baking-input');
+  pendingQuickBookV4Kind = 'baking';
+  openQuickBookV4BrandChoice();
 }
 function renderQuickBookV4BakingInput() {
   const work = getActiveWork();
@@ -5587,6 +5881,7 @@ function buildQuickBookV4WholeBookPrompt(work) {
   return fillTemplate(
     '你是產品介紹小書流程的整本書作者。請根據下面「可使用的資料」，直接一次完成整本小書的內容，包含封面、內容頁與結尾頁，不需要先盤點或分段確認。\n\n' +
     '這本書大概介紹：' + escHtmlNoop(sm.oneLineIntro) + '\n主要讀者：' + escHtmlNoop(sm.targetAudience) + '\n希望讀者看完後：' + escHtmlNoop(sm.readerTask) + '\n建議頁數：' + (sm.pageCountChoice || 5) + ' 頁（含封面與結尾，請盡量剛好是這個數字，不要多也不要少）\n\n' +
+    '品牌背景：\n' + buildBrandContextForWork(work, { includeVisual: false, includeStory: true }) + '\n\n' +
     '可使用的資料（只能使用下面這些，不可以自己新增或延伸）：\n' + (allowed.text || '（未提供）') + '\n\n' +
     QUICKBOOK_V4_NO_FABRICATION_CONTRACT + '\n\n' +
     (isBaking ? QUICKBOOK_V4_BAKING_HARD_CONTRACT + '\n\n' : '') +
@@ -5876,30 +6171,6 @@ const STORY_BOOK_PRESETS = Object.freeze({
     pageStructureHint: '',
     visualGuidance: '這是一本烘焙操作型小書：畫面用途是輔助閱讀，不是主角，材料與數值必須清楚可辨識，溫度與時間等關鍵數字要醒目、不能被插畫或裝飾蓋住，不要為了畫面好看犧牲數值的可讀性。',
     layoutGuidance: '烘焙小書排版以清楚易讀為第一優先：材料與步驟分段呈現，不要把多個步驟擠在同一段落；溫度、時間、份量等數值請保持醒目、獨立成行，不要被圖片或裝飾元素遮擋；步驟順序不可調換。'
-  },
-  // Quick Book 旅遊小書最小補齊（CEO 核准，2026-08-12）：跟 daily_story／family_story 同一套
-  // 敘事型結構，走既有 Creative Fast Path，不建立第二套 BookDocument、不新增 parser、不新增
-  // engine——唯一差異是訪談題目聚焦「一趟旅行」，以及 visualGuidance／layoutGuidance 額外
-  // 處理「使用者可能有自己的旅遊照片，也可能沒有」這個情境，全部靠 Prompt 文字引導，不新增
-  // 任何欄位／schema（例如不新增「這頁是不是用真人照片」這種 boolean，AI 依使用者實際描述
-  // 的內容自行判斷）。
-  travel_book: {
-    id: 'travel_book',
-    label: '旅遊小書',
-    description: '把一趟旅行整理成有故事、有景點、有照片的旅遊小書。',
-    interviewQuestions: [
-      '這次去了哪裡？大約是哪一天或幾天的旅行？',
-      '這趟旅程中去了哪些地方或景點？',
-      '有哪些特別記得的美食、住宿、交通或活動？',
-      '哪一個片段最讓你印象深刻？當時有什麼感受？',
-      '你最想把這趟旅行留下什麼？'
-    ],
-    recommendedPageRange: { min: 5, max: 8 },
-    manuscriptRoleLabel: '旅遊小書',
-    manuscriptFlowHint: '建議故事脈絡：出發背景 → 行程／地點 → 印象深刻的片段 → 美食／住宿／交通等實際經歷 → 感受與想留下的話，只能使用使用者實際提供的地點、活動與感受，不要自行補景點、餐廳、交通、價格或日期，也不要每一本都硬套飯店、餐廳、飛機或每日行程這種固定格式，使用者沒提供的內容就不要出現。',
-    pageStructureHint: '參考分頁方向：封面、旅程開始、主要景點／地點、印象深刻片段、美食／住宿／交通經驗、旅程感受／結尾——這只是建議，請依實際完整文稿內容拆頁，不要套成固定頁數或固定頁序。',
-    visualGuidance: '這是一本旅遊小書：如果使用者有自己的旅遊照片，畫面呈現以維持照片的自然色調與一致版面為主，不要另外生成不相關的插畫取代；沒有照片，或部分頁面缺照片時，才用 AI 插圖補上，並維持全書同一畫風與色彩基調，不要強迫整本書都用 AI 生圖；不要自行加入使用者沒去過的地點、沒提到的景點或不存在的場景；如果文稿有明確指定地標、城市或年代，畫面要維持一致，不要憑空更換。',
-    layoutGuidance: '旅遊小書排版以清楚呈現旅程感為主；如果這一頁使用者本來就有實際旅遊照片，排版成圖指令要明確告訴生圖／排版工具「請使用這一頁使用者提供的實際旅遊照片作為主視覺，不要重新捏造另一個地點或畫面」；如果這一頁沒有照片，才依全書畫風產生 AI 插圖指令；圖片與文字不要互相遮擋，重要景點或回憶頁可以讓圖片比例較高。'
   }
 });
 // 依 book.topicPresetId 找 preset，找不到（含舊資料從未設定過）一律退回 life_story——
@@ -6037,6 +6308,7 @@ function buildQuickBookV4CreativeStoryDraftPrompt(work) {
   return fillTemplate(
     '你是' + roleLabel + '小書流程中的文稿整理者。請根據使用者' + (cs.mode === 'has_story' ? '貼入的故事內容' : '以下的訪談回答') + '，整理成一篇連貫、完整的' + roleLabel + '文稿。\n\n' +
     '這個故事主要想寫：' + escHtmlNoop(ss.topic) + '\n希望給誰看：' + escHtmlNoop(ss.targetReader) + '\n希望讀者感受到：' + escHtmlNoop(ss.intendedFeeling) + '\n\n' +
+    '品牌背景：\n' + buildBrandContextForWork(work, { includeVisual: false, includeStory: true }) + '\n\n' +
     '使用者' + (cs.mode === 'has_story' ? '原始故事內容' : '的訪談回答') + '：\n' + (sourceText || '（無）') + '\n\n' +
     QUICKBOOK_V4_CREATIVE_NO_FABRICATION_CONTRACT + '\n\n' +
     (preset.manuscriptFlowHint ? (preset.manuscriptFlowHint + '\n\n') : '') +
@@ -6186,7 +6458,9 @@ function buildQuickBookV4CreativeBookPrompt(work) {
   const vars = { work_name: work.name, goal: work.name };
   return fillTemplate(
     '你是' + roleLabel + '小書流程中的分頁編輯。請把下面「已確認的完整文稿」拆成' + (cs.pageCountChoice || 5) + ' 頁（含封面與結尾），只能使用這篇文稿裡的內容，不要新增文稿沒有的情節。\n\n' +
-    '書名：' + escHtmlNoop(cs.storyDraft.title) + '\n呈現方式：' + styleNote + '\n\n完整文稿：\n' + (cs.storyDraft.fullText || '') + '\n\n' +
+    '書名：' + escHtmlNoop(cs.storyDraft.title) + '\n呈現方式：' + styleNote + '\n\n' +
+    '品牌背景：\n' + buildBrandContextForWork(work, { includeVisual: false, includeStory: false }) + '\n\n' +
+    '完整文稿：\n' + (cs.storyDraft.fullText || '') + '\n\n' +
     QUICKBOOK_V4_CREATIVE_NO_FABRICATION_CONTRACT + '\n\n' +
     '第一頁請規劃為封面，最後一頁為結尾，中間依文稿脈絡分段。封面是獨立的一頁，封面的「正文：」請留空，不要把完整文稿的第一段或任何正文內容放在封面——完整文稿一律從封面後的第一個內容頁開始逐字摘錄。' + (preset.pageStructureHint ? preset.pageStructureHint + '\n' : '') + '每一頁請用以下固定格式輸出，用「【第N頁】」開頭分隔：\n\n' +
     '【第1頁】\n頁面類型：封面／內容頁／結尾頁（三選一）\n頁面標題：\n正文：（如果頁面類型是封面，這裡請留空；其餘頁面只能是完整文稿裡的內容，用原文或幾乎逐字摘錄，不要改寫出文稿沒有的細節）\n來源依據：（這一頁對應完整文稿的哪一段，簡短說明）\n視覺建議：\n\n（依此格式重複到全書所有頁）\n\n' +
@@ -6259,6 +6533,7 @@ function buildQuickBookV4StructurePrompt(work) {
     '你是產品介紹小書流程中的內容架構規劃助手。\n\n' +
     '請根據下面「可使用的產品資料」，把這些資料整理成 3～5 個內容單元（例如：產品介紹、使用方式、適合對象、常見問題等，實際單元請依資料內容判斷，不要硬套固定框架）。每個單元是這本小書裡的一個內容區塊，之後會各自變成一頁或幾頁，不是整本書的封面或版型規劃。\n\n' +
     '主要讀者：' + escHtmlNoop(sm.targetAudience) + '\n希望讀者看完後：' + escHtmlNoop(sm.readerTask) + '\n使用情境：' + escHtmlNoop(sm.usageContext) + '\n\n' +
+    '品牌背景：\n' + buildBrandContextForWork(work, { includeVisual: false, includeStory: true }) + '\n\n' +
     '可使用的產品資料（只能使用下面這些，不可以自己新增或延伸）：\n' + factsText + '\n\n' +
     QUICKBOOK_V4_NO_FABRICATION_CONTRACT + '\n\n' +
     '每個單元請盡量只使用上面列出的資料，資料不夠支撐的地方請寫進「仍缺少資料」，不要自己延伸內容；這一步不需要規劃封面、頁數或版型，也不需要產出完整整本書。\n\n' +
@@ -6505,7 +6780,9 @@ function buildQuickBookV4UnitRefinePrompt(work) {
   const vars = { work_name: work.name, goal: work.name };
   return fillTemplate(
     '你是產品介紹小書流程中的單元內容整理助手。\n\n請只針對下面這一個內容單元整理文字，不要涉及其他單元，也不要規劃整本書。\n\n' +
-    '單元標題：' + escHtmlNoop(unit ? unit.title : '') + '\n單元目的：' + escHtmlNoop(unit ? unit.purpose : '') + '\n\n可使用的資料：\n' + sourcesText + '\n\n原始資料全文（供對照，不是要你全部塞進來）：\n' + (sm.rawInput || '') + '\n\n' +
+    '單元標題：' + escHtmlNoop(unit ? unit.title : '') + '\n單元目的：' + escHtmlNoop(unit ? unit.purpose : '') + '\n\n' +
+    '品牌背景：\n' + buildBrandContextForWork(work, { includeVisual: false, includeStory: false }) + '\n\n' +
+    '可使用的資料：\n' + sourcesText + '\n\n原始資料全文（供對照，不是要你全部塞進來）：\n' + (sm.rawInput || '') + '\n\n' +
     QUICKBOOK_V4_NO_FABRICATION_CONTRACT + '\n\n' +
     (quickBookV4UnitRefineExtraInstruction ? ('特別提醒：' + quickBookV4UnitRefineExtraInstruction + '\n\n') : '') +
     '請直接輸出這個單元的整理稿文字（不需要標題或欄位名稱，直接是內文），如果資料仍然不足以完整表達這個單元，請在文字最後另起一行寫「仍缺少資料：」並說明還缺什麼。\n\n' +
@@ -6766,7 +7043,7 @@ const QUICKBOOK_V4_BODY_TYPOGRAPHY_GUIDANCE = '頁面標題應比正文明顯，
 // 圖片」，不是排版建議文字。全部沿用既有欄位（page.pageTitle／pageText／storyboard／
 // visualSuggestion／imagePrompt／layoutSuggestion、book.visualPlan／presentationStyle），
 // 不新增第二套 page model。
-function quickBookV4BuildPageLayoutImagePrompt(book, page) {
+function quickBookV4BuildPageLayoutImagePrompt(book, page, work) {
   const isCover = page.pageType === 'cover';
   const visual = quickBookV4PageVisualFields(book, page);
   const lines = ['請直接把這一頁製作成一張已經排好圖文、可以直接使用的完整書頁圖片，不是只給排版建議文字。'];
@@ -6827,12 +7104,16 @@ function quickBookV4BuildPageLayoutImagePrompt(book, page) {
   if (storyPreset.layoutGuidance) lines.push(storyPreset.layoutGuidance);
   if (visual.layoutSuggestion) lines.push('這一頁另外的版面建議：' + visual.layoutSuggestion);
   lines.push('請維持跟全書其他頁一致的頁面比例、視覺風格、字體感、色彩、留白與圖文階層，不要讓每一頁的設計風格差異過大。');
+  // 技術長 RC1 複審補修（品牌隔離強化，2026-08-14）P0-2：改成呼叫端明確傳入這本書自己的
+  // work，不再內部呼叫 getActiveWork() 猜——理由同 buildBookHandoffImageProduction 上方
+  // 註解，這本書的 Work 跟目前「使用者最後打開的 Work」可能不是同一個。
+  lines.push('品牌背景：\n' + buildBrandContextForWork(work, { includeVisual: true, includeStory: false }));
   return lines.join('\n');
 }
 // 三節「測試圖指令」：純樣板組字，不呼叫 AI，使用者直接複製到外部生圖工具測試風格。
 // 只有真正填過的欄位才輸出（「有值才顯示」跟本輪其他 Handoff 輸出同一個原則），不輸出
 // 「（未指定）」這類 placeholder。
-function buildQuickBookV4TrialImagePrompt(book) {
+function buildQuickBookV4TrialImagePrompt(book, work) {
   const page = quickBookV4TrialImagePage(book);
   if (!page) return '';
   const vp = book.visualPlan || {};
@@ -6844,6 +7125,9 @@ function buildQuickBookV4TrialImagePrompt(book) {
   const contentText = quickBookV4CleanPageTextForHandoff(page.pageText).trim() || page.pageTitle;
   if (contentText) lines.push('這一頁的內容：' + contentText);
   lines.push('構圖：畫面請對應這一頁的內容，主體明確，方便之後排版加上文字。');
+  // 技術長 RC1 複審補修（品牌隔離強化，2026-08-14）P0-2：改成呼叫端明確傳入這本書自己的
+  // work，不再內部呼叫 getActiveWork() 猜。
+  lines.push('品牌背景：\n' + buildBrandContextForWork(work, { includeVisual: true, includeStory: false }));
   // Must Fix（CEO 真人驗收，2026-08-09）：這裡是純插畫生圖 Prompt，不是排版成品——如果
   // 測試頁剛好是封面，明確提醒作者／繪者這類署名是封面排版資訊，不是要畫進插畫裡的
   // 故事情節，也不需要把任何文字畫進插畫本身。
@@ -7328,7 +7612,7 @@ function renderQuickBookV4PageDetail() {
   if (genericBlock) genericBlock.style.display = isCover ? 'none' : 'block';
   if (coverBlock) coverBlock.style.display = isCover ? 'block' : 'none';
   if (isCover) {
-    renderQuickBookV4CoverPageDetail(v4.book, page);
+    renderQuickBookV4CoverPageDetail(v4.book, page, work);
   } else {
     document.getElementById('qbv4pd-page-title').textContent = page.pageTitle || '（未命名）';
     document.getElementById('qbv4pd-page-text').textContent = page.pageText || '（尚無內容）';
@@ -7348,7 +7632,7 @@ function renderQuickBookV4PageDetail() {
 // quickBookV4PageVisualFields 註解），Canva 尺寸／畫面風格／字體風格為十四節新增顯示
 // 欄位，沿用既有 book.layoutProfile／book.visualPlan.visualStyle，不新增第二套 cover
 // model。缺資料時顯示「待補」／「尚未產生」，不留空白也不假裝已完成。
-function renderQuickBookV4CoverPageDetail(book, page) {
+function renderQuickBookV4CoverPageDetail(book, page, work) {
   document.getElementById('qbv4pd-cover-title').textContent = book.title || '待補';
   document.getElementById('qbv4pd-cover-subtitle').textContent = book.subtitle || '待補';
   document.getElementById('qbv4pd-cover-author').textContent = book.authorName || '待補';
@@ -7379,7 +7663,7 @@ function renderQuickBookV4CoverPageDetail(book, page) {
   // 十四節：第 3 顆按鈕，跟一般頁的「複製排版成圖指令」同一個 formatter
   // （quickBookV4BuildPageLayoutImagePrompt 已支援封面分流），封面所有 formatter 不得帶
   // 正文第 1 頁內容——這裡沒有另外傳入其他頁資料，天生做不到。
-  const layoutImagePrompt = quickBookV4BuildPageLayoutImagePrompt(book, page);
+  const layoutImagePrompt = quickBookV4BuildPageLayoutImagePrompt(book, page, work);
   html += quickBookV4HandoffCopyBlockHtml(layoutImagePrompt, '已複製封面排版成圖指令', '🎨 複製封面排版成圖指令');
   document.getElementById('qbv4pd-cover-copy-buttons').innerHTML = html;
 }
@@ -7472,7 +7756,9 @@ function buildQuickBookV4PageRefinePrompt(work) {
   const vars = { work_name: work.name, goal: work.name };
   return fillTemplate(
     '你是小書流程中的單頁內容整理助手。請只針對下面這一頁重新整理文字，不要涉及其他頁。\n\n' +
-    '頁面標題：' + escHtmlNoop(page ? page.pageTitle : '') + '\n目前內文：' + escHtmlNoop(page ? page.pageText : '') + '\n\n可參考的原始資料／完整文稿：\n' + sourceText + '\n\n' +
+    '頁面標題：' + escHtmlNoop(page ? page.pageTitle : '') + '\n目前內文：' + escHtmlNoop(page ? page.pageText : '') + '\n\n' +
+    '品牌背景：\n' + buildBrandContextForWork(work, { includeVisual: false, includeStory: false }) + '\n\n' +
+    '可參考的原始資料／完整文稿：\n' + sourceText + '\n\n' +
     contract + '\n\n' +
     (quickBookV4PageRefineExtraInstruction ? ('特別提醒：' + quickBookV4PageRefineExtraInstruction + '\n\n') : '') +
     '請直接輸出這一頁的正文文字（不需要標題或欄位名稱，直接是內文）。\n\n' +
@@ -7751,7 +8037,7 @@ function openQuickBookV4TrialImage() {
 function renderQuickBookV4TrialImage() {
   const work = getActiveWork(); const v4 = ensureQuickBookV4Defaults(work);
   const book = v4.book;
-  const promptText = buildQuickBookV4TrialImagePrompt(book);
+  const promptText = buildQuickBookV4TrialImagePrompt(book, work);
   const noPageNotice = document.getElementById('qbv4ti-no-page-notice');
   const promptBox = document.getElementById('qbv4ti-prompt-box');
   const confirmBtn = document.getElementById('qbv4ti-confirm-btn');
@@ -7820,6 +8106,7 @@ function buildQuickBookV4ImagePromptGenerationPrompt(work) {
   return fillTemplate(
     '你是小書流程中的逐頁生圖指令產生器。請根據下面「全書視覺設定」，為每一個列出的頁面各自產生一段可以直接貼到生圖 AI（例如 Midjourney／DALL·E／ChatGPT 圖片功能）使用的生圖指令。\n\n' +
     '全書視覺設定：\n' + stylePart + '\n\n' +
+    '品牌背景：\n' + buildBrandContextForWork(work, { includeVisual: true, includeStory: false }) + '\n\n' +
     canvaGuidance + '\n\n' + sizeGuidance + '\n\n' +
     (genStoryPreset.visualGuidance ? (genStoryPreset.visualGuidance + '\n\n') : '') +
     '請確保：\n- 每一頁的生圖指令要對應該頁內容各自不同，不是同一段話套用到每一頁\n- 全書畫風、人物外觀維持一致\n- 不得捏造原文沒有的情節，也不得自行加入原文沒有出現的人物\n- 除非使用者特別指定，否則不需要把文字畫進圖片裡\n- 每頁生圖指令長度適中，方便直接複製貼入生圖 AI，不需要落落長' +
@@ -8026,7 +8313,7 @@ function renderQuickBookV4Handoff() {
   const now = new Date().toISOString();
   let producedAny = false;
   QUICKBOOK_V4_HANDOFF_TARGETS.forEach(function (t) {
-    const text = buildBookHandoff(book, t.target, options);
+    const text = buildBookHandoff(book, t.target, options, work);
     document.getElementById(t.elId).innerHTML = text
       ? quickBookV4HandoffCopyBlockHtml(text, t.toast)
       : '<div class="notice">目前還沒有可交接的內容（已完成章節內還沒有可輸出的頁面）。</div>';
@@ -8043,7 +8330,7 @@ function renderQuickBookV4Handoff() {
     : '<div class="notice">目前還沒有可顯示的分鏡內容。</div>';
 
   quickBookV4RenderGateStatuses(book);
-  renderQuickBookV4CanvaPerPage(book, validation);
+  renderQuickBookV4CanvaPerPage(book, validation, work);
 }
 // 3｜4｜5：全書視覺定調／測試圖片／逐頁生圖指令的進度狀態，全部從既有資料（visualPlan
 // 旗標、pages[] 是否已有 imagePrompt）現場判斷，不新增 state machine，也不把 Gate 技術
@@ -8146,7 +8433,7 @@ let quickBookV4PerPageOpenId = null;
 function quickBookV4RerenderCanvaPerPage() {
   const work = getActiveWork();
   const v4 = ensureQuickBookV4Defaults(work);
-  renderQuickBookV4CanvaPerPage(v4.book, validateBookDocumentStructure(v4.book));
+  renderQuickBookV4CanvaPerPage(v4.book, validateBookDocumentStructure(v4.book), work);
 }
 function quickBookV4TogglePerPageAccordion(pageId) {
   quickBookV4PerPageOpenId = (quickBookV4PerPageOpenId === pageId) ? null : pageId;
@@ -8155,7 +8442,7 @@ function quickBookV4TogglePerPageAccordion(pageId) {
 // 六節「每頁展開內容」：【文案】＋複製文案／【圖片】圖片建議或畫面構想（有值才顯示）／
 // 【生圖指令】＋複製生圖指令，或還沒有時顯示白話狀態「尚未產生生圖指令」／排版建議
 // （有值才顯示）。空欄位直接不出現，不顯示「（未填寫）」「（無）」「（尚未產生）」。
-function quickBookV4BuildPerPageAccordionBodyHtml(book, page) {
+function quickBookV4BuildPerPageAccordionBodyHtml(book, page, work) {
   const label = getBookPageDisplayLabel(page, book);
   const copyText = quickBookV4BuildPageCopyText(page);
   const visual = quickBookV4PageVisualFields(book, page);
@@ -8183,7 +8470,7 @@ function quickBookV4BuildPerPageAccordionBodyHtml(book, page) {
   // 需求／全書視覺設定／Canva 滿頁規格／作品型態版面分流，要求 AI 直接產出排好圖文的
   // 完整書頁圖片。每頁都提供（純文字頁也適用，見 quickBookV4BuildPageLayoutImagePrompt
   // 內部的 needsImage 分流），不像生圖指令要等 Gate 通過才有值。
-  const layoutImagePrompt = quickBookV4BuildPageLayoutImagePrompt(book, page);
+  const layoutImagePrompt = quickBookV4BuildPageLayoutImagePrompt(book, page, work);
   html += '<div class="section-label" style="margin-top:12px;font-size:12px">排版成圖指令</div>';
   html += quickBookV4HandoffCopyBlockHtml(layoutImagePrompt, '已複製' + label + '排版成圖指令', '🎨 複製排版成圖指令');
   html += '</div>';
@@ -8194,7 +8481,7 @@ function quickBookV4BuildPerPageAccordionBodyHtml(book, page) {
 // 順序跟 BookDocument 一致（reorder 後這裡會跟著重新排序，因為每次都是重新讀
 // book.pages 現算，沒有另存清單）。預設展開清單中的第一頁，符合條件的展開頁若已經
 // reorder／刪除，自動改展開新的第一頁，不會停在一個已經不存在的頁面上。
-function renderQuickBookV4CanvaPerPage(book, validation) {
+function renderQuickBookV4CanvaPerPage(book, validation, work) {
   const box = document.getElementById('qbv4h-canva-perpage');
   if (!box) return;
   const pagesToShow = [];
@@ -8215,7 +8502,7 @@ function renderQuickBookV4CanvaPerPage(book, validation) {
     const label = getBookPageDisplayLabel(p, book);
     return '<div class="card" style="margin-top:6px">' +
       '<div class="line" style="cursor:pointer" onclick="quickBookV4TogglePerPageAccordion(\'' + p.pageId + '\')"><b>' + label + (p.pageTitle ? '｜' + escHtml(p.pageTitle) : '') + '</b>　' + (isOpen ? '▴' : '▾') + '</div>' +
-      (isOpen ? quickBookV4BuildPerPageAccordionBodyHtml(book, p) : '') +
+      (isOpen ? quickBookV4BuildPerPageAccordionBodyHtml(book, p, work) : '') +
       '</div>';
   });
   box.innerHTML = blocks.join('');
@@ -8256,7 +8543,9 @@ function buildQuickBookStoryPrompt(work) {
   const vars = { work_name: work.name, goal: work.name, work_brief: work.brief || '' };
   return fillTemplate(
     '你是小書出版流程中的故事理解者。\n\n請根據使用者以下的回答，直接幫使用者整理出這本小書的故事理解摘要，包含：這本書想留下什麼、想讓誰讀、希望讀者感受到什麼、已有哪些素材可以運用。\n\n' +
-    '工作名稱：{{work_name}}\n\n使用者的回答：\n{{work_brief}}\n\n' +
+    '工作名稱：{{work_name}}\n\n' +
+    '品牌背景：\n' + buildBrandContextForWork(work, { includeVisual: false, includeStory: true }) + '\n\n' +
+    '使用者的回答：\n{{work_brief}}\n\n' +
     '如果使用者的回答已經足夠，請直接整理成一段清楚的故事理解摘要。如果資訊不足，最多只問兩個必要的問題，不要一次列出一長串問卷；如果使用者說不出具體內容，請先給一個具體、溫暖的例子幫助使用者聯想，不要連續追問。\n\n不要捏造使用者沒有提到的具體經歷或事實。\n\n' +
     buildStepBoundaryBlock('整理故事理解摘要', ['直接開始規劃書本方向或頁面內容'].concat(STEP_BOUNDARY_GENERIC_FORBIDDEN), STEP_BOUNDARY_GENERIC_WAITING),
     vars
@@ -8268,7 +8557,9 @@ function buildQuickBookDirectionPrompt(work) {
   const vars = { work_name: work.name, goal: work.name, previous_results: buildPreviousResults(work.id) };
   return fillTemplate(
     '你是小書出版流程中的出版方向顧問。\n\n請根據以下使用者提供的故事與素材，直接幫使用者確認這本小書的出版方向，不要反問使用者一長串問題，資訊不足的地方請用合理判斷直接給建議（使用者之後可以再修改）。\n\n' +
-    '工作名稱：{{work_name}}\n目標：{{goal}}\n\n已有內容：\n{{previous_results}}\n\n' +
+    '工作名稱：{{work_name}}\n目標：{{goal}}\n\n' +
+    '品牌背景：\n' + buildBrandContextForWork(work, { includeVisual: false, includeStory: true }) + '\n\n' +
+    '已有內容：\n{{previous_results}}\n\n' +
     '請用以下固定格式輸出（欄位名稱請照抄，這樣使用者才能直接複製貼回工作台）：\n\n' +
     '暫定書名：\n副標：（不需要可留空）\n主要內容：（一到兩句話說明這本書在講什麼）\n主要讀者：\n希望讀者得到什麼：\n建議頁數：（純數字，8～24之間，依內容需求判斷）\n文字感覺：（例如：溫暖、輕鬆、專業、勵志）\n圖片使用方式：（例如：不需要圖片／每章一張插畫／一頁一張圖的繪本式／搭配真實照片）\n視覺模式：（請從「純文字」「文字＋插畫」「繪本式圖像敘事」「照片為主」四選一，只填一個）\n\n' +
     '不要輸出這四個格式選項以外的英文術語（例如不要出現 Picture Book、Reflowable 等字樣），全程用中文白話說明。不要捏造使用者沒有提到的具體經歷或事實。\n\n' +
@@ -8304,7 +8595,9 @@ function buildQuickBookArchitecturePrompt(work) {
   const vars = { work_name: work.name, goal: work.name, previous_results: buildPreviousResults(work.id) };
   return fillTemplate(
     '你是小書出版流程中的內容架構師。\n\n請根據以下已確認的書本方向，直接規劃這本小書的內容架構，不是討論方向，是可以直接使用的定案內容。\n\n' +
-    '工作名稱：{{work_name}}\n\n書名：' + escHtmlNoop(qb.title) + '\n主要內容：' + escHtmlNoop(qb.mainContent) + '\n主要讀者：' + escHtmlNoop(qb.targetReader) + '\n建議頁數：' + qb.pageCount + '\n視覺模式：' + (VISUAL_MODE_DISPLAY_TEXT[qb.visualPlan.visualMode] || '') + '\n\n已有內容：\n{{previous_results}}\n\n' +
+    '工作名稱：{{work_name}}\n\n書名：' + escHtmlNoop(qb.title) + '\n主要內容：' + escHtmlNoop(qb.mainContent) + '\n主要讀者：' + escHtmlNoop(qb.targetReader) + '\n建議頁數：' + qb.pageCount + '\n視覺模式：' + (VISUAL_MODE_DISPLAY_TEXT[qb.visualPlan.visualMode] || '') + '\n\n' +
+    '品牌背景：\n' + buildBrandContextForWork(work, { includeVisual: false, includeStory: false }) + '\n\n' +
+    '已有內容：\n{{previous_results}}\n\n' +
     '請規劃 5～10 個內容單位（不是逐頁，是內容的大區塊，例如：開場、第一個重點、第二個重點……結尾），用以下固定格式輸出（欄位名稱請照抄）：\n\n' +
     '單元1標題：\n單元1說明：（一句話）\n\n單元2標題：\n單元2說明：\n\n（依此類推，共5～10個單元）\n\n建議總頁數：（純數字）\n封面書名頁內容頁結尾頁安排：（簡短說明大概怎麼分配頁數，例如：封面1頁、書名頁1頁、內容頁8頁、結尾頁1頁）\n\n不要捏造使用者沒有提到的具體經歷或事實。\n\n' +
     buildStepBoundaryBlock('規劃內容架構並輸出以上欄位', ['開始寫任何一頁的正式逐字內容', '產生封面或插畫指令'].concat(STEP_BOUNDARY_GENERIC_FORBIDDEN), STEP_BOUNDARY_GENERIC_WAITING),
@@ -8419,7 +8712,9 @@ function buildQuickBookFirstPagePrompt(work) {
   const vars = { work_name: work.name, goal: work.name };
   return fillTemplate(
     '你是小書出版流程中的內文作者。\n\n以下是已確認的內容架構，請直接完成「第一頁」的完整成品內容，讓使用者可以直接感受到這本書實際做出來會是什麼樣子，不是大綱、是真正的第一頁正文。\n\n' +
-    '書名：' + escHtmlNoop(qb.title) + '\n視覺模式：' + (VISUAL_MODE_DISPLAY_TEXT[qb.visualPlan.visualMode] || '') + '\n\n內容架構：\n' + unitsText + '\n\n' +
+    '書名：' + escHtmlNoop(qb.title) + '\n視覺模式：' + (VISUAL_MODE_DISPLAY_TEXT[qb.visualPlan.visualMode] || '') + '\n\n' +
+    '品牌背景：\n' + buildBrandContextForWork(work, { includeVisual: false, includeStory: false }) + '\n\n' +
+    '內容架構：\n' + unitsText + '\n\n' +
     '請用以下固定格式輸出第一頁（欄位名稱請照抄）：\n\n' +
     '頁碼：1\n頁面標題：\n正文：（這一頁真正的完整文字內容，不是摘要）\n圖片位置：（例如：標題下方／整頁背景／無）\n插畫或照片建議：（具體描述這一頁如果要配圖，畫面應該長什麼樣子；純文字模式可填「不需要」）\n簡單書頁排版：（一句話說明版面安排，例如：標題置中、正文置左、圖片佔右半頁）\n\n不要捏造使用者沒有提到的具體經歷或事實。\n\n' +
     buildStepBoundaryBlock('完成第一頁成品並輸出以上欄位', ['繼續往下寫第二頁以後的內容', '產生封面'].concat(STEP_BOUNDARY_GENERIC_FORBIDDEN), STEP_BOUNDARY_GENERIC_WAITING),
@@ -8473,7 +8768,9 @@ function buildQuickBookFullContentPrompt(work) {
   const vars = { work_name: work.name, goal: work.name };
   return fillTemplate(
     '你是小書出版流程中的內文作者。\n\n請根據已確認的內容架構與第一頁定調，直接完成全書逐頁內容，不是大綱，每一頁都要有完整可用的正文。\n\n' +
-    '書名：' + escHtmlNoop(qb.title) + '\n建議總頁數：' + (qb.architecture.length ? (qb.pageCount || 12) : 12) + '\n視覺模式：' + (VISUAL_MODE_DISPLAY_TEXT[qb.visualPlan.visualMode] || '') + '\n\n內容架構：\n' + unitsText + '\n\n第一頁定調：\n' + firstPageText + '\n\n' + imageInstruction + '\n\n' +
+    '書名：' + escHtmlNoop(qb.title) + '\n建議總頁數：' + (qb.architecture.length ? (qb.pageCount || 12) : 12) + '\n視覺模式：' + (VISUAL_MODE_DISPLAY_TEXT[qb.visualPlan.visualMode] || '') + '\n\n' +
+    '品牌背景：\n' + buildBrandContextForWork(work, { includeVisual: false, includeStory: false }) + '\n\n' +
+    '內容架構：\n' + unitsText + '\n\n第一頁定調：\n' + firstPageText + '\n\n' + imageInstruction + '\n\n' +
     '請包含封面、書名頁、逐一內容頁、結尾頁（或封底），每一頁都用以下固定格式輸出，用「【第N頁】」開頭分隔每一頁（N 從 1 開始）：\n\n' +
     '【第1頁】\n頁碼：1\n頁面類型：封面／書名頁／內容頁／結尾頁（四選一）\n頁面標題：\n正文：\n需要圖片：是／否\n圖片說明：（照片模式請描述建議放哪一張照片）\n生圖指令：（需要圖片時才填，純文字或不需要圖片可留空）\n擺放位置：（照片模式才需要，例如：正文下方置中）\n裁切建議：（照片模式才需要，例如：橫式裁切、聚焦人物）\n圖說建議：（照片模式才需要，一句話的照片說明文字）\n排版建議：\n\n【第2頁】\n（依此類推，直到全書所有頁完成）\n\n不要捏造使用者沒有提到的具體經歷或事實。\n\n' +
     buildStepBoundaryBlock('完成全書逐頁內容並輸出以上欄位', ['產生封面生圖指令（那是下一步的工作）', '只輸出大綱而不寫完整正文'].concat(STEP_BOUNDARY_GENERIC_FORBIDDEN), STEP_BOUNDARY_GENERIC_WAITING),
@@ -8532,6 +8829,7 @@ function buildQuickBookCoverPrompt(work) {
   return fillTemplate(
     '你是小書出版流程中的封面設計師。\n\n請根據以下已完成的書本內容，直接完成封面設計方向與生圖指令，讓使用者可以直接拿去外部生圖工具使用。\n\n' +
     '書名：' + escHtmlNoop(qb.title) + '\n副標：' + escHtmlNoop(qb.subtitle) + '\n主要內容：' + escHtmlNoop(qb.mainContent) + '\n主要讀者：' + escHtmlNoop(qb.targetReader) + '\n文字感覺：' + escHtmlNoop(qb.toneFeeling) + '\n\n' +
+    '品牌背景：\n' + buildBrandContextForWork(work, { includeVisual: true, includeStory: false }) + '\n\n' +
     '請用以下固定格式輸出（欄位名稱請照抄）：\n\n' +
     '書名：\n副標：\n封面主視覺：（具體描述封面應該畫什麼畫面或場景）\n色彩與風格：\nCanva封面排版指引：（標題放哪裡、副標放哪裡、視覺元素大概怎麼安排）\n封面生圖指令：（一段可以直接貼到生圖工具的完整英文或中文指令，要具體到畫面內容、風格、構圖）\n\n' +
     '不要捏造作者經歷或背景，封面指令只根據上面提供的書本內容發想。\n\n' +
@@ -8559,7 +8857,9 @@ function buildQuickBookIllustrationPlanPrompt(work) {
   const vars = { work_name: work.name, goal: work.name };
   return fillTemplate(
     '你是小書出版流程中的插畫規劃師。\n\n請根據以下需要圖片的頁面，規劃全書畫風一致性，並幫每一頁補上具體可用的生圖指令。\n\n' +
-    '書名：' + escHtmlNoop(qb.title) + '\n視覺模式：' + (VISUAL_MODE_DISPLAY_TEXT[qb.visualPlan.visualMode] || '') + '\n\n需要圖片的頁面：\n' + (pagesText || '（無）') + '\n\n' +
+    '書名：' + escHtmlNoop(qb.title) + '\n視覺模式：' + (VISUAL_MODE_DISPLAY_TEXT[qb.visualPlan.visualMode] || '') + '\n\n' +
+    '品牌背景：\n' + buildBrandContextForWork(work, { includeVisual: true, includeStory: false }) + '\n\n' +
+    '需要圖片的頁面：\n' + (pagesText || '（無）') + '\n\n' +
     '請先用以下固定格式輸出全書共用的畫風設定（欄位名稱請照抄）：\n\n' +
     '共用畫風：\n主角人物或品牌主體固定描述：（確保每一頁畫出來是同一個角色/風格，沒有明確主角可填「無固定角色」）\n色彩基調：\n建議生圖工具：\n\n' +
     '接著逐頁輸出生圖指令，用「【第N頁插畫】」開頭：\n\n【第1頁插畫】\n生圖指令：（完整具體的指令，要包含上面的共用畫風與主角描述，確保跟其他頁一致）\n\n（依此類推，只需要涵蓋上面列出「需要圖片」的頁面）\n\n' +
@@ -9043,6 +9343,7 @@ function chooseEbookCategory(flowId) {
   pendingFlowId = flowId;
   selectedVideoType = null;
   pendingWorkBrandChoice = 'brand';
+  pendingWorkOtherBrandId = null;
   showScreen('screen-add-work');
 }
 
@@ -9050,16 +9351,11 @@ function openAddWork() {
   const project = getActiveProject();
   // 商品行銷專案先進分類選擇畫面，其他專案類型維持原本行為不變
   if (project.type === 'product') { showScreen('screen-product-category'); return; }
-  // 正式電子書入口切換（CEO／技術長核准，2026-08-12）：「做電子書」正式改走 Quick Book v4
-  // entry（screen-quickbook-v4-entry），不再進舊版 screen-ebook-category（小書 v3.0／完整
-  // 電子書二選一）。舊版畫面與函式（screen-ebook-category／chooseEbookCategory／
-  // EBOOK_CATEGORIES）完全保留、不刪除，只是新建立工作不再走這條路——舊 v3.0／舊 ebook
-  // 已有的作品，開啟時走的是各自 work.flowId 對應的既有畫面，跟這裡的新建工作入口無關，
-  // 不受影響。
-  if (project.type === 'ebook') { openQuickBookV4Entry(); return; }
+  if (project.type === 'ebook') { showScreen('screen-ebook-category'); return; }
   pendingFlowId = PROJECT_TYPES[project.type] ? PROJECT_TYPES[project.type].flowId : 'custom';
   selectedVideoType = null;
   pendingWorkBrandChoice = 'brand';
+  pendingWorkOtherBrandId = null;
   showScreen('screen-add-work');
 }
 
@@ -9079,6 +9375,29 @@ function confirmNewWork() {
   const name = (input.value || '').trim();
   if (!name) { showToast('幫這件工作取個名字吧'); return; }
   const project = getActiveProject();
+  // #00 Brand Selector＋Brand Context Provider Vertical Slice（技術長／CEO 核准，2026-08-10）：
+  // P0-2——新增「選擇其他既有品牌」第三選項，跟既有「套用目前品牌／自由設計」並列，一律
+  // 透過 applyBrandToWork() 套用，跟工作詳情頁的 Official Brand Selector 走同一個函式，
+  // 確保 brandMode／brandSnapshotId／brandSnapshotVersion／brandSnapshotFrozen 從一開始
+  // 就正確凍結，不需要事後補一次。
+  // 技術審查修正（技術長，2026-08-10）UX Must Fix：選了「選擇其他品牌」卻還沒點選任何一張
+  // 品牌卡片時，必須擋下並提示，不得建立 Work、不得靜默轉成 brandMode='none'（自由設計）
+  // ——使用者明確表達「我要選一個品牌」，系統不能在他還沒選的狀態下自作主張建立工作。
+  // 技術複審第二次小補修（技術長，2026-08-10）Must Fix 三：ID 有值不代表品牌仍可用——
+  // 品牌可能在使用者選定之後、按下「建立工作」之前被刪除／封存，這裡連同「找不到／已
+  // 封存」一起在任何會消耗 nextWorkId 或建立 Work 的動作之前驗證完畢，不得事後才發現、
+  // 不得靜默改成不套用品牌或改套 Project 預設品牌。
+  let chosenBrand = null;
+  let chosenMode = 'none';
+  if (pendingWorkBrandChoice === 'other') {
+    if (!pendingWorkOtherBrandId) { showToast('請先選擇一個品牌'); return; }
+    const b = getBrand(pendingWorkOtherBrandId);
+    if (!b || b.status === '已封存') { showToast('這個品牌目前無法使用，請重新選擇'); return; }
+    chosenBrand = b; chosenMode = 'other';
+  } else if (pendingWorkBrandChoice !== 'free' && project.defaultBrandId) {
+    const b = getBrand(project.defaultBrandId);
+    if (b && b.status !== '已封存') { chosenBrand = b; chosenMode = 'default'; }
+  }
   const work = {
     id: state.nextWorkId++, projectId: project.id, name: name,
     flowId: pendingFlowId, started: false, currentStepIndex: 0,
@@ -9096,19 +9415,8 @@ function confirmNewWork() {
   // 畫面顯示「本次未套用品牌｜使用通用協作設定」，不會因為找不到品牌而載入失敗。
   // #20（總策長核准）：使用者在建立海報工作時明確選「自由設計」，即使 Project 有預設品牌，
   // 這次也刻意不繼承——「沒有品牌」是使用者主動選的完整模式，不是遺漏。
-  work.brandId = null;
-  work.brandSnapshot = null;
-  work.brandAckVersion = null;
-  if (project.defaultBrandId && pendingWorkBrandChoice !== 'free') {
-    const brand = getBrand(project.defaultBrandId);
-    if (brand && brand.status !== '已封存') {
-      work.brandId = brand.id;
-      work.brandSnapshot = buildBrandSnapshot(brand);
-      work.brandAckVersion = brand.version;
-    }
-  }
   state.works.push(work);
-  saveState();
+  applyBrandToWork(work, chosenBrand, chosenMode);
   input.value = '';
   showToast('已建立「' + name + '」');
   showScreen('screen-project');
@@ -9303,8 +9611,9 @@ function validatePosterVisualDesignPaste(text) {
 }
 // Recovery Flow 第三個選項：不是叫使用者自己想辦法回去問 AI，而是直接給一段可以複製、
 // 明確要求「完整版本、不要摘要」的指令——降低使用者卡在「不知道該怎麼跟AI講」的機會。
-function buildPosterVisualRegenerateInstruction() {
+function buildPosterVisualRegenerateInstruction(work) {
   return '請重新輸出我剛才選定版本的完整內容。\n\n' +
+    '品牌背景（請沿用，不要更換）：\n' + buildBrandContextForWork(work, { includeVisual: true, includeStory: false }) + '\n\n' +
     '必須完整保留並依照以下格式輸出：\n\n' +
     '【圖片生成請求】\n（完整圖片生成請求）\n\n' +
     '【風格建議】\n（完整風格建議）\n\n' +
@@ -9458,7 +9767,7 @@ function submitPasteBack() {
       if (!validation.valid) {
         showPasteBackWarning(
           escHtml('文字內容已經完成，但目前的圖片規劃還不符合這本書已確認的呈現方式（' + (VISUAL_MODE_DISPLAY_TEXT[qb.visualPlan.visualMode] || '') + '）。工作台可以直接補上逐頁圖片或照片配置，不需要重新寫內容。'),
-          buildQuickBookImageRecoveryPrompt(Object.assign({}, qb, { pages: parsed }), validation.missingPageNumbers)
+          buildQuickBookImageRecoveryPrompt(Object.assign({}, qb, { pages: parsed }), validation.missingPageNumbers, work)
         );
         // 「改成純文字版」是圖片完整性 Recovery 專屬的第三個選項（另外兩個是「AI幫我補圖片
         // 規劃」＝複製重新輸出指令、「返回修改貼回內容」＝既有的繼續修改按鈕），只在這種
@@ -9815,7 +10124,7 @@ function submitPasteBack() {
   if (work.flowId === 'poster' && step.name === '視覺設計') {
     const validation = validatePosterVisualDesignPaste(content);
     if (!validation.valid) {
-      showPasteBackWarning(escHtml(validation.message).replace(/\n/g, '<br>'), buildPosterVisualRegenerateInstruction());
+      showPasteBackWarning(escHtml(validation.message).replace(/\n/g, '<br>'), buildPosterVisualRegenerateInstruction(work));
       return;
     }
   }
@@ -10332,10 +10641,11 @@ function splitNarrationIntoSceneChunks(narrationText, count) {
 // 設定、含既有人物設定 characterProfile）維持原樣整段沿用，不建立第二套人物系統——「這幕
 // 應該畫什麼」（文意轉譯）跟「全片應該長什麼樣子」（Style Anchor）兩者並存，文意轉譯的
 // 結果套用既有 Style Anchor，不是取代它。
-function buildAutoImagePrompt(narration, styleAnchorText, ratioLabel, sceneNo, totalScenes) {
+function buildAutoImagePrompt(narration, styleAnchorText, ratioLabel, sceneNo, totalScenes, work) {
   return '你是這支影片的視覺導演。請先理解這一幕的旁白真正要表達什麼，把文意轉譯成自然、具體、觀眾看得到的畫面，最後產生可以直接使用的生圖指令。\n\n' +
     '【旁白】\n「' + narration + '」\n\n' +
     '【全片既有視覺設定】\n' + styleAnchorText + '\n\n' +
+    '【品牌背景】\n' + buildBrandContextForWork(work, { includeVisual: true, includeStory: false }) + '\n\n' +
     '【文意視覺轉譯原則】\n' +
     '1. 先理解這一幕真正要表達什麼，不要只抽取旁白中的名詞或關鍵字直接組成畫面。\n' +
     '2. 注意人物主體、行為、關係，以及句子裡的否定、轉折、對比——哪一半才是真正的重點，哪一半是被否定或對照的。\n' +
@@ -10388,7 +10698,7 @@ function generateImagePromptsForAllScenes(count) {
     return {
       sceneNo: sceneNo, sceneName: '', narration: text, subtitle: '',
       visualIntent: '', estimatedSeconds: '', mood: '', materialNeeds: '',
-      imagePrompt: buildAutoImagePrompt(text, styleAnchorText, ratioLabel, sceneNo, totalScenes),
+      imagePrompt: buildAutoImagePrompt(text, styleAnchorText, ratioLabel, sceneNo, totalScenes, work),
       videoPrompt: ''
     };
   });
@@ -10419,7 +10729,7 @@ function generateImagePromptForScene(sceneNo) {
   const styleAnchorText = buildStyleAnchorText(buildStyleAnchorSnapshot(work, ms));
   const ratioInfo = VIDEO_RATIO_OPTIONS.find(function (r) { return r.id === work.imageRatio; });
   const ratioLabel = ratioInfo ? ratioInfo.label : '直式';
-  scene.imagePrompt = buildAutoImagePrompt(scene.narration || '', styleAnchorText, ratioLabel, sceneNo, ms.scenes.length);
+  scene.imagePrompt = buildAutoImagePrompt(scene.narration || '', styleAnchorText, ratioLabel, sceneNo, ms.scenes.length, work);
   persistMasterScriptScenesChange(work, ms);
   renderMakeVideo();
 }
@@ -10449,6 +10759,7 @@ function buildSceneRegenerateInstruction() {
     : '（新的' + askLabel + '內容）';
   return '你是影片製作教練，正在協助我只重新生成單一幕的' + askLabel + '，不是重做整支影片。\n\n' +
     getConfirmedStyleAnchorText(work) + '\n\n' +
+    '品牌背景：\n' + buildBrandContextForWork(work, { includeVisual: true, includeStory: false }) + '\n\n' +
     '這一幕已經確認、不可更動的內容：\n' +
     '第' + scene.sceneNo + '幕｜' + (scene.sceneName || '') + '\n' +
     '旁白／文案：' + (scene.narration || '') + '\n' +
@@ -11346,6 +11657,7 @@ function buildSongRegenerateInstructionText() {
   const styleResult = state.results.find(function (r) { return r.id === work.stepResultIds[styleIdx]; });
   return '你是作品打磨教練。\n\n請根據使用者選擇的修改方向，直接完成修改後的正式版本，這是可以直接使用、貼回同一個對話讓 Suno 重新生成的成果，不是討論。\n\n' +
     '工作：' + (work.songTitle || work.name) + '\n\n' +
+    '品牌背景：\n' + buildBrandContextForWork(work, { includeVisual: false, includeStory: false }) + '\n\n' +
     '上一版歌詞：\n' + (lyricsResult ? lyricsResult.content : '（無）') + '\n\n' +
     '上一版音樂風格：\n' + (styleResult ? styleResult.content : '（無）') + '\n\n' +
     '使用者想修改的方向：\n' + selectedDirections.join('、') + '\n\n' +
@@ -11362,17 +11674,19 @@ function buildRevisionInstruction() {
   const template = resolvePolishTemplate();
   const isBrief = !!r.isBriefDraft;
 
+  const isVisualStep = !isBrief && (step.role === '設計師' || /視覺|畫面|封面|海報/.test(step.name));
   const vars = {
     work_name: work.name,
     step_name: isBrief ? '前置討論 Brief' : step.name,
     role_name: isBrief ? (DISCUSS_ROLE_BY_FLOW[work.flowId] || '顧問') : step.role,
     ai_name: suggestedToolForStep(work.flowId, step.role, step.name).name,
+    brand_context: buildBrandContextForWork(work, { includeVisual: isVisualStep, includeStory: false }),
     current_result: r.content,
     revision_direction: selectedDirections.join('、')
   };
 
   if (template) return fillTemplate(template.content, vars);
-  return '請依照修改方向調整：' + selectedDirections.join('、');
+  return '品牌背景：\n' + vars.brand_context + '\n\n請依照修改方向調整：' + selectedDirections.join('、');
 }
 
 function copyRevisionInstruction() {
@@ -11690,6 +12004,7 @@ function render() {
   if (id === 'screen-product-category') renderProductCategory();
   if (id === 'screen-ebook-category') renderEbookCategory();
   if (id === 'screen-quickbook-direction-confirm') renderQuickBookDirectionConfirm();
+  if (id === 'screen-quickbook-v4-brand-choice') renderQuickBookV4BrandChoice();
   if (id === 'screen-quickbook-v4-practical') renderQuickBookV4Practical();
   if (id === 'screen-quickbook-v4-baking-input') renderQuickBookV4BakingInput();
   if (id === 'screen-quickbook-v4-practical-step2') renderQuickBookV4Step2();
@@ -12938,13 +13253,37 @@ function renderAddWork() {
   // Phase 3｜Official Brand Selector（總策長／CEO 核准，2026-08-05）：品牌套用選擇原本
   // 只在建立海報工作時顯示（#20，2026-08-02），現在正式推廣為全部 Flow 共用，建立任何
   // 工作時都會顯示同一組「套用目前品牌／自由設計」選擇，不再限定海報／商品行銷。
+  // #00 Brand Selector＋Brand Context Provider Vertical Slice（技術長／CEO 核准，2026-08-10）：
+  // P0-2——新增第三選項「選擇其他品牌」，選中後展開既有品牌清單（沿用 screen-brand-switch
+  // 的呈現方式：名稱＋一句話定位，不出現 Snapshot ID／版本繼承等內部術語）。
   const brandChoiceField = document.getElementById('new-work-brand-choice-field');
   brandChoiceField.style.display = 'block';
-  document.getElementById('nw-brand-choice-brand').checked = pendingWorkBrandChoice !== 'free';
+  document.getElementById('nw-brand-choice-brand').checked = pendingWorkBrandChoice === 'brand';
+  document.getElementById('nw-brand-choice-other').checked = pendingWorkBrandChoice === 'other';
   document.getElementById('nw-brand-choice-free').checked = pendingWorkBrandChoice === 'free';
+  const otherList = document.getElementById('nw-other-brand-list');
+  if (pendingWorkBrandChoice === 'other') {
+    otherList.style.display = 'block';
+    const brands = activeBrands();
+    otherList.innerHTML = brands.length ? brands.map(function (b) {
+      const sel = b.id === pendingWorkOtherBrandId ? ' selected' : '';
+      return '<div class="template-pick' + sel + '" onclick="chooseNewWorkOtherBrand(' + b.id + ')">🏷️ ' + escHtml(b.name) + (b.oneLiner ? '　' + escHtml(b.oneLiner) : '') + '</div>';
+    }).join('') : '<div class="line" style="color:var(--text-dim);font-size:12.5px">目前還沒有其他品牌，請先到品牌中心建立。</div>';
+  } else {
+    otherList.style.display = 'none';
+  }
 }
-let pendingWorkBrandChoice = 'brand'; // 'brand'（套用目前品牌，預設）｜'free'（自由設計，不套用品牌）
-function setWorkBrandChoice(choice) { pendingWorkBrandChoice = choice; }
+let pendingWorkBrandChoice = 'brand'; // 'brand'（套用目前品牌，預設）｜'other'（選擇其他品牌）｜'free'（自由設計，不套用品牌）
+let pendingWorkOtherBrandId = null;
+function chooseNewWorkOtherBrand(brandId) {
+  pendingWorkOtherBrandId = brandId;
+  renderAddWork();
+}
+function setWorkBrandChoice(choice) {
+  pendingWorkBrandChoice = choice;
+  if (choice !== 'other') pendingWorkOtherBrandId = null;
+  renderAddWork();
+}
 
 function renderWorkDetail() {
   const work = getActiveWork();
@@ -13262,12 +13601,13 @@ function stripAfterQuickBookStepBoundary(content) {
 // #07 Quick Book v3.0｜圖片完整性 Recovery Prompt（總策長裁示新增，2026-08-05）：只針對
 // Validator 列出的缺圖頁碼，明確禁止修改正文、標題與頁序——這是「部分缺圖只補缺頁，不能
 // 整本重寫」的具體落實，不是只靠語氣提醒，Prompt 本身就把範圍限制死。
-function buildQuickBookImageRecoveryPrompt(qb, missingPageNumbers) {
+function buildQuickBookImageRecoveryPrompt(qb, missingPageNumbers, work) {
   const pagesText = missingPageNumbers.map(function (n) {
     const p = qb.pages.find(function (pg) { return pg.pageNumber === n; });
     return '第' + n + '頁' + (p && p.pageTitle ? '（' + p.pageTitle + '）' : '');
   }).join('、');
-  return '我已經完成文字內容，但這本書設定為「' + (VISUAL_MODE_DISPLAY_TEXT[qb.visualPlan.visualMode] || '有圖') + '」，以下頁面的圖片規劃還不完整：' + pagesText + '。' +
+  return '我已經完成文字內容，但這本書設定為「' + (VISUAL_MODE_DISPLAY_TEXT[qb.visualPlan.visualMode] || '有圖') + '」，以下頁面的圖片規劃還不完整：' + pagesText + '。\n\n' +
+    '品牌背景：\n' + buildBrandContextForWork(work, { includeVisual: true, includeStory: false }) + '\n\n' +
     '請只針對這幾頁補上「需要圖片：是」「圖片說明」「生圖指令」「排版建議」（照片模式請對應補「擺放位置」「裁切建議」「圖說建議」），' +
     '不得修改這幾頁或其他頁面已經寫好的正文（pageText）、標題（pageTitle）與頁序，也不需要重新輸出整本書，只要用一樣的【第N頁】格式，重新輸出上面列出的這幾頁就好。';
 }
@@ -13858,8 +14198,13 @@ function buildBrandColorDesignPrompt(brand, regenerateNote) {
     '・字體要有實際的視覺比較：品牌名稱要用標題字體實際呈現、一句話定位要用內文字體實際呈現、如果有價格或日期也用英文數字字體實際呈現，讓使用者能看出字體氣質的差異（是否太正式、是否好閱讀、跟品牌名稱搭不搭）。\n\n' +
     '接著請依你自己的能力，二選一（這是必須執行的步驟，不是「可以考慮」）：\n' +
     '・**如果你支援圖片生成**：請在「這一輪回覆」裡，完成上面的文字之後，直接產生一張符合上述規格的 A／B／C 三欄比較圖，不要只說明要怎麼畫、也不要只給生圖建議，要直接畫出來。\n' +
-    '・**如果你不支援圖片生成**：不要只回覆「我沒有圖片功能」就結束，你一定要另外輸出一段完整的「【情境參考圖生成指令】」，讓使用者可以直接複製去給支援生圖的 AI 使用。這段指令要包含品牌名稱、三欄相同的構圖與應用情境要求、每一欄的具體內容（Banner／包裝／社群／名片，四選三）、三組方案各自的實際配色與字體資料（不能用「方案 A 使用……」這種省略號帶過，要把上面已經提出的三組真實資料整段寫進去）、圖案是視覺方向參考不是正式 Logo 的提醒。範例格式如下（下面是用「幸福緣手作工作室」示範格式長什麼樣子，請把品牌名稱換成「' + brandName + '」，並把三組配色／字體換成你剛剛在第一部分實際提出的資料，不可以照抄範例裡的品牌或配色）：\n\n' +
-    '「請直接生成一張「幸福緣手作工作室」品牌配色與字體情境比較圖。畫面以 A／B／C 三欄並排，三欄使用完全相同構圖、相同品牌名稱、相同文字內容與相同應用情境，只改變配色、字體氣質、圖案方向與視覺風格。每欄包含：1. 品牌 Banner　2. 麵包或甜點包裝　3. 社群貼文　4. 智慧名片小畫面　5. 五色色票與 HEX　6. 品牌名稱標題字體示範　7. 內文字體示範　8. 麥穗、麵包、葉片等簡化裝飾圖案。這是品牌視覺方向參考，不是正式 Logo，不要設計完成版 Logo。方案 A 使用（實際顏色名稱＋HEX＋字體＋風格，完整寫出）。方案 B 使用（同上，完整寫出）。方案 C 使用（同上，完整寫出）。」\n\n' +
+    '・**如果你不支援圖片生成**：不要只回覆「我沒有圖片功能」就結束，你一定要另外輸出一段完整的「【情境參考圖生成指令】」，讓使用者可以直接複製去給支援生圖的 AI 使用。這段指令要包含品牌名稱、三欄相同的構圖與應用情境要求、每一欄的具體內容（Banner／包裝／社群／名片，四選三）、三組方案各自的實際配色與字體資料（不能用「方案 A 使用……」這種省略號帶過，要把上面已經提出的三組真實資料整段寫進去）、圖案是視覺方向參考不是正式 Logo 的提醒。範例格式如下（下面用一個明確標示【範例品牌代稱】的假格式示範長什麼樣子，請把【範例品牌代稱】換成「' + brandName + '」，並把三組配色／字體換成你剛剛在第一部分實際提出的資料，不可以照抄範例裡的配色或裝飾圖案）：\n\n' +
+    // 全站品牌隔離掃描（CEO／技術長核准，2026-08-12）：這段範例原本用「幸福緣手作工作室」
+    // 加麵包/甜點/麥穗/葉片等真實可辨識的品牌與產品名詞示範格式，會原封不動送進每一次
+    // 真實使用者的品牌配色設計 Prompt——改成明確標示為佔位符的【範例品牌代稱】＋通用、
+    // 無產品類別偏向的情境描述，保留原本 8 個編號區塊／A-B-C 三方案／「不是正式 Logo」
+    // 免責句的格式教學價值，但不再帶入任何真實可辨識的品牌或產品名詞。
+    '「請直接生成一張「【範例品牌代稱】」品牌配色與字體情境比較圖。畫面以 A／B／C 三欄並排，三欄使用完全相同構圖、相同品牌名稱、相同文字內容與相同應用情境，只改變配色、字體氣質、圖案方向與視覺風格。每欄包含：1. 品牌 Banner　2. 商品或服務情境圖　3. 社群貼文　4. 智慧名片小畫面　5. 五色色票與 HEX　6. 品牌名稱標題字體示範　7. 內文字體示範　8. 抽象幾何裝飾圖案。這是品牌視覺方向參考，不是正式 Logo，不要設計完成版 Logo。方案 A 使用（實際顏色名稱＋HEX＋字體＋風格，完整寫出）。方案 B 使用（同上，完整寫出）。方案 C 使用（同上，完整寫出）。」\n\n' +
     '「【情境參考圖生成指令】」這幾個字請照抄當作這段指令的開頭標記，方便使用者的工作台程式辨識。\n\n' +
     '如果使用者沒辦法看到圖片，也可以直接把整段回覆（文字資料＋情境參考圖生成指令）貼回品牌中心，工作台會自動顯示視覺色票卡跟複製指令的按鈕。\n\n' +
     '## 等待使用者選擇（重要）\n' +
@@ -15695,7 +16040,7 @@ function switchWorkToBrandMode() {
   if (workHasAnyContent(work)) {
     if (!confirm('切換品牌模式後，之後產生的內容會使用新的設定；已完成的成果不會自動變更。確定要套用嗎？')) return;
   }
-  applyBrandToWork(work, brand);
+  applyBrandToWork(work, brand, 'default');
   showToast('已套用品牌「' + brand.name + '」');
   renderWorkBrandSection(work);
 }
@@ -15705,7 +16050,7 @@ function switchWorkToFreeDesign() {
   if (workHasAnyContent(work)) {
     if (!confirm('切換品牌模式後，之後產生的內容會使用新的設定；已完成的成果不會自動變更。確定要切換嗎？')) return;
   }
-  applyBrandToWork(work, null);
+  applyBrandToWork(work, null, 'none');
   showToast('已切換為自由設計模式');
   renderWorkBrandSection(work);
 }
@@ -15735,10 +16080,16 @@ function truncateForSummary(text, maxLen) {
   if (!text) return '';
   return text.length > maxLen ? text.slice(0, maxLen) + '…' : text;
 }
+// #00 Brand Selector＋Brand Context Provider Vertical Slice（技術長／CEO 核准，2026-08-10）：
+// P0-1——改讀 work.brandSnapshotFrozen（套用當下凍結的正式 Snapshot），不再即時查詢
+// state.brandSnapshots 目前最新版本。這正是「畫面顯示 Brand Snapshot v3，但 Prompt 實際
+// 拿到舊品牌欄位」這個 Blocker 的另一半：如果 Summary Card 一直顯示最新版，品牌改版後
+// Summary Card 反而會跟已經凍結的 Prompt 對不上，兩者都必須看「這個 Work 當初套用時」
+// 的同一份內容，才是「有新版時使用者可以選擇」設計要保護的東西。
 function renderBrandSummaryCard(work) {
   const container = document.getElementById('wd-brand-summary-card');
   if (!work.brandId) { container.style.display = 'none'; return; }
-  const snap = getBrandSummarySourceSnapshot(work.brandId);
+  const snap = work.brandSnapshotFrozen;
   if (!snap) { container.style.display = 'none'; return; }
   container.style.display = 'block';
   const percent = brandSnapshotCompletionPercent(snap);
@@ -15766,7 +16117,7 @@ function openBrandSummaryDialog() {
   closeBrandSummaryDialog();
   const work = getActiveWork();
   if (!work || !work.brandId) return;
-  const snap = getBrandSummarySourceSnapshot(work.brandId);
+  const snap = work.brandSnapshotFrozen;
   if (!snap) return;
   const percent = brandSnapshotCompletionPercent(snap);
   function row(label, value) {

@@ -183,11 +183,17 @@
       </div>
 
       <!-- #20 商品行銷中心｜自由設計模式（總策長核准，2026-08-02）：只在建立海報工作時顯示 -->
+      <!-- #00 Brand Selector＋Brand Context Provider Vertical Slice（技術長／CEO 核准，
+           2026-08-10）P0-2：新增「選擇其他品牌」，選中後在下方展開既有品牌清單。 -->
       <div class="field" id="new-work-brand-choice-field" style="display:none">
         <label>品牌設定</label>
         <label style="display:flex;align-items:center;gap:8px;margin:6px 0;cursor:pointer;color:var(--text-mid);font-size:14px;font-weight:400">
           <input type="radio" name="nw-brand-choice" id="nw-brand-choice-brand" onclick="setWorkBrandChoice('brand')"> 套用目前品牌（推薦）
         </label>
+        <label style="display:flex;align-items:center;gap:8px;margin:6px 0;cursor:pointer;color:var(--text-mid);font-size:14px;font-weight:400">
+          <input type="radio" name="nw-brand-choice" id="nw-brand-choice-other" onclick="setWorkBrandChoice('other')"> 選擇其他品牌
+        </label>
+        <div id="nw-other-brand-list" style="display:none;margin:4px 0 10px 26px"></div>
         <label style="display:flex;align-items:center;gap:8px;margin:6px 0;cursor:pointer;color:var(--text-mid);font-size:14px;font-weight:400">
           <input type="radio" name="nw-brand-choice" id="nw-brand-choice-free" onclick="setWorkBrandChoice('free')"> 自由設計（不套用品牌）
         </label>
@@ -1296,11 +1302,11 @@
 
       <div class="section-label" style="margin-top:18px">進階</div>
       <button class="btn outline" onclick="openDataSafetyCenter()">🛡️ 資料安全中心（備份／還原）</button>
-      <!-- 正式電子書入口切換（CEO／技術長核准，2026-08-12）：Quick Book v4 已是首頁／工作台
-           「做電子書」的正式入口，不再是測試功能。這裡保留一個設定頁捷徑，方便已經在設定頁的
-           使用者不必先回工作台就能直接進電子書入口，屬於維運/操作便利性用途，不再標示「測試
-           版」。 -->
-      <button class="btn outline" style="margin-top:10px" onclick="openQuickBookV4EntryFromSettings()">📖 Quick Book v4.0（做電子書）</button>
+      <!-- #7.1 Quick Book v4.0 POC（總策長／CEO 核准，2026-08-06）：獨立測試入口，刻意不放在
+           首頁「今天想完成什麼？」，避免真正上課的學員誤點進還在開發中的 POC；只透過設定頁
+           「進階」區塊這個相對低流量的位置進入，且畫面本身明確標示「測試版」。v3.0 正式入口
+           完全不變。 -->
+      <button class="btn outline" style="margin-top:10px" onclick="openQuickBookV4Entry()">🧪 Quick Book v4.0（測試版）</button>
 
       <!-- Workspace Trust Sprint 1（Task 9）：原本的「☁️ 專屬 Google 雲端備份設定」區塊
            已停用——那個功能實際上從未真正把資料送到任何地方（saveToCloud() 只是把本地
@@ -1322,11 +1328,11 @@
        分流殼＋空流程頁面，Practical／Creative 的實際步驟邏輯留到 Phase 2／3。 -->
   <div class="screen" id="screen-quickbook-v4-entry">
     <div class="topbar">
-      <button class="back" onclick="goBackFromQuickBookV4Entry()">←</button>
-      <div class="title">做電子書</div>
+      <button class="back" onclick="goBack('screen-settings')">←</button>
+      <div class="title">Quick Book v4.0（測試版）</div>
     </div>
     <div style="padding-top:20px">
-      <!-- 課前入口文案 Must Fix（CEO／總策長，2026-08-12）：原本這裡有一句「🧪 這是開發測試
+      <!-- 課前入口文案 Must Fix（CEO／總策長，2026-08-10）：原本這裡有一句「🧪 這是開發測試
            中的版本…」的內部提醒，追查後確認它只是靜態文字、渲染本身沒有壞掉，但它在真人手機
            驗收時佔掉了大量首屏高度，而使用者進這個畫面前已經在設定頁點過同樣寫著「測試版」的
            按鈕，這裡重複講一次對「你今天想完成哪一種作品？」的決策沒有幫助，屬於「沒有實際
@@ -1342,13 +1348,43 @@
       </div>
       <!-- Quick Book 母模封版 P0（CEO／總策長，2026-08-11）：烘焙小書是結構化實用型代表，
            走既有 Practical／SourceMaterial 路徑，只是入口換成 8 個結構化欄位，不是新流程。
-           課前入口文案 Must Fix（2026-08-12）：只改使用者看到的名稱，底層 chooseQuickBookV4Baking()／
+           課前入口文案 Must Fix（2026-08-10）：只改使用者看到的名稱，底層 chooseQuickBookV4Baking()／
            topicPresetId='baking_book' 完全不動。 -->
       <div class="pick-card" style="margin-top:10px" onclick="chooseQuickBookV4Baking()">
         <div class="emoji">🧁</div><div class="label">我有一份烘焙／食譜配方</div>
         <div class="option-sub" style="margin-top:4px">整理材料、份量、步驟、溫度與時間，做成清楚好用的小書</div>
       </div>
       <div class="notice" style="margin-top:14px">還不確定？實用型適合「已經有內容，想整理」；創作型適合「還沒有內容，只有一個念頭」。</div>
+    </div>
+  </div>
+
+  <!-- 技術長 RC1 複審補修（品牌隔離強化，2026-08-14）P0-1：Quick Book v4 三個入口（練習題／
+       創作型／烘焙）過去直接建立 Work，最多只會自動套用 Project 預設品牌，完全繞過其他
+       Flow 建工作時都有的「套用目前品牌／選擇其他品牌／本次不套用品牌」三選一（見
+       screen-add-work 的 new-work-brand-choice-field）。這裡補上同一組三選一，選好之後
+       才真正建立 Work，並用同一套 applyBrandToWork() 凍結套用——id 另外命名（qbv4- 前綴）
+       避免跟 screen-add-work 既有的 nw-brand-choice-* 衝突，兩邊各自獨立的畫面狀態。 -->
+  <div class="screen" id="screen-quickbook-v4-brand-choice">
+    <div class="topbar">
+      <button class="back" onclick="goBack('screen-quickbook-v4-entry')">←</button>
+      <div class="title">品牌設定</div>
+    </div>
+    <div style="padding-top:20px">
+      <div class="notice">這本書要套用哪個品牌？</div>
+      <div class="field">
+        <label id="qbv4-brand-choice-brand-label" style="display:flex;align-items:center;gap:8px;margin:6px 0;cursor:pointer;color:var(--text-mid);font-size:14px;font-weight:400">
+          <input type="radio" name="qbv4-brand-choice" id="qbv4-brand-choice-brand" onclick="setQuickBookV4BrandChoice('brand')">
+          <span id="qbv4-brand-choice-brand-text">套用目前品牌</span>
+        </label>
+        <label style="display:flex;align-items:center;gap:8px;margin:6px 0;cursor:pointer;color:var(--text-mid);font-size:14px;font-weight:400">
+          <input type="radio" name="qbv4-brand-choice" id="qbv4-brand-choice-other" onclick="setQuickBookV4BrandChoice('other')"> 選擇其他品牌
+        </label>
+        <div id="qbv4-other-brand-list" style="display:none;margin:4px 0 10px 26px"></div>
+        <label style="display:flex;align-items:center;gap:8px;margin:6px 0;cursor:pointer;color:var(--text-mid);font-size:14px;font-weight:400">
+          <input type="radio" name="qbv4-brand-choice" id="qbv4-brand-choice-free" onclick="setQuickBookV4BrandChoice('free')"> 本次不套用品牌
+        </label>
+      </div>
+      <button class="btn" onclick="confirmQuickBookV4Brand()">開始建立</button>
     </div>
   </div>
 
@@ -1766,7 +1802,7 @@
             <div class="section-label" style="margin-top:14px">③ 完成每一頁圖文排版</div>
             <div class="notice" style="margin-top:6px">依工作台準備好的每頁文案、圖片與排版提示，把整本書排好。<br>請維持整本書相同的 Canva 尺寸、畫面風格與文字風格。</div>
 
-            <!-- 課堂 UX Must Fix（CEO／總策長，2026-08-12）：下載前先命名，避免學員手機／雲端
+            <!-- 課堂 UX Must Fix（CEO／總策長，2026-08-10）：下載前先命名，避免學員手機／雲端
                  裡出現一堆「未命名設計.pdf」找不到自己的書。只補教學文字，不改 Canva 操作
                  流程本身。 -->
             <div class="section-label" style="margin-top:14px">④ 先幫檔案命名</div>
@@ -1786,7 +1822,7 @@
             <div class="section-label" style="margin-top:14px">⑥ 儲存 PDF</div>
             <div class="notice" style="margin-top:6px">下載完成後，把 PDF 存到手機、Google Drive 或其他雲端空間。<br>記得確認自己找得到這個 PDF，下一步要上傳它。</div>
 
-            <!-- 線上電子書製作網址補充（CEO／總策長，2026-08-12）：主要推薦改為 Publuu，
+            <!-- 線上電子書製作網址補充（CEO／總策長，2026-08-10）：主要推薦改為 Publuu，
                  FlipHTML5／Visual Paradigm Online 收進「其他線上電子書工具」收合區塊，避免
                  三個平台都變成大按鈕、手機畫面拉太長。純外部連結，不串 API、不 iframe、
                  不登入整合、不自動上傳 PDF。 -->
@@ -1964,11 +2000,6 @@
       <div class="pick-card" style="margin-top:10px" onclick="chooseQuickBookV4StoryPreset('children_book')">
         <div class="emoji">🎨</div><div class="label">童書／繪本</div>
         <div class="option-sub" style="margin-top:4px">用溫暖的圖畫說一個簡單故事。</div>
-      </div>
-      <!-- 旅遊小書最小補齊（CEO 核准，2026-08-12）：卡片樣式沿用既有 preset 卡片，不新增 UI 模式 -->
-      <div class="pick-card" style="margin-top:10px" onclick="chooseQuickBookV4StoryPreset('travel_book')">
-        <div class="emoji">✈️</div><div class="label">旅遊小書</div>
-        <div class="option-sub" style="margin-top:4px">把一趟旅行整理成有故事、有景點、有照片的旅遊小書。</div>
       </div>
     </div>
   </div>
